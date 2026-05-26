@@ -1,0 +1,83 @@
+[project]
+name = "pptlive"
+version = "0.1.0"
+description = "Drive a running Microsoft PowerPoint instance from Python — xlwings, but for PowerPoint, and LLM-friendly."
+readme = "README.md"
+authors = [
+    { name = "Thomas.Villani", email = "thomas.villani@gmail.com" }
+]
+# Dev pins 3.13 (.python-version), but the library stays 3.10-compatible to
+# match its sibling `wordlive`. Don't reach for 3.11+ syntax.
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: Developers",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Office/Business",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "click>=8.1",
+    "pywin32>=306 ; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-mock>=3.12",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[project.scripts]
+pptlive = "pptlive.cli.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "smoke: requires a running Microsoft PowerPoint installation",
+]
+# Smoke tests need a real PowerPoint; skip them unless explicitly selected
+# with `-m smoke`.
+addopts = "-m 'not smoke'"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["site", "dist"]
+
+[tool.ruff.lint]
+# E/W: pycodestyle, F: pyflakes, I: isort, UP: pyupgrade, B: flake8-bugbear.
+select = ["E", "F", "W", "I", "UP", "B"]
+# E501 (line length) is left to the formatter, which wraps code lines; this
+# avoids nagging about long strings/comments the formatter won't break.
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Bare attribute access inside `pytest.raises(...)` is the assertion — it
+# triggers a lazy property that must raise. Not a useless expression.
+"tests/**" = ["B018"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src/pptlive"]
+warn_redundant_casts = true
+warn_unused_ignores = false
+
+# pywin32 ships no type stubs, and isn't installed off-Windows at all. This one
+# override covers both cases: `import-not-found` on Linux CI (package absent)
+# and `import-untyped` on Windows (present, but no stubs).
+[[tool.mypy.overrides]]
+module = ["pythoncom", "pywintypes", "win32com.*"]
+ignore_missing_imports = true

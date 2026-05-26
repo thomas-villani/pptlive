@@ -1,0 +1,322 @@
+"""Shapes — the 2-D objects on a slide, and the thing a `Shape` anchor IS.
+
+A `Shape` is an `Anchor` (inherits `text`/`set_text`) *when it has a text frame*,
+plus geometry verbs (`geometry`/`move`/`resize`) that have no Word analog. A text
+op on a frameless shape (picture, line) raises `NoTextFrameError` (exit 6).
+
+z-order ids drift: `shape:S:N` is the 1-based z-order index, which shifts when
+shapes are added or removed, so a `Shape` resolves its COM object **live** on
+every access and never caches it (spec.md / Resolved Open Q #3). Listings emit
+`name` (`Shape.Name`) and `id` (`Shape.Id`, stable across reorder) so an agent
+can re-identify after drift; `PlaceholderShape` (`ph:S:KIND`) re-resolves by
+semantic kind, the drift-proof form.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from typing import TYPE_CHECKING, Any
+
+from . import _com
+from ._anchors import Anchor
+from .constants import (
+    MsoShapeType,
+    is_true,
+    placeholder_kind_name,
+    placeholder_types_for,
+    shape_type_name,
+)
+from .exceptions import AnchorNotFoundError, NoTextFrameError
+
+if TYPE_CHECKING:
+    from ._slides import Slide
+
+
+# ---------------------------------------------------------------------------
+# COM-level helpers (operate on a raw Shape dispatch object)
+# ---------------------------------------------------------------------------
+
+
+def has_text_frame(com_shape: Any) -> bool:
+    """True iff the shape can hold text (`Shape.HasTextFrame == msoTrue`)."""
+    try:
+        return is_true(com_shape.HasTextFrame)
+    except Exception:
+        return False
+
+
+def is_placeholder(com_shape: Any) -> bool:
+    """True iff the shape is a layout placeholder (`Shape.Type == msoPlaceholder`)."""
+    try:
+        return int(com_shape.Type) == int(MsoShapeType.PLACEHOLDER)
+    except Exception:
+        return False
+
+
+def _geometry_of(com_shape: Any) -> dict[str, float] | None:
+    try:
+        return {
+            "left": float(com_shape.Left),
+            "top": float(com_shape.Top),
+            "width": float(com_shape.Width),
+            "height": float(com_shape.Height),
+            "rotation": float(com_shape.Rotation),
+        }
+    except Exception:
+        return None
+
+
+def shape_to_dict(com_shape: Any, slide_index: int, z_index: int) -> dict[str, Any]:
+    """Structured snapshot of one shape for `slide.read()` / `shapes.list()`.
+
+    Emits the canonical `anchor_id` (`shape:S:N`) plus the drift-proof `name`
+    and `id`, the friendly shape `type`, `geometry` (points), placeholder kind
+    (or None), and `text` when the shape has a text frame.
+    """
+    d: dict[str, Any] = {
+        "anchor_id": f"shape:{slide_index}:{z_index}",
+        "index": z_index,
+        "name": str(com_shape.Name),
+        "id": int(com_shape.Id),
+        "type": shape_type_name(com_shape.Type),
+        "geometry": _geometry_of(com_shape),
+    }
+    if is_placeholder(com_shape):
+        try:
+            d["placeholder"] = placeholder_kind_name(com_shape.PlaceholderFormat.Type)
+        except Exception:
+            d["placeholder"] = None
+    else:
+        d["placeholder"] = None
+
+    if has_text_frame(com_shape):
+        d["has_text_frame"] = True
+        try:
+            d["text"] = str(com_shape.TextFrame.TextRange.Text or "")
+        except Exception:
+            d["text"] = None
+    else:
+        d["has_text_frame"] = False
+        d["text"] = None
+    return d
+
+
+# ---------------------------------------------------------------------------
+# Shape
+# ---------------------------------------------------------------------------
+
+
+class Shape(Anchor):
+    """A shape on a slide, addressed by 1-based z-order index — `shape:S:N`.
+
+    Resolves its COM object live on every access (z-order drifts). Inherits
+    `text` / `set_text` from `Anchor` (raising `NoTextFrameError` if the shape
+    has no text frame), and adds geometry verbs.
+    """
+
+    kind = "shape"
+
+    def __init__(self, slide: Slide, index: int) -> None:
+        self._slide = slide
+        self._index = int(index)
+
+    @property
+    def slide(self) -> Slide:
+        return self._slide
+
+    @property
+    def index(self) -> int:
+        """1-based z-order index this shape was addressed by."""
+        return self._index
+
+    @property
+    def anchor_id(self) -> str:
+        return f"shape:{self._slide.index}:{self._index}"
+
+    def _com_shape(self) -> Any:
+        """Resolve the COM `Shape` live by z-order index. Never cached."""
+        shapes = self._slide.com.Shapes
+        count = int(shapes.Count)
+        if self._index < 1 or self._index > count:
+            raise AnchorNotFoundError("shape", self.anchor_id)
+        return shapes(self._index)
+
+    @property
+    def com(self) -> Any:
+        """Raw COM `Shape` (overrides `Anchor.com`, which would give a text range)."""
+        with _com.translate_com_errors():
+            return self._com_shape()
+
+    @property
+    def name(self) -> str:
+        """The shape's `.Name` (e.g. "Title 1") — drift-proof, unique per slide."""
+        try:
+            with _com.translate_com_errors():
+                return str(self._com_shape().Name)
+        except Exception:
+            return self.anchor_id
+
+    @property
+    def shape_id(self) -> int:
+        """`Shape.Id` — stable across z-order reordering."""
+        with _com.translate_com_errors():
+            return int(self._com_shape().Id)
+
+    @property
+    def shape_type(self) -> str:
+        """Friendly shape-type name (e.g. "placeholder", "textbox", "picture")."""
+        with _com.translate_com_errors():
+            return shape_type_name(self._com_shape().Type)
+
+    @property
+    def has_text_frame(self) -> bool:
+        with _com.translate_com_errors():
+            return has_text_frame(self._com_shape())
+
+    def _text_range(self) -> Any:
+        sh = self._com_shape()
+        if not has_text_frame(sh):
+            raise NoTextFrameError(self.anchor_id)
+        return sh.TextFrame.TextRange
+
+    # -- geometry (points throughout, never EMUs) --------------------------
+
+    def geometry(self) -> dict[str, float]:
+        """`{left, top, width, height, rotation}` in points."""
+        with _com.translate_com_errors():
+            geo = _geometry_of(self._com_shape())
+        if geo is None:
+            raise AnchorNotFoundError("shape", self.anchor_id)
+        return geo
+
+    def move(self, *, left: float | None = None, top: float | None = None) -> None:
+        """Set the shape's absolute position in points. Pass `left` and/or `top`."""
+        if left is None and top is None:
+            raise ValueError("move() requires at least one of left= or top=")
+        with _com.translate_com_errors():
+            sh = self._com_shape()
+            if left is not None:
+                sh.Left = float(left)
+            if top is not None:
+                sh.Top = float(top)
+
+    def resize(self, *, width: float | None = None, height: float | None = None) -> None:
+        """Set the shape's size in points. Pass `width` and/or `height`."""
+        if width is None and height is None:
+            raise ValueError("resize() requires at least one of width= or height=")
+        with _com.translate_com_errors():
+            sh = self._com_shape()
+            if width is not None:
+                sh.Width = float(width)
+            if height is not None:
+                sh.Height = float(height)
+
+    def to_dict(self) -> dict[str, Any]:
+        with _com.translate_com_errors():
+            return shape_to_dict(self._com_shape(), self._slide.index, self._index)
+
+
+class PlaceholderShape(Shape):
+    """A placeholder addressed by semantic kind — `ph:S:KIND`.
+
+    The LLM-preferred, drift-proof form: "the title of slide 3" without caring
+    about z-order. Re-resolves its COM shape by `PlaceholderFormat.Type` on every
+    access (via `Slide._find_placeholder`), so it survives shape reordering. It
+    *is* a `Shape`, so all geometry and text verbs work; only the resolution
+    strategy and `anchor_id` differ.
+    """
+
+    kind = "placeholder"
+
+    def __init__(self, slide: Slide, ph_kind: str) -> None:
+        # Validate the kind eagerly so a typo fails before any COM work.
+        placeholder_types_for(ph_kind)
+        super().__init__(slide, index=0)
+        self._ph_kind = ph_kind.lower()
+
+    @property
+    def placeholder_kind(self) -> str:
+        return self._ph_kind
+
+    @property
+    def anchor_id(self) -> str:
+        return f"ph:{self._slide.index}:{self._ph_kind}"
+
+    @property
+    def index(self) -> int:
+        """Current 1-based z-order index of the resolved placeholder."""
+        with _com.translate_com_errors():
+            _shape, idx = self._slide._find_placeholder(self._ph_kind)
+        return idx
+
+    def _com_shape(self) -> Any:
+        shape, _idx = self._slide._find_placeholder(self._ph_kind)
+        return shape
+
+    def to_dict(self) -> dict[str, Any]:
+        with _com.translate_com_errors():
+            shape, idx = self._slide._find_placeholder(self._ph_kind)
+            return shape_to_dict(shape, self._slide.index, idx)
+
+
+# ---------------------------------------------------------------------------
+# ShapeCollection
+# ---------------------------------------------------------------------------
+
+
+class ShapeCollection:
+    """Indexable, iterable view over a slide's shapes.
+
+    Index by 1-based z-order (`slide.shapes[2]`) or by name
+    (`slide.shapes["Title 1"]`). Iteration yields a `Shape` per shape in
+    z-order. `list()` emits the structured dict used by `slide read`.
+    """
+
+    def __init__(self, slide: Slide) -> None:
+        self._slide = slide
+
+    @property
+    def _com_collection(self) -> Any:
+        return self._slide.com.Shapes
+
+    def __len__(self) -> int:
+        with _com.translate_com_errors():
+            return int(self._com_collection.Count)
+
+    def __getitem__(self, key: int | str) -> Shape:
+        if isinstance(key, bool):
+            raise TypeError(f"shape key must be int or str, got {type(key).__name__}")
+        if isinstance(key, int):
+            count = len(self)
+            if key < 1 or key > count:
+                raise AnchorNotFoundError("shape", f"shape:{self._slide.index}:{key}")
+            return Shape(self._slide, key)
+        if isinstance(key, str):
+            with _com.translate_com_errors():
+                for idx, sh in enumerate(self._com_collection, start=1):
+                    if str(sh.Name) == key:
+                        return Shape(self._slide, idx)
+            raise AnchorNotFoundError("shape", key)
+        raise TypeError(f"shape key must be int or str, got {type(key).__name__}")
+
+    def __contains__(self, key: object) -> bool:
+        if isinstance(key, bool) or not isinstance(key, (int, str)):
+            return False
+        try:
+            self[key]
+            return True
+        except AnchorNotFoundError:
+            return False
+
+    def __iter__(self) -> Iterator[Shape]:
+        count = len(self)
+        for idx in range(1, count + 1):
+            yield Shape(self._slide, idx)
+
+    def list(self) -> list[dict[str, Any]]:
+        """Every shape as a structured dict, in z-order."""
+        out: list[dict[str, Any]] = []
+        with _com.translate_com_errors():
+            for idx, sh in enumerate(self._com_collection, start=1):
+                out.append(shape_to_dict(sh, self._slide.index, idx))
+        return out
