@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Spike harness scratch state (scripts/undo_test.py)
+scripts/.undo_test_state.json

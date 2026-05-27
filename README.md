@@ -93,10 +93,12 @@ ambiguous match · `6` shape has no text frame.
 - **Politeness.** By default every operation preserves the slide the user is
   looking at and their shape/text selection. Only verbs that *must* move the
   view say so in their name (`go_to`, `allow_view_move()`).
-- **No atomic undo.** PowerPoint has no `UndoRecord`, so `deck.edit(...)` is a
-  *view/Selection-preservation* scope only — **not** an atomic-undo scope. Each
-  mutation inside the block is its own Ctrl-Z entry. The user keeps full Ctrl-Z,
-  just N presses, not one.
+- **Atomic undo — one Ctrl-Z per block.** PowerPoint has no `UndoRecord`, but it
+  groups the COM edits made inside a single `deck.edit(...)` block into one undo
+  entry (the scope fences the block with `StartNewUndoEntry`), so a whole block
+  reverts with a single Ctrl-Z. The one caveat: there's no explicit "end" fence —
+  always wrap mutations in `deck.edit(...)` rather than editing bare, so each
+  block stays cleanly self-contained.
 
 ## Development
 

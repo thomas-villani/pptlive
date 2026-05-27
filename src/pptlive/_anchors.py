@@ -69,7 +69,8 @@ class Anchor(ABC):
         Embed `\\n` (or `\\r`) for multiple paragraphs — PowerPoint treats them
         as paragraph breaks. Targets the text range directly, never the
         Selection, so it doesn't move the user's view. Wrap in `deck.edit(...)`
-        to preserve the viewed slide (note: not atomic undo — see `EditScope`).
+        to preserve the viewed slide and collapse the block to one Ctrl-Z
+        (see `EditScope`).
         """
         with _com.translate_com_errors():
             self._text_range().Text = text

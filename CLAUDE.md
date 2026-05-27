@@ -52,7 +52,7 @@ src/pptlive/
   _shapes.py         ShapeCollection / Shape  (a Shape IS an Anchor when it has a text frame; geometry verbs)
   _anchors.py        Anchor base + Paragraph, Cell, Notes
   _selection.py      viewed-slide + Selection snapshot/restore
-  _edit.py           EditScope — view/Selection preservation, NO UndoRecord (see below)
+  _edit.py           EditScope — view/Selection preservation + atomic undo via StartNewUndoEntry (see below)
   _findreplace.py    find() / find_replace()
   _show.py           SlideShow control (deck.show)
   cli/{__init__,__main__,main,commands}.py
@@ -87,12 +87,18 @@ tests/conftest.py    fake_powerpoint fixture (MagicMock COM), no_powerpoint, rea
 
 ## The three things PowerPoint changes vs. Word — read before coding
 
-1. **No atomic undo. PowerPoint has no `UndoRecord`.** Word's `EditScope` opens
-   `Application.UndoRecord` so a block is one Ctrl-Z; PowerPoint has no such API.
-   So pptlive's `edit()` is a **view/Selection-preservation scope only** — each
-   mutation is its own Ctrl-Z entry. Say this loudly in docs and docstrings;
-   never imply parity. (Confirm during the v0 spike that no undo-grouping
-   primitive snuck into a recent build.)
+1. **Atomic undo works after all — just differently. PowerPoint has no
+   `UndoRecord`.** Word's `EditScope` brackets a block with
+   `Application.UndoRecord` (start/end); PowerPoint has no such bracket. **But the
+   2026-05-26 spike (`scripts/undo_test.py`) found PowerPoint already groups
+   consecutive in-session COM edits into one undo entry by default**, and
+   `Application.StartNewUndoEntry()` is a verified *boundary* primitive. So
+   `edit()` calls `StartNewUndoEntry()` on entry to fence the block, and the whole
+   block is **one Ctrl-Z** — near-parity with wordlive. Honest caveat: there's no
+   explicit "end" fence (the next `edit()` or a user action closes it), so always
+   wrap mutations in `deck.edit(...)`. Cross-*process* edits (separate CLI calls)
+   are verified to stay distinct undo entries — each re-fences at its own `edit()`
+   entry. (`_edit.py` is where the fence lives.)
 2. **PowerPoint must be visible.** `Application.Visible = False` raises in most
    builds, so `connect()` has no `visible=False` mode. Politeness is about *not
    moving the user's view*, not about working hidden.

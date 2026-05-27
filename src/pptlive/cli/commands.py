@@ -299,7 +299,7 @@ def _set_text(ctx: click.Context, anchor_id: str, text: str, label: str) -> None
 @click.option("--text", "text", required=True, help="New text (embed \\n for paragraphs).")
 @click.pass_context
 def write(ctx: click.Context, anchor_id: str, text: str) -> None:
-    """Set the text of a text anchor (preserves the viewed slide; not atomic undo)."""
+    """Set the text of a text anchor (preserves the viewed slide; one Ctrl-Z)."""
     _set_text(ctx, anchor_id, text, f"CLI: write {anchor_id}")
 
 

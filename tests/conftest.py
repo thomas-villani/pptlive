@@ -318,10 +318,15 @@ class _FakeApplication:
         self._selected_names: tuple[str, ...] = ()
         self.Visible = True
         self._window = _FakeWindow(self)
+        self._undo_entries = 0  # count of StartNewUndoEntry() calls (edit() fences)
         # Wire back-refs so Shapes.Range(...).Select() can update the selection.
         for pres in presentations:
             for slide in pres.Slides:
                 slide.Shapes._app = self
+
+    def StartNewUndoEntry(self) -> None:
+        """Mirror PowerPoint's boundary primitive; edit() calls this on entry."""
+        self._undo_entries += 1
 
     @property
     def Presentations(self) -> _FakePresentations:

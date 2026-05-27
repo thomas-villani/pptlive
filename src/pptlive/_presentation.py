@@ -130,15 +130,18 @@ class Presentation:
 
     @contextmanager
     def edit(self, label: str) -> Iterator[EditScope]:
-        """Open a view/Selection-preserving edit scope.
+        """Open an atomic-undo + view/Selection-preserving edit scope.
 
-        **Not** an atomic-undo scope — PowerPoint has no `UndoRecord`, so each
-        mutation inside the block is its own Ctrl-Z entry. The scope only ensures
-        the user is returned to the slide and selection they had. See `EditScope`.
+        Mutations inside the block collapse into a **single Ctrl-Z**: the scope
+        fences a fresh undo entry with `Application.StartNewUndoEntry()` on entry
+        and PowerPoint groups the rest. On clean exit the user is returned to the
+        slide and selection they had. See `EditScope` for the mechanism and its
+        caveats (no explicit "end" fence; always wrap mutations in `edit`).
 
         ```
         with deck.edit("Revise agenda slide"):
             deck.anchor_by_id("ph:2:title").set_text("Agenda")
+            deck.anchor_by_id("ph:2:body").set_text("Intro\\nDemo\\nQ&A")
         ```
         """
         scope = EditScope(self._ppt, label)

@@ -14,9 +14,9 @@ Quick start:
             deck.anchor_by_id("ph:2:title").set_text("Agenda")
             deck.anchor_by_id("ph:2:body").set_text("Intro\\nDemo\\nQ&A")
 
-Note: `edit()` preserves the user's view and selection but is **not** an
-atomic-undo scope — PowerPoint has no `UndoRecord`, so each mutation is its own
-Ctrl-Z entry.
+Note: `edit()` preserves the user's view and selection *and* is an atomic-undo
+scope — PowerPoint groups a block's edits into a single Ctrl-Z (fenced with
+`StartNewUndoEntry`). See `_edit.EditScope` for the mechanism and caveats.
 """
 
 from __future__ import annotations

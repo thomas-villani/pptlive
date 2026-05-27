@@ -77,15 +77,21 @@ object model (see #3 — read it, it's the big one):
    placeholders, table cells, or notes — never the live `Selection` unless
    explicitly requested. Text is set through `Shape.TextFrame.TextRange.Text`
    directly, so no edit needs to select anything.
-3. **Atomic undo — NOT available; documented honestly.** Word has
+3. **Atomic undo — available, via a different mechanism than Word.** Word has
    `Application.UndoRecord` (`StartCustomRecord` / `EndCustomRecord`, added in
-   Word 2010). **PowerPoint has no equivalent** — there is no API to group N
-   programmatic mutations into a single undo step. So pptlive's `edit()` scope
-   is a *view/Selection-preservation* scope, **not** an atomic-undo scope. Each
-   mutation is its own Ctrl-Z entry. This is a real downgrade from wordlive and
-   we say so loudly rather than implying parity. Mitigations in
-   [Key Technical Concerns](#key-technical-concerns). *(Spike item — confirm no
-   undo-grouping primitive snuck in via a recent build before finalizing.)*
+   Word 2010). **PowerPoint has no equivalent bracket** — but the 2026-05-26
+   spike (`scripts/undo_test.py`) found it doesn't need one: PowerPoint **groups
+   consecutive COM edits made within one automation session into a single undo
+   entry by default**, and `Application.StartNewUndoEntry()` is a verified
+   *boundary* primitive (it starts a fresh entry; subsequent edits accumulate
+   into it). So pptlive's `edit()` scope is **both** a view/Selection-preservation
+   scope **and** an atomic-undo scope: it calls `StartNewUndoEntry()` on entry to
+   fence the block, and the whole block reverts with one Ctrl-Z — near-parity with
+   wordlive. Two honest caveats: there is no explicit "end" fence (the block is
+   closed by the next `edit()` or by the user's next manual action), so always
+   wrap mutations in `deck.edit(...)`. (Cross-*process* edits — separate CLI
+   invocations — were also verified to stay distinct undo entries, since each
+   invocation re-fences at its own `edit()` entry.)
 4. **Structured I/O.** Reads return dataclasses/dicts; CLI emits one JSON object
    per invocation; exit codes are deterministic. No string scraping.
 5. **Escape hatch always available.** Every wrapper exposes `.com` for the raw
@@ -226,7 +232,7 @@ with pl.attach() as ppt:
     cell  = deck.anchor_by_id("cell:5:1:2:3")  # table cell
 
     # --- POLITE WRITES (preserves viewed slide + Selection) ---
-    with deck.edit("Revise agenda slide"):     # view/Selection scope (NOT atomic undo — see principles)
+    with deck.edit("Revise agenda slide"):     # view/Selection scope + one Ctrl-Z (see principles)
         deck.anchor_by_id("ph:2:title").set_text("Agenda")
         deck.anchor_by_id("ph:2:body").set_text("Intro\nDemo\nQ&A")
         chart.move(top=140)
@@ -265,9 +271,10 @@ with pl.attach() as ppt:
   `Paragraph`, `Cell`, `Notes`. Same verb set as wordlive (`text`, `set_text`,
   `apply_style`, `format_paragraph`, list verbs), minus anything Word-only.
 - **`EditScope`** — context manager from `deck.edit(label)`. Snapshots and
-  restores the **viewed slide index** + `Selection`. **Does not** open an
-  UndoRecord (PowerPoint has none). `allow_view_move()` opts out of the
-  view-restore, the way `allow_cursor_move()` does in wordlive.
+  restores the **viewed slide index** + `Selection`, and fences a single undo
+  entry via `StartNewUndoEntry()` on entry (no Word-style `UndoRecord` exists,
+  but PowerPoint groups the in-session block into one Ctrl-Z). `allow_view_move()`
+  opts out of the view-restore, the way `allow_cursor_move()` does in wordlive.
 - **`SlideShow`** — `deck.show`: `start`, `end`, `next`, `previous`, `goto(n)`,
   `black()`, `white()`, `state()`. Wraps `SlideShowSettings.Run()` /
   `SlideShowWindow.View`.
@@ -311,7 +318,7 @@ pptlive show start|end|next|prev|black|white|state
 pptlive show goto --slide S
 
 pptlive go-to --anchor-id shape:3:2             # deliberate, opt-in view move
-pptlive exec --script ops.json                  # batch ops (NB: not one undo — see below)
+pptlive exec --script ops.json                  # batch ops, applied as one Ctrl-Z (see below)
 ```
 
 Conventions (same contract as wordlive):
@@ -329,12 +336,15 @@ Wiring it as an LLM tool stays trivial:
 
 ### `exec` ops
 
-Same batch-script shape as wordlive (`{"label": ..., "ops": [...]}`), with the
-**critical caveat that the batch is not one undo step** — there's no PowerPoint
-`UndoRecord`, so a 5-op script is 5 Ctrl-Z entries, applied in order. Failure
-semantics match wordlive: if op K fails, ops 1..K-1 are already applied; we
-report the failing index and re-raise so the exit code maps correctly. There is
-no `"tracked": true` key (PowerPoint has no Track Changes).
+Same batch-script shape as wordlive (`{"label": ..., "ops": [...]}`). Because an
+`exec` run is a single automation session, **the whole batch collapses to one
+undo entry** — the run fences it with `StartNewUndoEntry`, then PowerPoint groups
+the rest, so a 5-op script is one Ctrl-Z, not five. That matches wordlive's atomic
+batch even without an `UndoRecord`. Failure semantics match wordlive: if op K
+fails, ops 1..K-1 are already applied (and sit in that one undo entry, so a single
+Ctrl-Z reverts the partial batch); we report the failing index and re-raise so the
+exit code maps correctly. There is no `"tracked": true` key (PowerPoint has no
+Track Changes).
 
 Op kinds (slide/shape-shaped rather than paragraph-shaped):
 
@@ -360,17 +370,20 @@ Proposed op set: `add_slide`, `delete_slide`, `duplicate_slide`, `move_slide`,
 
 ## Key Technical Concerns
 
-- **No `UndoRecord` — the headline limitation.** Carries through the whole
-  design (the `edit()` scope, the `exec` caveat, the lost `"tracked"` key).
-  Mitigation options to evaluate during the v0 spike, none free:
-  1. **Document per-op undo and move on** (simplest; honest). Most LLM edits are
-     small, and the user still has full Ctrl-Z, just N steps not 1.
-  2. **Snapshot-by-duplicate for risky batches** — duplicate the target slide(s)
-     to the end (or a scratch area) before a multi-op mutation, so "revert" is
-     "delete the edited slide, un-hide the copy". Heavyweight; opt-in only.
-  3. **Save-point bracketing** — record `Presentation.Saved` / offer an explicit
-     checkpoint save before a batch. Doesn't help in-session undo but bounds
-     blast radius. Decide before shipping `exec`.
+- **Undo — resolved by the v0 spike, not the limitation we feared.** We expected
+  no `UndoRecord` to mean per-op undo. The 2026-05-26 spike (`scripts/undo_test.py`)
+  showed otherwise: PowerPoint groups consecutive in-session COM edits into one
+  undo entry by default, and `StartNewUndoEntry()` is a boundary primitive. So
+  `edit()` fences each block as one Ctrl-Z and an `exec` batch is one undo entry —
+  no snapshot-by-duplicate or save-point machinery needed. Two residual concerns:
+  1. **No explicit "end" fence.** The block is closed only by the next `edit()`
+     (which re-fences) or a user action — so mutations made *outside* an `edit()`
+     block can bleed into an adjacent entry. The library always wraps writes in
+     `edit()`; document that bare `set_text` is the unsupported path.
+  2. **Cross-process isolation — verified.** Two separate CLI-style invocations
+     (each its own `attach()` + `edit()` fence) edited the same slide; one Ctrl-Z
+     reverted only the second invocation's edit, so separate invocations stay
+     distinct undo entries — each re-fences at its own `edit()` entry.
 - **View / Selection preservation.** Snapshot `ActiveWindow.View.Slide.SlideIndex`
   (the slide the user is looking at in Normal view) and `ActiveWindow.Selection`
   (type + shape/text range) on enter; restore on exit unless `allow_view_move()`
@@ -412,10 +425,12 @@ Ordered by **LLM-agent leverage**, mirroring `feature-plan.md`.
 - **v0 — close the live-edit loop.** `attach` / `connect` / context manager;
   `slides` / `outline` / `slide read` reads; `Shape`-as-`Anchor` with
   `text` / `set_text`; `ph:S:KIND` + `shape:S:N` + `notes:S` resolution;
-  `edit()` as a view/Selection scope (no UndoRecord); CLI `status`, `slides`,
-  `outline`, `read`, `write`, `replace`; typed exceptions; constants enum; the
-  honest "no atomic undo" docs. **Spike first:** UndoRecord absence, notes
-  placeholder resolution, Selection round-trip, `Visible` behaviour.
+  `edit()` as a view/Selection scope + atomic-undo fence (`StartNewUndoEntry`);
+  CLI `status`, `slides`, `outline`, `read`, `write`, `replace`; typed exceptions;
+  constants enum. **Spike first (done 2026-05-26):** UndoRecord absence (→ found
+  default in-session grouping + `StartNewUndoEntry` boundary instead), notes
+  placeholder resolution, Selection round-trip, `Visible` behaviour — all
+  confirmed via `scripts/spike.py` + `scripts/undo_test.py`.
 - **v0.1 — slide lifecycle.** `slide add / delete / duplicate / move / set-layout`;
   layout-name → `CustomLayout` mapping. The first genuinely no-Word-analog track.
 - **v0.2 — shapes & geometry.** `shape add` (textbox/picture/shape), `move` /
@@ -444,9 +459,12 @@ Ordered by **LLM-agent leverage**, mirroring `feature-plan.md`.
 1. **Name.** Working name `pptlive` (direct wordlive parallel). Alternatives:
    `pptwings` (xlwings echo), `slidelive`, `decklive`, `livepptx`. Decide before
    first commit — affects package, import, and CLI binary names.
-2. **The undo gap.** Which mitigation (per-op / snapshot-by-duplicate /
-   save-point) becomes the documented default for `exec`? This is the single
-   biggest open design call and should be settled by the v0 spike, not guessed.
+2. ~~**The undo gap.** Which mitigation becomes the documented default?~~
+   **Settled by the v0 spike (2026-05-26): no mitigation needed.** PowerPoint
+   groups in-session COM edits into one undo entry by default and
+   `StartNewUndoEntry()` fences boundaries, so `edit()` and `exec` are already
+   atomic (one Ctrl-Z). Cross-process isolation (separate CLI calls = separate
+   entries) is also verified — see Key Technical Concerns.
 3. **`shape:` addressing stability.** z-order index is canonical but shifts when
    shapes are added/removed mid-batch. Do listings also emit a stabler handle
    (shape `.Name`, or a synthesized id), and should `exec` re-resolve by name
