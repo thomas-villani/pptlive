@@ -17,7 +17,8 @@ from ._anchors import Anchor
 from ._edit import EditScope
 from ._shapes import Shape
 from ._slides import Slide, SlideCollection, _paragraphs
-from .exceptions import AnchorNotFoundError, PresentationNotFoundError
+from .constants import DEFAULT_LAYOUT_ALIAS, match_layout_name
+from .exceptions import AnchorNotFoundError, LayoutNotFoundError, PresentationNotFoundError
 
 if TYPE_CHECKING:
     from ._app import PowerPoint
@@ -58,6 +59,56 @@ class Presentation:
         with _com.translate_com_errors():
             ps = self._pres.PageSetup
             return {"width": float(ps.SlideWidth), "height": float(ps.SlideHeight)}
+
+    def layouts(self) -> list[dict[str, Any]]:
+        """The deck's slide layouts: `[{index, name}, ...]` (1-based index).
+
+        Sourced from `SlideMaster.CustomLayouts`. Lists the exact names that
+        `slides.add(layout=…)` / `Slide.set_layout(…)` accept on this template —
+        useful when a theme has renamed the standard Office layouts.
+        """
+        out: list[dict[str, Any]] = []
+        with _com.translate_com_errors():
+            for idx, layout in enumerate(self._custom_layouts(), start=1):
+                out.append({"index": idx, "name": str(layout.Name)})
+        return out
+
+    def _custom_layouts(self) -> list[Any]:
+        """The deck's `CustomLayout` COM objects (empty if it exposes none)."""
+        try:
+            return list(self._pres.SlideMaster.CustomLayouts)
+        except Exception:
+            return []
+
+    def _resolve_layout(self, requested: str | int | None) -> Any | None:
+        """Map a friendly layout name/index to a `CustomLayout` COM object.
+
+        Returns the matching `CustomLayout`, or None *only* when the deck exposes
+        no custom layouts at all (so `slides.add` can fall back to the legacy
+        `Slides.Add`). `requested=None` picks the default (`title_and_content`,
+        else the first layout). A name matches case/separator-insensitively
+        against the deck's real layout names, then a small friendly-alias table;
+        an int is a 1-based index into the layouts. Raises `LayoutNotFoundError`
+        — listing the available names — for an unknown name or bad index.
+        """
+        with _com.translate_com_errors():
+            layouts = self._custom_layouts()
+            if not layouts:
+                return None
+            names = [str(layout.Name) for layout in layouts]
+            if requested is None:
+                idx = match_layout_name(names, DEFAULT_LAYOUT_ALIAS)
+                return layouts[idx - 1] if idx is not None else layouts[0]
+            if isinstance(requested, bool):
+                raise LayoutNotFoundError(str(requested), names)
+            if isinstance(requested, int):
+                if requested < 1 or requested > len(layouts):
+                    raise LayoutNotFoundError(str(requested), names)
+                return layouts[requested - 1]
+            idx = match_layout_name(names, requested)
+            if idx is None:
+                raise LayoutNotFoundError(str(requested), names)
+            return layouts[idx - 1]
 
     def outline(self) -> list[dict[str, Any]]:
         """The Outline-view analog: `[{slide, title, bullets:[...]}, ...]`.

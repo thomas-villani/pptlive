@@ -7,9 +7,12 @@ resolved open questions inline (strike them through, link the commit).
 
 **Status legend:** `[ ]` not started · `[~]` in progress · `[x]` shipped.
 
-> **Bootstrap + v0 have landed** (fake-COM unit tests green: `ruff`, `mypy`,
-> `pytest` all pass; 68 tests). The library is usable as an LLM tool against a
-> real, already-running PowerPoint. The four **Spike** items below were
+> **Bootstrap + v0 + v0.1 have landed** (fake-COM unit tests green: `ruff`,
+> `mypy`, `pytest` all pass; 92 tests). The library is usable as an LLM tool
+> against a real, already-running PowerPoint, and now drives the **slide
+> lifecycle** (`slide add/delete/duplicate/move/set-layout` + layout-name
+> resolution) — verified live 2026-05-26 via `scripts/layout_spike.py` (net-zero;
+> the v0.1 section records the findings). The four **Spike** items below were
 > **verified against real COM on 2026-05-26** (PowerPoint desktop, a 3-slide
 > deck). Items #2/#3/#4 confirmed as specced. **#1 overturned the spec's
 > headline assumption:** PowerPoint *does* group consecutive in-session COM edits
@@ -139,15 +142,34 @@ read/set text on the common anchors, polite view/Selection scope, the JSON CLI.
 
 ---
 
-## v0.1 — slide lifecycle (first no-Word-analog track)
+## v0.1 — slide lifecycle (first no-Word-analog track) — SHIPPED
 
-- [ ] `slides.add(layout=…, index=…)`, `delete`, `duplicate`, `move_to(n)`,
-  `set_layout(name)`.
-- [ ] Layout-name → `CustomLayout` mapping from
-  `Presentation.SlideMaster.CustomLayouts`; prefer modern `Slides.AddSlide`,
-  fall back to legacy `Add(Index, PpSlideLayout)`. **Spike:** name resolution
-  across templates with renamed layouts.
-- [ ] CLI `slide add|delete|duplicate|move|set-layout`.
+- [x] `slides.add(layout=…, index=…)`, `Slide.delete`, `duplicate`, `move_to(n)`,
+  `set_layout(name)`. The verbs only mutate; wrap in `deck.edit(label)` (as the
+  CLI does) for view preservation + a one-Ctrl-Z fence. `add`/`duplicate`/`move_to`
+  return the resulting `Slide`; `add` defaults to appending; `move_to` returns the
+  same slide at its new `index`.
+- [x] Layout-name → `CustomLayout` mapping from
+  `Presentation.SlideMaster.CustomLayouts` (`Presentation._resolve_layout` +
+  `constants.match_layout_name`); modern `Slides.AddSlide(Index, CustomLayout)`,
+  legacy `Slides.Add(Index, PpSlideLayout)` only when a deck exposes no custom
+  layouts. **Spike RESOLVED (verified live 2026-05-26, `scripts/layout_spike.py`):**
+  names match case/separator-insensitively against the deck's *real* layout names
+  first (so renamed-layout templates resolve by their actual name), then a small
+  friendly-alias table for the standard Office set; an unknown name raises
+  `LayoutNotFoundError` (exit 2) **listing the available names**, and
+  `deck.layouts()` / `slide layouts` make them discoverable up front. The test
+  deck reported 11 layouts (9 standard + two vertical-text variants);
+  `AddSlide`/`Slide.Duplicate` (1-based `SlideRange`)/`MoveTo(toPos)`/`CustomLayout =`
+  /`Delete` all behaved as coded, net-zero. *Honest caveat:* a **bulk COM
+  enumerator** (`list(deck.com.Slides)`, used by `SlideCollection.__iter__`) was
+  observed to *transiently* yield a stale slide handle once, right after a
+  move/duplicate across separate `edit()` blocks — not reproducible on retest and
+  a non-issue for the CLI (each verb is its own process). Resolve slides **by
+  index** in tight post-mutation loops if you hit it; revisit iteration hardening
+  only if smoke runs show it reliably.
+- [x] CLI `slide add|delete|duplicate|move|set-layout`, plus `slide layouts`
+  (discovery read). Exit codes reuse the v0 mapping (2 = slide/layout not found).
 
 ## v0.2 — shapes & geometry (makes slide-building possible)
 

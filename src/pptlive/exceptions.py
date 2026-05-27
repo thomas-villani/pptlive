@@ -55,6 +55,25 @@ class SlideNotFoundError(AnchorNotFoundError):
         self.index = index
 
 
+class LayoutNotFoundError(AnchorNotFoundError):
+    """A requested slide layout name/index doesn't exist in the deck.
+
+    Subclass of `AnchorNotFoundError` so it shares exit code 2. Layout names are
+    template-dependent (a theme can rename them), so the message lists the deck's
+    actual layout names and `available` carries them structured — an agent can
+    read them off stderr (or `slide layouts`) and retry with a real name.
+    """
+
+    def __init__(self, requested: str, available: list[str]) -> None:
+        names = ", ".join(repr(n) for n in available) if available else "(none)"
+        # Build the full message first, then hand AnchorNotFoundError the bare
+        # name; overwrite args so the available list survives in str(exc).
+        super().__init__("layout", requested)
+        self.args = (f"layout not found: {requested!r}; available: {names}",)
+        self.requested = requested
+        self.available = available
+
+
 class NoTextFrameError(PptliveError):
     """A text operation targeted a shape with no text frame (picture, line, …).
 

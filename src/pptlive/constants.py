@@ -8,6 +8,7 @@ wordlive's alignment names do.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import IntEnum
 from typing import Any
 
@@ -231,3 +232,74 @@ class PpViewType(IntEnum):
     OUTLINE = 6
     NOTES_PAGE = 5
     SLIDE_SORTER = 7
+
+
+class PpSlideLayout(IntEnum):
+    """Legacy `Slides.Add(Index, Layout)` layout codes (the deprecated path).
+
+    Only reached as a fallback when a deck exposes no `CustomLayouts` for the
+    modern `AddSlide(Index, CustomLayout)`. Friendly layout names resolve to a
+    real `CustomLayout` instead (see `match_layout_name`), so this enum stays
+    deliberately tiny — `TEXT` (a title-and-content slide) is the fallback default.
+    """
+
+    TITLE = 1
+    TEXT = 2
+    TWO_COLUMN_TEXT = 4
+    TITLE_ONLY = 11
+    BLANK = 12
+    OBJECT = 16
+
+
+# Default friendly layout for `slides.add()` when the caller names none, and the
+# legacy `Slides.Add` layout used only when a deck has no CustomLayouts at all.
+DEFAULT_LAYOUT_ALIAS = "title_and_content"
+DEFAULT_LEGACY_LAYOUT = PpSlideLayout.TEXT
+
+
+def _normalize_layout(name: str) -> str:
+    """Collapse a layout name to its case/separator-insensitive comparison key.
+
+    "Title and Content", "title_and_content", and "Title And Content" all map to
+    "titleandcontent", so a friendly token matches the deck's real layout name
+    regardless of spacing, casing, or underscores.
+    """
+    return "".join(ch for ch in str(name).lower() if ch.isalnum())
+
+
+# Friendly token (normalized) -> standard Office layout name (normalized), for
+# tokens that don't already normalize to the layout's own name. Tokens like
+# "two_content" or "blank" need no entry — they normalize straight onto "Two
+# Content" / "Blank". This table only bridges the genuinely divergent shorthands.
+_LAYOUT_ALIASES: dict[str, str] = {
+    "title": "titleslide",
+    "content": "titleandcontent",
+    "titlecontent": "titleandcontent",
+    "titleandbody": "titleandcontent",
+    "bullets": "titleandcontent",
+    "section": "sectionheader",
+    "twocolumn": "twocontent",
+    "twocolumntext": "twocontent",
+    "caption": "contentwithcaption",
+}
+
+
+def match_layout_name(available: Sequence[str], requested: str) -> int | None:
+    """1-based index into `available` of the layout matching `requested`, else None.
+
+    Matches case/separator-insensitively against the deck's *actual* layout names
+    first — so any template, including one whose layouts were renamed, resolves
+    by its real name — then falls back to a small friendly-alias table for the
+    standard Office layouts. Returns None when nothing matches; callers raise
+    `LayoutNotFoundError` carrying `available` so an agent can pick a valid name.
+    """
+    norm_available = [_normalize_layout(name) for name in available]
+    want = _normalize_layout(requested)
+    if not want:
+        return None
+    if want in norm_available:
+        return norm_available.index(want) + 1
+    canonical = _LAYOUT_ALIASES.get(want)
+    if canonical is not None and canonical in norm_available:
+        return norm_available.index(canonical) + 1
+    return None

@@ -101,6 +101,73 @@ def test_read_missing_slide_exit_2(fake_powerpoint) -> None:  # type: ignore[no-
     assert result.exit_code == 2
 
 
+def test_slide_layouts(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["slide", "layouts"])
+    assert result.exit_code == 0
+    rows = _json(result)
+    assert rows[0]["name"] == "Title Slide"
+
+
+def test_slide_add(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["slide", "add", "--layout", "two_content"])
+    assert result.exit_code == 0
+    payload = _json(result)
+    assert payload["ok"] is True
+    assert payload["layout"] == "Two Content"
+    assert fake_powerpoint.ActivePresentation.Slides.Count == 4
+
+
+def test_slide_add_unknown_layout_exit_2(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["slide", "add", "--layout", "bogus"])
+    assert result.exit_code == 2
+    # Deck untouched on a bad layout.
+    assert fake_powerpoint.ActivePresentation.Slides.Count == 3
+
+
+def test_slide_delete(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["slide", "delete", "--slide", "2"])
+    assert result.exit_code == 0
+    assert _json(result)["deleted"] == 2
+    assert fake_powerpoint.ActivePresentation.Slides.Count == 2
+
+
+def test_slide_delete_out_of_range_exit_2(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["slide", "delete", "--slide", "9"])
+    assert result.exit_code == 2
+
+
+def test_slide_duplicate(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["slide", "duplicate", "--slide", "1"])
+    assert result.exit_code == 0
+    payload = _json(result)
+    assert payload["from"] == 1
+    assert payload["index"] == 2
+    assert fake_powerpoint.ActivePresentation.Slides.Count == 4
+
+
+def test_slide_move(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["slide", "move", "--slide", "1", "--to", "3"])
+    assert result.exit_code == 0
+    assert _json(result)["index"] == 3
+    assert fake_powerpoint.ActivePresentation.Slides(3).SlideID == 256
+
+
+def test_slide_set_layout(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main, ["slide", "set-layout", "--slide", "3", "--layout", "comparison"]
+    )
+    assert result.exit_code == 0
+    assert _json(result)["layout"] == "Comparison"
+
+
+def test_slide_lifecycle_fences_one_undo_entry(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    # A mutating slide command runs through deck.edit() -> one StartNewUndoEntry.
+    assert fake_powerpoint._undo_entries == 0
+    result = CliRunner().invoke(main, ["slide", "add", "--layout", "blank"])
+    assert result.exit_code == 0
+    assert fake_powerpoint._undo_entries == 1
+
+
 def test_go_to(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     fake_powerpoint._viewed = 1
     result = CliRunner().invoke(main, ["go-to", "--anchor-id", "shape:3:1"])

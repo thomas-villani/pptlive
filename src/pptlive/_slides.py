@@ -6,7 +6,11 @@ slide-level verbs live here, while text lives on its shapes/placeholders/notes.
 say) and its stable `id` (`SlideID`, survives reordering) so listings can be
 re-identified after a move.
 
-Slide lifecycle (add/delete/duplicate/move/set-layout) is v0.1 and not built yet.
+Slide lifecycle — `SlideCollection.add()` and `Slide.delete/duplicate/move_to/
+set_layout` — is the v0.1 track (the first with no Word analog). These verbs only
+mutate; wrap a call in `deck.edit(label)` (as the CLI does) for view preservation
+and a one-Ctrl-Z fence. Layout names resolve to a `CustomLayout` via
+`Presentation._resolve_layout` (see `constants.match_layout_name`).
 """
 
 from __future__ import annotations
@@ -17,8 +21,8 @@ from typing import TYPE_CHECKING, Any
 from . import _com
 from ._anchors import Notes
 from ._shapes import PlaceholderShape, ShapeCollection, is_placeholder
-from .constants import is_true, placeholder_types_for
-from .exceptions import AnchorNotFoundError, SlideNotFoundError
+from .constants import DEFAULT_LEGACY_LAYOUT, is_true, placeholder_types_for
+from .exceptions import AnchorNotFoundError, LayoutNotFoundError, SlideNotFoundError
 
 if TYPE_CHECKING:
     from ._presentation import Presentation
@@ -152,6 +156,53 @@ class Slide:
             "shapes": self.shapes.list(),
         }
 
+    # -- lifecycle (v0.1; wrap in deck.edit(...) for view + one-Ctrl-Z) --------
+
+    def delete(self) -> None:
+        """Delete this slide from the deck (`Slide.Delete`). The wrapper is spent."""
+        with _com.translate_com_errors():
+            self._slide.Delete()
+
+    def duplicate(self) -> Slide:
+        """Duplicate this slide; return the copy (inserted immediately after).
+
+        Wraps `Slide.Duplicate`, which yields a one-item `SlideRange`. The copy
+        gets a fresh `SlideID`; everything after the original shifts down by one.
+        """
+        with _com.translate_com_errors():
+            new_range = self._slide.Duplicate()
+            new_com = new_range(1)
+        return Slide(self._deck, new_com)
+
+    def move_to(self, index: int) -> Slide:
+        """Move this slide to 1-based position `index` (`Slide.MoveTo`); return self.
+
+        The wrapper keeps pointing at the same slide, which now reports the new
+        `index`. Raises `SlideNotFoundError` if `index` is out of range (1..count).
+        """
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise TypeError(f"index must be int, got {type(index).__name__}")
+        count = len(self._deck.slides)
+        if index < 1 or index > count:
+            raise SlideNotFoundError(index)
+        with _com.translate_com_errors():
+            self._slide.MoveTo(index)
+        return self
+
+    def set_layout(self, layout: str | int) -> Slide:
+        """Re-apply a slide layout by friendly name or 1-based index; return self.
+
+        Resolves `layout` to a `CustomLayout` (see `Presentation._resolve_layout`)
+        and assigns `Slide.CustomLayout`. Raises `LayoutNotFoundError` (listing
+        the deck's layout names) for an unknown layout.
+        """
+        custom = self._deck._resolve_layout(layout)
+        if custom is None:
+            raise LayoutNotFoundError(str(layout), [])
+        with _com.translate_com_errors():
+            self._slide.CustomLayout = custom
+        return self
+
     def __repr__(self) -> str:
         return f"<Slide index={self.index}>"
 
@@ -185,6 +236,34 @@ class SlideCollection:
             slides = list(self._com_collection)
         for slide_com in slides:
             yield Slide(self._deck, slide_com)
+
+    def add(self, layout: str | int | None = None, index: int | None = None) -> Slide:
+        """Insert a new slide and return it (v0.1; wrap in `deck.edit(...)`).
+
+        `layout` is a friendly name or 1-based layout index (default
+        `title_and_content`); `index` is the 1-based insertion position
+        (default: appended to the end). Prefers the modern
+        `Slides.AddSlide(Index, CustomLayout)`, falling back to legacy
+        `Slides.Add` only on a deck that exposes no custom layouts. Raises
+        `LayoutNotFoundError` for an unknown layout and `SlideNotFoundError`
+        for an out-of-range insertion position (1..count+1).
+        """
+        count = len(self)
+        if index is None:
+            target = count + 1
+        elif isinstance(index, bool) or not isinstance(index, int):
+            raise TypeError(f"index must be int, got {type(index).__name__}")
+        elif index < 1 or index > count + 1:
+            raise SlideNotFoundError(index)
+        else:
+            target = index
+        with _com.translate_com_errors():
+            custom = self._deck._resolve_layout(layout)
+            if custom is not None:
+                new_com = self._com_collection.AddSlide(target, custom)
+            else:
+                new_com = self._com_collection.Add(target, int(DEFAULT_LEGACY_LAYOUT))
+        return Slide(self._deck, new_com)
 
     def list(self) -> list[dict[str, Any]]:
         """`[{index, id, layout, title, shape_count, has_notes}, ...]`."""

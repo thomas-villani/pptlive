@@ -43,6 +43,14 @@ with pl.attach() as ppt:
     with deck.edit("Revise the agenda slide"):
         deck.anchor_by_id("ph:2:title").set_text("Agenda")
         deck.anchor_by_id("ph:2:body").set_text("Intro\nDemo\nQ&A")
+
+    # Slide lifecycle — also one Ctrl-Z per edit() block.
+    names = deck.layouts()                   # [{index, name}] — what set_layout/add accept
+    with deck.edit("Add a results slide"):
+        new = deck.slides.add(layout="two_content", index=4)
+        deck.slides[7].duplicate()           # copy lands at slide 8
+        deck.slides[9].move_to(2)
+        deck.slides[4].set_layout("title_and_content")
 ```
 
 ## Anchors
@@ -80,6 +88,13 @@ pptlive read anchor --anchor-id ph:2:title       # read any text anchor (ph:/sha
 pptlive read notes --slide 1                     # sugar for --anchor-id notes:1
 pptlive write   --anchor-id ph:2:body  --text "Intro\nDemo\nQ&A"
 pptlive replace --anchor-id shape:3:1  --text "New text"
+
+pptlive slide layouts                            # the layout names add/set-layout accept
+pptlive slide add --layout two_content [--index 4]
+pptlive slide duplicate --slide 7
+pptlive slide move --slide 9 --to 2
+pptlive slide set-layout --slide 4 --layout title_and_content
+pptlive slide delete --slide 5
 
 pptlive go-to --anchor-id shape:3:1              # deliberate, opt-in view move
 ```

@@ -1,8 +1,9 @@
 """CLI subcommands wired against the pptlive library.
 
 v0 surface: status, slides, outline, slide read, shapes, read (anchor/notes),
-write, replace, go-to. Slide lifecycle, shape geometry, find/replace, and the
-`show` group arrive in later stages.
+write, replace, go-to. v0.1 adds the slide-lifecycle verbs under the `slide`
+group: add, delete, duplicate, move, set-layout, and layouts. Shape geometry,
+find/replace, and the `show` group arrive in later stages.
 """
 
 from __future__ import annotations
@@ -94,6 +95,12 @@ def _fmt_slide_read(grid: dict[str, Any]) -> str:
     return head + "\n" + _fmt_shapes(grid.get("shapes") or [])
 
 
+def _fmt_layouts(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "(no layouts)"
+    return "\n".join(f"{r.get('index'):>3}. {r.get('name')}" for r in rows)
+
+
 def register(group: click.Group) -> None:
     group.add_command(status)
     group.add_command(slides_cmd)
@@ -177,7 +184,7 @@ def outline(ctx: click.Context) -> None:
 
 @click.group(name="slide")
 def slide() -> None:
-    """Slide-level reads (lifecycle verbs — add/delete/duplicate — arrive in v0.1)."""
+    """Slide reads + lifecycle: read, add, delete, duplicate, move, set-layout, layouts."""
 
 
 @slide.command(name="read")
@@ -191,6 +198,145 @@ def slide_read(ctx: click.Context, index: int) -> None:
             deck = _pick_deck(ppt, ctx.obj["doc_name"])
             grid = deck.slides[index].read()
             emit(grid, as_text=not ctx.obj["as_json"], text=_fmt_slide_read(grid))
+
+    _run(ctx, go)
+
+
+@slide.command(name="layouts")
+@click.pass_context
+def slide_layouts(ctx: click.Context) -> None:
+    """List the deck's slide layouts (the names `add`/`set-layout` accept)."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            rows = deck.layouts()
+            emit(rows, as_text=not ctx.obj["as_json"], text=_fmt_layouts(rows))
+
+    _run(ctx, go)
+
+
+@slide.command(name="add")
+@click.option(
+    "--layout",
+    default=None,
+    help="Layout name (default: title_and_content). See `slide layouts` for names.",
+)
+@click.option(
+    "--index", "index", type=int, default=None, help="1-based insertion position (default: end)."
+)
+@click.pass_context
+def slide_add(ctx: click.Context, layout: str | None, index: int | None) -> None:
+    """Add a slide; print its index, id, and layout."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            with deck.edit(f"CLI: add slide ({layout or 'default'})"):
+                new = deck.slides.add(layout=layout, index=index)
+            payload = {"ok": True, "index": new.index, "id": new.id, "layout": new.layout_name}
+            emit(
+                payload,
+                as_text=not ctx.obj["as_json"],
+                text=f"added slide {new.index} ({new.layout_name})",
+            )
+
+    _run(ctx, go)
+
+
+@slide.command(name="delete")
+@click.option(
+    "--slide", "slide_index", type=int, required=True, help="1-based slide index to delete."
+)
+@click.pass_context
+def slide_delete(ctx: click.Context, slide_index: int) -> None:
+    """Delete a slide."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            target = deck.slides[slide_index]  # exit 2 here if out of range
+            with deck.edit(f"CLI: delete slide {slide_index}"):
+                target.delete()
+            emit(
+                {"ok": True, "deleted": slide_index},
+                as_text=not ctx.obj["as_json"],
+                text=f"deleted slide {slide_index}",
+            )
+
+    _run(ctx, go)
+
+
+@slide.command(name="duplicate")
+@click.option(
+    "--slide", "slide_index", type=int, required=True, help="1-based slide index to duplicate."
+)
+@click.pass_context
+def slide_duplicate(ctx: click.Context, slide_index: int) -> None:
+    """Duplicate a slide; print the copy's index and id."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            target = deck.slides[slide_index]
+            with deck.edit(f"CLI: duplicate slide {slide_index}"):
+                new = target.duplicate()
+            payload = {"ok": True, "index": new.index, "id": new.id, "from": slide_index}
+            emit(
+                payload,
+                as_text=not ctx.obj["as_json"],
+                text=f"duplicated slide {slide_index} -> {new.index}",
+            )
+
+    _run(ctx, go)
+
+
+@slide.command(name="move")
+@click.option(
+    "--slide", "slide_index", type=int, required=True, help="1-based slide index to move."
+)
+@click.option("--to", "to_index", type=int, required=True, help="1-based destination position.")
+@click.pass_context
+def slide_move(ctx: click.Context, slide_index: int, to_index: int) -> None:
+    """Move a slide to a new position."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            target = deck.slides[slide_index]
+            with deck.edit(f"CLI: move slide {slide_index} -> {to_index}"):
+                moved = target.move_to(to_index)
+            payload = {"ok": True, "index": moved.index, "id": moved.id}
+            emit(
+                payload,
+                as_text=not ctx.obj["as_json"],
+                text=f"moved slide to position {moved.index}",
+            )
+
+    _run(ctx, go)
+
+
+@slide.command(name="set-layout")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--layout", required=True, help="Layout name to apply. See `slide layouts` for names."
+)
+@click.pass_context
+def slide_set_layout(ctx: click.Context, slide_index: int, layout: str) -> None:
+    """Re-apply a slide's layout by name."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            target = deck.slides[slide_index]
+            with deck.edit(f"CLI: set layout of slide {slide_index}"):
+                target.set_layout(layout)
+            payload = {"ok": True, "index": slide_index, "layout": target.layout_name}
+            emit(
+                payload,
+                as_text=not ctx.obj["as_json"],
+                text=f"slide {slide_index} layout -> {target.layout_name}",
+            )
 
     _run(ctx, go)
 

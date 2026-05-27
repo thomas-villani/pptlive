@@ -43,6 +43,20 @@ _MSO_FALSE = 0
 _SEL_NONE = 0
 _SEL_SHAPES = 2
 
+# The standard Office layout names a deck's SlideMaster.CustomLayouts exposes;
+# the fake offers these so layout-name resolution can be exercised end to end.
+_STANDARD_LAYOUTS = (
+    "Title Slide",
+    "Title and Content",
+    "Section Header",
+    "Two Content",
+    "Comparison",
+    "Title Only",
+    "Blank",
+    "Content with Caption",
+    "Picture with Caption",
+)
+
 
 # ---------------------------------------------------------------------------
 # Shape and its text frame
@@ -107,6 +121,22 @@ class _FakeShape:
     def Select(self, *args: Any, **kwargs: Any) -> None:
         self.selected = True
 
+    def _clone(self) -> _FakeShape:
+        """A duplicate-slide copy — same name/id/type/geometry/text."""
+        text = self._text_frame.TextRange.Text if self._text_frame is not None else None
+        return _FakeShape(
+            name=self.Name,
+            shape_id=self.Id,
+            shape_type=self.Type,
+            text=text,
+            placeholder_type=self._placeholder_type,
+            left=self.Left,
+            top=self.Top,
+            width=self.Width,
+            height=self.Height,
+            rotation=self.Rotation,
+        )
+
 
 class _FakeShapeRange:
     def __init__(self, app: _FakeApplication, shapes: list[_FakeShape]) -> None:
@@ -167,8 +197,49 @@ class _FakeShapes:
 
 
 # ---------------------------------------------------------------------------
-# Slide, notes page
+# Slide, notes page, layouts
 # ---------------------------------------------------------------------------
+
+
+class _FakeCustomLayout:
+    """A `CustomLayout` — just a name, as far as resolution cares."""
+
+    def __init__(self, name: str) -> None:
+        self.Name = name
+
+
+class _FakeCustomLayouts:
+    """`SlideMaster.CustomLayouts` — iterable + 1-based callable."""
+
+    def __init__(self, names: tuple[str, ...]) -> None:
+        self._layouts = [_FakeCustomLayout(n) for n in names]
+
+    @property
+    def Count(self) -> int:
+        return len(self._layouts)
+
+    def __call__(self, index: int) -> _FakeCustomLayout:
+        return self._layouts[index - 1]
+
+    def __iter__(self) -> Any:
+        return iter(self._layouts)
+
+
+class _FakeSlideRange:
+    """What `Slide.Duplicate()` returns — a 1-based callable over the new slides."""
+
+    def __init__(self, slides: list[_FakeSlide]) -> None:
+        self._slides = slides
+
+    @property
+    def Count(self) -> int:
+        return len(self._slides)
+
+    def __call__(self, index: int) -> _FakeSlide:
+        return self._slides[index - 1]
+
+    def __iter__(self) -> Any:
+        return iter(self._slides)
 
 
 class _FakeNotesPage:
@@ -203,25 +274,71 @@ class _FakePlaceholders:
 
 
 class _FakeSlide:
+    """A slide. `SlideIndex` is derived from list position so add/move/delete
+    shift indices the way real PowerPoint does; `SlideID` stays stable."""
+
     def __init__(
         self,
         *,
-        index: int,
         slide_id: int,
         layout_name: str,
         shapes: list[_FakeShape],
         notes_text: str | None = "",
     ) -> None:
-        self.SlideIndex = index
         self.SlideID = slide_id
         self.Shapes = _FakeShapes(shapes)
-        self.CustomLayout = SimpleNamespace(Name=layout_name)
+        self.CustomLayout = _FakeCustomLayout(layout_name)
+        self._notes_text = notes_text
         self.NotesPage = _FakeNotesPage(notes_text)
+        self._collection: _FakeSlides | None = None
+        self._app: _FakeApplication | None = None
+
+    @property
+    def SlideIndex(self) -> int:
+        assert self._collection is not None
+        return self._collection._slides.index(self) + 1
+
+    def Delete(self) -> None:
+        assert self._collection is not None
+        self._collection._slides.remove(self)
+
+    def MoveTo(self, to_pos: int) -> None:
+        assert self._collection is not None
+        slides = self._collection._slides
+        slides.remove(self)
+        slides.insert(int(to_pos) - 1, self)
+
+    def Duplicate(self) -> _FakeSlideRange:
+        assert self._collection is not None
+        clone = _FakeSlide(
+            slide_id=self._collection._next_id(),
+            layout_name=self.CustomLayout.Name,
+            shapes=[sh._clone() for sh in self.Shapes._shapes],
+            notes_text=self._notes_text,
+        )
+        slides = self._collection._slides
+        slides.insert(slides.index(self) + 1, clone)
+        self._collection._adopt(clone)
+        return _FakeSlideRange([clone])
 
 
 class _FakeSlides:
     def __init__(self, slides: list[_FakeSlide]) -> None:
         self._slides = slides
+        self._app: _FakeApplication | None = None
+        self._id_counter = max((s.SlideID for s in slides), default=255)
+        for s in slides:
+            self._adopt(s)
+
+    def _adopt(self, slide: _FakeSlide) -> None:
+        """Wire a slide's back-refs so it knows its collection + app."""
+        slide._collection = self
+        slide._app = self._app
+        slide.Shapes._app = self._app
+
+    def _next_id(self) -> int:
+        self._id_counter += 1
+        return self._id_counter
 
     @property
     def Count(self) -> int:
@@ -235,6 +352,29 @@ class _FakeSlides:
     def __iter__(self) -> Any:
         return iter(self._slides)
 
+    def AddSlide(self, index: int, custom_layout: _FakeCustomLayout) -> _FakeSlide:
+        slide = _FakeSlide(
+            slide_id=self._next_id(),
+            layout_name=str(custom_layout.Name),
+            shapes=[],
+            notes_text="",
+        )
+        self._slides.insert(int(index) - 1, slide)
+        self._adopt(slide)
+        return slide
+
+    def Add(self, index: int, pp_layout: int) -> _FakeSlide:
+        """Legacy `Slides.Add` — only reached on a deck with no CustomLayouts."""
+        slide = _FakeSlide(
+            slide_id=self._next_id(),
+            layout_name=f"Layout {int(pp_layout)}",
+            shapes=[],
+            notes_text="",
+        )
+        self._slides.insert(int(index) - 1, slide)
+        self._adopt(slide)
+        return slide
+
 
 class _FakePresentation:
     def __init__(
@@ -245,11 +385,13 @@ class _FakePresentation:
         slides: list[_FakeSlide],
         slide_width: float = 960.0,
         slide_height: float = 540.0,
+        layout_names: tuple[str, ...] = _STANDARD_LAYOUTS,
     ) -> None:
         self.Name = name
         self.FullName = full_name
         self.Slides = _FakeSlides(slides)
         self.PageSetup = SimpleNamespace(SlideWidth=slide_width, SlideHeight=slide_height)
+        self.SlideMaster = SimpleNamespace(CustomLayouts=_FakeCustomLayouts(layout_names))
 
 
 # ---------------------------------------------------------------------------
@@ -319,10 +461,12 @@ class _FakeApplication:
         self.Visible = True
         self._window = _FakeWindow(self)
         self._undo_entries = 0  # count of StartNewUndoEntry() calls (edit() fences)
-        # Wire back-refs so Shapes.Range(...).Select() can update the selection.
+        # Wire back-refs now the app exists: Shapes.Range(...).Select() updates the
+        # selection, and each slide knows its collection + app for lifecycle verbs.
         for pres in presentations:
-            for slide in pres.Slides:
-                slide.Shapes._app = self
+            pres.Slides._app = self
+            for slide in list(pres.Slides._slides):
+                pres.Slides._adopt(slide)
 
     def StartNewUndoEntry(self) -> None:
         """Mirror PowerPoint's boundary primitive; edit() calls this on entry."""
@@ -357,7 +501,6 @@ def _default_deck() -> _FakePresentation:
     Slide 3 (Blank): a text box and a line (no text frame), no title/body.
     """
     slide1 = _FakeSlide(
-        index=1,
         slide_id=256,
         layout_name="Title Slide",
         notes_text="Lead with the vision.",
@@ -379,7 +522,6 @@ def _default_deck() -> _FakePresentation:
         ],
     )
     slide2 = _FakeSlide(
-        index=2,
         slide_id=257,
         layout_name="Title and Content",
         notes_text="",
@@ -411,7 +553,6 @@ def _default_deck() -> _FakePresentation:
         ],
     )
     slide3 = _FakeSlide(
-        index=3,
         slide_id=258,
         layout_name="Blank",
         notes_text=None,  # no notes body placeholder at all
