@@ -168,6 +168,92 @@ def test_slide_lifecycle_fences_one_undo_entry(fake_powerpoint) -> None:  # type
     assert fake_powerpoint._undo_entries == 1
 
 
+def test_shape_add_textbox(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main, ["shape", "add", "--slide", "3", "--kind", "textbox", "--text", "Hi"]
+    )
+    assert result.exit_code == 0
+    payload = _json(result)
+    assert payload["ok"] is True
+    assert payload["type"] == "textbox"
+    assert payload["text"] == "Hi"
+    assert fake_powerpoint.ActivePresentation.Slides(3).Shapes.Count == 3  # was 2
+
+
+def test_shape_add_autoshape(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main, ["shape", "add", "--slide", "3", "--kind", "shape", "--shape-type", "oval"]
+    )
+    assert result.exit_code == 0
+    payload = _json(result)
+    assert payload["type"] == "auto_shape"
+    new = fake_powerpoint.ActivePresentation.Slides(3).Shapes(3)
+    assert new.AutoShapeType == 9  # oval
+
+
+def test_shape_add_picture(fake_powerpoint, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    img = tmp_path / "pic.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    result = CliRunner().invoke(
+        main, ["shape", "add", "--slide", "3", "--kind", "picture", "--path", str(img)]
+    )
+    assert result.exit_code == 0
+    assert _json(result)["type"] == "picture"
+
+
+def test_shape_add_picture_requires_path_exit_2(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["shape", "add", "--slide", "3", "--kind", "picture"])
+    assert result.exit_code == 2  # click UsageError
+    assert fake_powerpoint.ActivePresentation.Slides(3).Shapes.Count == 2  # untouched
+
+
+def test_shape_add_bad_slide_exit_2(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["shape", "add", "--slide", "9", "--kind", "textbox"])
+    assert result.exit_code == 2
+
+
+def test_shape_move(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main, ["shape", "move", "--anchor-id", "shape:2:3", "--left", "150", "--top", "160"]
+    )
+    assert result.exit_code == 0
+    geo = _json(result)["geometry"]
+    assert geo["left"] == 150.0 and geo["top"] == 160.0
+
+
+def test_shape_move_requires_arg_exit_2(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["shape", "move", "--anchor-id", "shape:2:3"])
+    assert result.exit_code == 2  # click UsageError
+
+
+def test_shape_resize(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main, ["shape", "resize", "--anchor-id", "shape:2:3", "--width", "320"]
+    )
+    assert result.exit_code == 0
+    assert _json(result)["geometry"]["width"] == 320.0
+
+
+def test_shape_delete(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["shape", "delete", "--anchor-id", "shape:2:3"])
+    assert result.exit_code == 0
+    assert _json(result)["ok"] is True
+    assert fake_powerpoint.ActivePresentation.Slides(2).Shapes.Count == 2  # was 3
+
+
+def test_shape_delete_non_shape_anchor_exit_2(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    # notes:1 resolves to a Notes anchor, not a Shape.
+    result = CliRunner().invoke(main, ["shape", "delete", "--anchor-id", "notes:1"])
+    assert result.exit_code == 2
+
+
+def test_shape_add_fences_one_undo_entry(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    assert fake_powerpoint._undo_entries == 0
+    result = CliRunner().invoke(main, ["shape", "add", "--slide", "3", "--kind", "textbox"])
+    assert result.exit_code == 0
+    assert fake_powerpoint._undo_entries == 1
+
+
 def test_go_to(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     fake_powerpoint._viewed = 1
     result = CliRunner().invoke(main, ["go-to", "--anchor-id", "shape:3:1"])

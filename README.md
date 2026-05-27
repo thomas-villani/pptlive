@@ -51,6 +51,15 @@ with pl.attach() as ppt:
         deck.slides[7].duplicate()           # copy lands at slide 8
         deck.slides[9].move_to(2)
         deck.slides[4].set_layout("title_and_content")
+
+    # Shapes & geometry — points throughout (pl.units for inches/cm).
+    with deck.edit("Lay out the results slide"):
+        shapes = deck.slides[4].shapes
+        shapes.add_textbox("Revenue up 12%", left=pl.units.inches(1), top=72)
+        star = shapes.add_shape("star", left=400, top=120, width=120, height=120)
+        shapes.add_picture("logo.png", left=600, top=40)   # embedded, never linked
+        deck.slides[4].shapes["Picture 3"].move(top=140)   # absolute, points
+        star.delete()
 ```
 
 ## Anchors
@@ -95,6 +104,13 @@ pptlive slide duplicate --slide 7
 pptlive slide move --slide 9 --to 2
 pptlive slide set-layout --slide 4 --layout title_and_content
 pptlive slide delete --slide 5
+
+pptlive shape add --slide 4 --kind textbox --text "Revenue up 12%" --left 72 --top 72
+pptlive shape add --slide 4 --kind shape --shape-type star --left 400 --top 120 --width 120 --height 120
+pptlive shape add --slide 4 --kind picture --path logo.png --left 600 --top 40
+pptlive shape move   --anchor-id shape:4:3 --left 100 --top 140
+pptlive shape resize --anchor-id shape:4:3 --width 300 --height 200
+pptlive shape delete --anchor-id shape:4:3
 
 pptlive go-to --anchor-id shape:3:1              # deliberate, opt-in view move
 ```

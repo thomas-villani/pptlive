@@ -7,12 +7,14 @@ resolved open questions inline (strike them through, link the commit).
 
 **Status legend:** `[ ]` not started · `[~]` in progress · `[x]` shipped.
 
-> **Bootstrap + v0 + v0.1 have landed** (fake-COM unit tests green: `ruff`,
-> `mypy`, `pytest` all pass; 92 tests). The library is usable as an LLM tool
-> against a real, already-running PowerPoint, and now drives the **slide
+> **Bootstrap + v0 + v0.1 + v0.2 have landed** (fake-COM unit tests green:
+> `ruff`, `mypy`, `pytest` all pass; 112 tests). The library is usable as an LLM
+> tool against a real, already-running PowerPoint; it drives the **slide
 > lifecycle** (`slide add/delete/duplicate/move/set-layout` + layout-name
-> resolution) — verified live 2026-05-26 via `scripts/layout_spike.py` (net-zero;
-> the v0.1 section records the findings). The four **Spike** items below were
+> resolution) — verified live 2026-05-26 via `scripts/layout_spike.py` — and
+> **shapes & geometry** (`shape add` textbox/autoshape/picture + `move/resize/
+> delete`) — verified live 2026-05-27 via `scripts/shape_spike.py` (both net-zero;
+> the v0.1/v0.2 sections record the findings). The four **Spike** items below were
 > **verified against real COM on 2026-05-26** (PowerPoint desktop, a 3-slide
 > deck). Items #2/#3/#4 confirmed as specced. **#1 overturned the spec's
 > headline assumption:** PowerPoint *does* group consecutive in-session COM edits
@@ -171,12 +173,34 @@ read/set text on the common anchors, polite view/Selection scope, the JSON CLI.
 - [x] CLI `slide add|delete|duplicate|move|set-layout`, plus `slide layouts`
   (discovery read). Exit codes reuse the v0 mapping (2 = slide/layout not found).
 
-## v0.2 — shapes & geometry (makes slide-building possible)
+## v0.2 — shapes & geometry (makes slide-building possible) — SHIPPED
 
-- [ ] `shape add` (textbox/picture/shape), `Shape.move(left, top)` /
-  `resize(width, height)` / `delete()` / `geometry()` — all in **points**.
-- [ ] `units.inches()` / `units.cm()` helpers.
-- [ ] CLI `shape add|move|resize|delete`.
+- [x] `ShapeCollection.add_textbox(text, …)` / `add_shape(shape_type, …)` /
+  `add_picture(path, …)`; `Shape.delete()`. (`move`/`resize`/`geometry()` already
+  shipped in v0.) All geometry in **points**. The verbs only mutate; wrap in
+  `deck.edit(label)` (as the CLI does) for view preservation + a one-Ctrl-Z fence.
+  New shapes append at the **top of the z-order** (last slot), so the returned
+  `Shape` is addressed by the post-add `Shapes.Count` (`ShapeCollection._added()`).
+  `add_shape` takes a friendly name (`constants.autoshape_type_for`,
+  `MsoAutoShapeType`) or a raw int; `add_picture` **embeds** (never links) and
+  raises `FileNotFoundError` for a missing path.
+- [x] `units.inches()` / `units.cm()` / `mm()` / `points()` helpers (already in
+  `units.py` since bootstrap; never expose EMUs).
+- [x] CLI `shape add|move|resize|delete` (the new `shape` group; `shapes --slide S`
+  stays the listing). `shape add --kind textbox|shape|picture` with
+  `--shape-type` (a `click.Choice` over `constants.AUTOSHAPE_CHOICES`),
+  `--text`/`--path`, and `--left/--top/--width/--height`. move/resize/delete take
+  `--anchor-id` (`shape:S:N` or `ph:S:KIND`); a non-shape anchor (e.g. `notes:S`)
+  is exit 2. **Spike RESOLVED (verified live 2026-05-27, `scripts/shape_spike.py`,
+  net-zero):** `AddTextbox(Orientation, L, T, W, H)`, `AddShape(Type, L, T, W, H)`,
+  and `AddPicture(FileName, LinkToFile=msoFalse, SaveWithDocument=msoTrue, L, T, W,
+  H)` all add + return a shape; a new shape lands at the last z-order index (text
+  round-tripped through it); the shipped autoshape ints are correct
+  (`rectangle`=1, `oval`=9, `right_arrow`=33, `five_point_star`=92); `move`/
+  `resize`/`Delete` behave; a picture has no text frame. *Honest caveat:* a text
+  box created **with** text auto-fits its height to the content (PowerPoint's
+  default AutoSize) — requesting `height=72` for "MARKER-TB" came back ~29 pt. The
+  `left`/`top`/`width` you pass are honored; height is advisory when AutoSize is on.
 
 ## v0.3 — text structure
 

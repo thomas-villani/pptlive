@@ -1,8 +1,11 @@
 """Shapes — the 2-D objects on a slide, and the thing a `Shape` anchor IS.
 
 A `Shape` is an `Anchor` (inherits `text`/`set_text`) *when it has a text frame*,
-plus geometry verbs (`geometry`/`move`/`resize`) that have no Word analog. A text
-op on a frameless shape (picture, line) raises `NoTextFrameError` (exit 6).
+plus geometry verbs (`geometry`/`move`/`resize`/`delete`) that have no Word
+analog. A text op on a frameless shape (picture, line) raises `NoTextFrameError`
+(exit 6). New shapes come from `ShapeCollection.add_textbox`/`add_shape`/
+`add_picture` (v0.2); like the slide-lifecycle verbs they only mutate, so wrap a
+call in `deck.edit(label)` for view preservation + a one-Ctrl-Z fence.
 
 z-order ids drift: `shape:S:N` is the 1-based z-order index, which shifts when
 shapes are added or removed, so a `Shape` resolves its COM object **live** on
@@ -14,6 +17,7 @@ semantic kind, the drift-proof form.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
@@ -21,6 +25,9 @@ from . import _com
 from ._anchors import Anchor
 from .constants import (
     MsoShapeType,
+    MsoTextOrientation,
+    MsoTriState,
+    autoshape_type_for,
     is_true,
     placeholder_kind_name,
     placeholder_types_for,
@@ -30,6 +37,15 @@ from .exceptions import AnchorNotFoundError, NoTextFrameError
 
 if TYPE_CHECKING:
     from ._slides import Slide
+
+# Default geometry (points) for added shapes when the caller names none. A wide,
+# short box for text; a square for autoshapes; a picture keeps its native size.
+_DEFAULT_LEFT = 72.0
+_DEFAULT_TOP = 72.0
+_DEFAULT_TEXTBOX_WIDTH = 288.0  # 4 in
+_DEFAULT_TEXTBOX_HEIGHT = 72.0  # 1 in
+_DEFAULT_SHAPE_WIDTH = 144.0  # 2 in
+_DEFAULT_SHAPE_HEIGHT = 144.0  # 2 in
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +227,15 @@ class Shape(Anchor):
             if height is not None:
                 sh.Height = float(height)
 
+    def delete(self) -> None:
+        """Delete this shape from its slide (`Shape.Delete`).
+
+        The wrapper is spent afterwards; later shapes' z-order indices shift down
+        by one. Wrap in `deck.edit(...)` for the one-Ctrl-Z fence.
+        """
+        with _com.translate_com_errors():
+            self._com_shape().Delete()
+
     def to_dict(self) -> dict[str, Any]:
         with _com.translate_com_errors():
             return shape_to_dict(self._com_shape(), self._slide.index, self._index)
@@ -312,6 +337,100 @@ class ShapeCollection:
         count = len(self)
         for idx in range(1, count + 1):
             yield Shape(self._slide, idx)
+
+    # -- creators (v0.2; wrap in deck.edit(...) for view + one-Ctrl-Z) ---------
+    #
+    # PowerPoint adds a new shape at the top of the z-order, i.e. the last slot
+    # of the Shapes collection, so the new shape's 1-based z-order index is the
+    # post-add Count. We return a live `Shape` addressed by that index (verified
+    # against real PowerPoint in scripts/shape_spike.py).
+
+    def _added(self) -> Shape:
+        return Shape(self._slide, int(self._com_collection.Count))
+
+    def add_textbox(
+        self,
+        text: str = "",
+        *,
+        left: float | None = None,
+        top: float | None = None,
+        width: float | None = None,
+        height: float | None = None,
+    ) -> Shape:
+        """Add a horizontal text box and return it (`Shapes.AddTextbox`).
+
+        Geometry is in points; omitted values default to a 4×1 in box near the
+        top-left. `text`, if given, is written into the new frame.
+        """
+        left = _DEFAULT_LEFT if left is None else float(left)
+        top = _DEFAULT_TOP if top is None else float(top)
+        width = _DEFAULT_TEXTBOX_WIDTH if width is None else float(width)
+        height = _DEFAULT_TEXTBOX_HEIGHT if height is None else float(height)
+        with _com.translate_com_errors():
+            com_shape = self._com_collection.AddTextbox(
+                int(MsoTextOrientation.HORIZONTAL), left, top, width, height
+            )
+            if text:
+                com_shape.TextFrame.TextRange.Text = text
+            return self._added()
+
+    def add_shape(
+        self,
+        shape_type: str | int,
+        *,
+        left: float | None = None,
+        top: float | None = None,
+        width: float | None = None,
+        height: float | None = None,
+    ) -> Shape:
+        """Add an autoshape and return it (`Shapes.AddShape`).
+
+        `shape_type` is a friendly name (`"rectangle"`, `"oval"`, `"arrow"`, …;
+        see `constants.AUTOSHAPE_CHOICES`) or a raw `MsoAutoShapeType` int.
+        Geometry is in points; omitted values default to a 2×2 in box near the
+        top-left. Raises `ValueError` for an unknown shape name (before any COM).
+        """
+        type_int = autoshape_type_for(shape_type)  # ValueError before COM
+        left = _DEFAULT_LEFT if left is None else float(left)
+        top = _DEFAULT_TOP if top is None else float(top)
+        width = _DEFAULT_SHAPE_WIDTH if width is None else float(width)
+        height = _DEFAULT_SHAPE_HEIGHT if height is None else float(height)
+        with _com.translate_com_errors():
+            self._com_collection.AddShape(type_int, left, top, width, height)
+            return self._added()
+
+    def add_picture(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        left: float | None = None,
+        top: float | None = None,
+        width: float | None = None,
+        height: float | None = None,
+    ) -> Shape:
+        """Embed a picture from a local file and return it (`Shapes.AddPicture`).
+
+        The image is **embedded**, never linked (so the deck stays portable).
+        `left`/`top` default to the top-left; omitted `width`/`height` keep the
+        image's native size. Raises `FileNotFoundError` if `path` doesn't exist.
+        """
+        fs_path = os.fspath(path)
+        if not os.path.isfile(fs_path):
+            raise FileNotFoundError(f"picture not found: {fs_path}")
+        abs_path = os.path.abspath(fs_path)
+        left = _DEFAULT_LEFT if left is None else float(left)
+        top = _DEFAULT_TOP if top is None else float(top)
+        with _com.translate_com_errors():
+            self._com_collection.AddPicture(
+                abs_path,
+                int(MsoTriState.FALSE),  # LinkToFile: no
+                int(MsoTriState.TRUE),  # SaveWithDocument: yes (embed)
+                left,
+                top,
+                -1.0 if width is None else float(width),  # -1 = native size
+                -1.0 if height is None else float(height),
+            )
+            return self._added()
 
     def list(self) -> list[dict[str, Any]]:
         """Every shape as a structured dict, in z-order."""

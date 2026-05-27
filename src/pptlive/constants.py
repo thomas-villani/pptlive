@@ -257,12 +257,13 @@ DEFAULT_LAYOUT_ALIAS = "title_and_content"
 DEFAULT_LEGACY_LAYOUT = PpSlideLayout.TEXT
 
 
-def _normalize_layout(name: str) -> str:
-    """Collapse a layout name to its case/separator-insensitive comparison key.
+def _normalize_name(name: str) -> str:
+    """Collapse a friendly name to its case/separator-insensitive comparison key.
 
     "Title and Content", "title_and_content", and "Title And Content" all map to
-    "titleandcontent", so a friendly token matches the deck's real layout name
-    regardless of spacing, casing, or underscores.
+    "titleandcontent", so a friendly token matches a real name regardless of
+    spacing, casing, or underscores. Used for both layout names and autoshape
+    names.
     """
     return "".join(ch for ch in str(name).lower() if ch.isalnum())
 
@@ -293,8 +294,8 @@ def match_layout_name(available: Sequence[str], requested: str) -> int | None:
     standard Office layouts. Returns None when nothing matches; callers raise
     `LayoutNotFoundError` carrying `available` so an agent can pick a valid name.
     """
-    norm_available = [_normalize_layout(name) for name in available]
-    want = _normalize_layout(requested)
+    norm_available = [_normalize_name(name) for name in available]
+    want = _normalize_name(requested)
     if not want:
         return None
     if want in norm_available:
@@ -303,3 +304,118 @@ def match_layout_name(available: Sequence[str], requested: str) -> int | None:
     if canonical is not None and canonical in norm_available:
         return norm_available.index(canonical) + 1
     return None
+
+
+class MsoTextOrientation(IntEnum):
+    """`Shapes.AddTextbox` orientation. pptlive creates horizontal text boxes."""
+
+    HORIZONTAL = 1
+    VERTICAL = 5
+
+
+class MsoAutoShapeType(IntEnum):
+    """The `Shapes.AddShape(Type, …)` autoshape geometries pptlive names.
+
+    A curated common subset of the (large) `MsoAutoShapeType` enumeration —
+    added as a feature needs them (the wordlive rule), not pre-populated.
+    Friendly names (`"rectangle"`, `"oval"`, `"arrow"`) resolve to these via
+    `autoshape_type_for`; a raw int still passes through for the long tail.
+    """
+
+    RECTANGLE = 1
+    PARALLELOGRAM = 2
+    TRAPEZOID = 3
+    DIAMOND = 4
+    ROUNDED_RECTANGLE = 5
+    OCTAGON = 6
+    ISOSCELES_TRIANGLE = 7
+    RIGHT_TRIANGLE = 8
+    OVAL = 9
+    HEXAGON = 10
+    CROSS = 11
+    REGULAR_PENTAGON = 12
+    HEART = 21
+    RIGHT_ARROW = 33
+    LEFT_ARROW = 34
+    UP_ARROW = 35
+    DOWN_ARROW = 36
+    FIVE_POINT_STAR = 92
+
+
+# Friendly token (normalized) -> autoshape. Several spellings map to one shape
+# ("ellipse"/"circle" -> oval, "arrow" -> right_arrow), so an agent needn't know
+# Office's exact wording.
+_AUTOSHAPE_NAMES: dict[str, MsoAutoShapeType] = {
+    "rectangle": MsoAutoShapeType.RECTANGLE,
+    "rect": MsoAutoShapeType.RECTANGLE,
+    "box": MsoAutoShapeType.RECTANGLE,
+    "square": MsoAutoShapeType.RECTANGLE,
+    "roundedrectangle": MsoAutoShapeType.ROUNDED_RECTANGLE,
+    "roundrect": MsoAutoShapeType.ROUNDED_RECTANGLE,
+    "oval": MsoAutoShapeType.OVAL,
+    "ellipse": MsoAutoShapeType.OVAL,
+    "circle": MsoAutoShapeType.OVAL,
+    "diamond": MsoAutoShapeType.DIAMOND,
+    "triangle": MsoAutoShapeType.ISOSCELES_TRIANGLE,
+    "isoscelestriangle": MsoAutoShapeType.ISOSCELES_TRIANGLE,
+    "righttriangle": MsoAutoShapeType.RIGHT_TRIANGLE,
+    "parallelogram": MsoAutoShapeType.PARALLELOGRAM,
+    "trapezoid": MsoAutoShapeType.TRAPEZOID,
+    "octagon": MsoAutoShapeType.OCTAGON,
+    "hexagon": MsoAutoShapeType.HEXAGON,
+    "pentagon": MsoAutoShapeType.REGULAR_PENTAGON,
+    "regularpentagon": MsoAutoShapeType.REGULAR_PENTAGON,
+    "cross": MsoAutoShapeType.CROSS,
+    "plus": MsoAutoShapeType.CROSS,
+    "heart": MsoAutoShapeType.HEART,
+    "arrow": MsoAutoShapeType.RIGHT_ARROW,
+    "rightarrow": MsoAutoShapeType.RIGHT_ARROW,
+    "leftarrow": MsoAutoShapeType.LEFT_ARROW,
+    "uparrow": MsoAutoShapeType.UP_ARROW,
+    "downarrow": MsoAutoShapeType.DOWN_ARROW,
+    "star": MsoAutoShapeType.FIVE_POINT_STAR,
+    "fivepointstar": MsoAutoShapeType.FIVE_POINT_STAR,
+    "star5": MsoAutoShapeType.FIVE_POINT_STAR,
+}
+
+# The canonical, readable names the CLI advertises (a `--shape-type` menu). The
+# alias map above accepts more spellings; this is the discoverable shortlist.
+AUTOSHAPE_CHOICES: tuple[str, ...] = (
+    "rectangle",
+    "rounded_rectangle",
+    "oval",
+    "diamond",
+    "triangle",
+    "right_triangle",
+    "parallelogram",
+    "trapezoid",
+    "octagon",
+    "hexagon",
+    "pentagon",
+    "cross",
+    "heart",
+    "arrow",
+    "left_arrow",
+    "up_arrow",
+    "down_arrow",
+    "star",
+)
+
+
+def autoshape_type_for(name: str | int) -> int:
+    """Friendly autoshape name (or a raw `MsoAutoShapeType` int) -> the int.
+
+    Names match case/separator-insensitively (`"Rounded Rectangle"`,
+    `"rounded_rectangle"`, and `"roundrect"` all resolve). A raw int passes
+    through unchanged — the escape hatch for autoshapes pptlive hasn't named.
+    Raises `ValueError` (listing the friendly names) for an unknown name.
+    """
+    if isinstance(name, bool):
+        raise ValueError(f"invalid autoshape type: {name!r}")
+    if isinstance(name, int):
+        return int(name)
+    found = _AUTOSHAPE_NAMES.get(_normalize_name(name))
+    if found is None:
+        choices = ", ".join(AUTOSHAPE_CHOICES)
+        raise ValueError(f"unknown autoshape {name!r}; expected one of: {choices}")
+    return int(found)

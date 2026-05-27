@@ -101,6 +101,11 @@ class _FakeShape:
         self._placeholder_type = placeholder_type
         self._text_frame = _FakeTextFrame(text) if text is not None else None
         self.selected = False
+        self._collection: _FakeShapes | None = None  # set when adopted by _FakeShapes
+
+    def Delete(self) -> None:
+        assert self._collection is not None
+        self._collection._shapes.remove(self)
 
     @property
     def HasTextFrame(self) -> int:
@@ -161,6 +166,80 @@ class _FakeShapes:
     def __init__(self, shapes: list[_FakeShape]) -> None:
         self._shapes = shapes
         self._app: _FakeApplication | None = None
+        self._id_counter = max((s.Id for s in shapes), default=1)
+        for sh in shapes:
+            sh._collection = self
+
+    def _next_id(self) -> int:
+        self._id_counter += 1
+        return self._id_counter
+
+    def _adopt(self, sh: _FakeShape) -> _FakeShape:
+        """Append a new shape at the top of the z-order (last slot), like COM."""
+        sh._collection = self
+        self._shapes.append(sh)
+        return sh
+
+    def AddTextbox(
+        self, orientation: int, left: float, top: float, width: float, height: float
+    ) -> _FakeShape:
+        sid = self._next_id()
+        return self._adopt(
+            _FakeShape(
+                name=f"TextBox {sid}",
+                shape_id=sid,
+                shape_type=_MSO_TEXT_BOX,
+                text="",
+                left=left,
+                top=top,
+                width=width,
+                height=height,
+            )
+        )
+
+    def AddShape(
+        self, shape_type: int, left: float, top: float, width: float, height: float
+    ) -> _FakeShape:
+        sid = self._next_id()
+        sh = _FakeShape(
+            name=f"Shape {sid}",
+            shape_id=sid,
+            shape_type=_MSO_AUTO_SHAPE,
+            text="",
+            left=left,
+            top=top,
+            width=width,
+            height=height,
+        )
+        sh.AutoShapeType = int(shape_type)
+        return self._adopt(sh)
+
+    def AddPicture(
+        self,
+        filename: str,
+        link_to_file: int,
+        save_with_document: int,
+        left: float,
+        top: float,
+        width: float,
+        height: float,
+    ) -> _FakeShape:
+        sid = self._next_id()
+        # -1 means "native size"; the fake just substitutes a nominal size.
+        w = 120.0 if width == -1 else width
+        h = 90.0 if height == -1 else height
+        return self._adopt(
+            _FakeShape(
+                name=f"Picture {sid}",
+                shape_id=sid,
+                shape_type=_MSO_PICTURE,
+                text=None,
+                left=left,
+                top=top,
+                width=w,
+                height=h,
+            )
+        )
 
     @property
     def Count(self) -> int:

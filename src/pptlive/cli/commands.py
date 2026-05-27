@@ -2,8 +2,9 @@
 
 v0 surface: status, slides, outline, slide read, shapes, read (anchor/notes),
 write, replace, go-to. v0.1 adds the slide-lifecycle verbs under the `slide`
-group: add, delete, duplicate, move, set-layout, and layouts. Shape geometry,
-find/replace, and the `show` group arrive in later stages.
+group: add, delete, duplicate, move, set-layout, and layouts. v0.2 adds the
+`shape` group: add (textbox/shape/picture), move, resize, delete. find/replace
+and the `show` group arrive in later stages.
 """
 
 from __future__ import annotations
@@ -14,7 +15,9 @@ import click
 
 from .. import attach
 from .._presentation import Presentation
-from ..exceptions import PowerPointNotRunningError
+from .._shapes import Shape
+from ..constants import AUTOSHAPE_CHOICES
+from ..exceptions import AnchorNotFoundError, PowerPointNotRunningError
 from .main import _run, emit
 
 
@@ -101,12 +104,21 @@ def _fmt_layouts(rows: list[dict[str, Any]]) -> str:
     return "\n".join(f"{r.get('index'):>3}. {r.get('name')}" for r in rows)
 
 
+def _fmt_geometry(geo: dict[str, float] | None) -> str:
+    if not geo:
+        return "(no geometry)"
+    return (
+        f"left={geo['left']:g} top={geo['top']:g} width={geo['width']:g} height={geo['height']:g}"
+    )
+
+
 def register(group: click.Group) -> None:
     group.add_command(status)
     group.add_command(slides_cmd)
     group.add_command(outline)
     group.add_command(slide)
     group.add_command(shapes_cmd)
+    group.add_command(shape)
     group.add_command(read)
     group.add_command(write)
     group.add_command(replace)
@@ -357,6 +369,177 @@ def shapes_cmd(ctx: click.Context, slide_index: int) -> None:
             deck = _pick_deck(ppt, ctx.obj["doc_name"])
             rows = deck.slides[slide_index].shapes.list()
             emit(rows, as_text=not ctx.obj["as_json"], text=_fmt_shapes(rows))
+
+    _run(ctx, go)
+
+
+# ---------------------------------------------------------------------------
+# shape add|move|resize|delete
+# ---------------------------------------------------------------------------
+
+
+@click.group(name="shape")
+def shape() -> None:
+    """Create + place shapes: add, move, resize, delete (geometry in points)."""
+
+
+def _resolve_shape(deck: Presentation, anchor_id: str) -> Shape:
+    """Resolve a shape/placeholder anchor to a `Shape` (else exit-2 not found)."""
+    anchor = deck.anchor_by_id(anchor_id)
+    if not isinstance(anchor, Shape):
+        raise AnchorNotFoundError("shape", anchor_id)
+    return anchor
+
+
+@shape.command(name="add")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--kind",
+    type=click.Choice(["textbox", "shape", "picture"]),
+    required=True,
+    help="What to add.",
+)
+@click.option("--text", "text", default=None, help="Initial text (textbox/shape).")
+@click.option(
+    "--path",
+    "path",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="Image file to embed (required for --kind picture).",
+)
+@click.option(
+    "--shape-type",
+    "shape_type",
+    type=click.Choice(AUTOSHAPE_CHOICES),
+    default="rectangle",
+    show_default=True,
+    help="Autoshape geometry (for --kind shape).",
+)
+@click.option("--left", type=float, default=None, help="Left edge (points).")
+@click.option("--top", type=float, default=None, help="Top edge (points).")
+@click.option("--width", type=float, default=None, help="Width (points).")
+@click.option("--height", type=float, default=None, help="Height (points).")
+@click.pass_context
+def shape_add(
+    ctx: click.Context,
+    slide_index: int,
+    kind: str,
+    text: str | None,
+    path: str | None,
+    shape_type: str,
+    left: float | None,
+    top: float | None,
+    width: float | None,
+    height: float | None,
+) -> None:
+    """Add a shape to a slide; print its anchor_id, name, type, and geometry."""
+
+    def go() -> None:
+        if kind == "picture" and not path:
+            raise click.UsageError("shape add --kind picture requires --path")
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            shapes = deck.slides[slide_index].shapes  # exit 2 if slide out of range
+            with deck.edit(f"CLI: add {kind} on slide {slide_index}"):
+                if kind == "textbox":
+                    new = shapes.add_textbox(
+                        text or "", left=left, top=top, width=width, height=height
+                    )
+                elif kind == "shape":
+                    new = shapes.add_shape(
+                        shape_type, left=left, top=top, width=width, height=height
+                    )
+                else:  # picture
+                    assert path is not None  # guarded above
+                    new = shapes.add_picture(path, left=left, top=top, width=width, height=height)
+            payload = {"ok": True, **new.to_dict()}
+            emit(
+                payload,
+                as_text=not ctx.obj["as_json"],
+                text=f"added {payload['type']} {payload['name']!r} at {payload['anchor_id']}",
+            )
+
+    _run(ctx, go)
+
+
+@shape.command(name="move")
+@click.option(
+    "--anchor-id", "anchor_id", required=True, help="Shape to move (shape:S:N or ph:S:KIND)."
+)
+@click.option("--left", type=float, default=None, help="New left edge (points).")
+@click.option("--top", type=float, default=None, help="New top edge (points).")
+@click.pass_context
+def shape_move(ctx: click.Context, anchor_id: str, left: float | None, top: float | None) -> None:
+    """Move a shape to an absolute position (points)."""
+
+    def go() -> None:
+        if left is None and top is None:
+            raise click.UsageError("shape move requires --left and/or --top")
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            sh = _resolve_shape(deck, anchor_id)  # exit 2 if missing / not a shape
+            with deck.edit(f"CLI: move {anchor_id}"):
+                sh.move(left=left, top=top)
+            geo = sh.geometry()
+            emit(
+                {"ok": True, "anchor_id": sh.anchor_id, "geometry": geo},
+                as_text=not ctx.obj["as_json"],
+                text=f"moved {sh.anchor_id}: {_fmt_geometry(geo)}",
+            )
+
+    _run(ctx, go)
+
+
+@shape.command(name="resize")
+@click.option(
+    "--anchor-id", "anchor_id", required=True, help="Shape to resize (shape:S:N or ph:S:KIND)."
+)
+@click.option("--width", type=float, default=None, help="New width (points).")
+@click.option("--height", type=float, default=None, help="New height (points).")
+@click.pass_context
+def shape_resize(
+    ctx: click.Context, anchor_id: str, width: float | None, height: float | None
+) -> None:
+    """Set a shape's size (points)."""
+
+    def go() -> None:
+        if width is None and height is None:
+            raise click.UsageError("shape resize requires --width and/or --height")
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            sh = _resolve_shape(deck, anchor_id)
+            with deck.edit(f"CLI: resize {anchor_id}"):
+                sh.resize(width=width, height=height)
+            geo = sh.geometry()
+            emit(
+                {"ok": True, "anchor_id": sh.anchor_id, "geometry": geo},
+                as_text=not ctx.obj["as_json"],
+                text=f"resized {sh.anchor_id}: {_fmt_geometry(geo)}",
+            )
+
+    _run(ctx, go)
+
+
+@shape.command(name="delete")
+@click.option(
+    "--anchor-id", "anchor_id", required=True, help="Shape to delete (shape:S:N or ph:S:KIND)."
+)
+@click.pass_context
+def shape_delete(ctx: click.Context, anchor_id: str) -> None:
+    """Delete a shape from its slide."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            sh = _resolve_shape(deck, anchor_id)
+            info = {"anchor_id": sh.anchor_id, "name": sh.name, "id": sh.shape_id}
+            with deck.edit(f"CLI: delete {anchor_id}"):
+                sh.delete()
+            emit(
+                {"ok": True, **info},
+                as_text=not ctx.obj["as_json"],
+                text=f"deleted {info['anchor_id']} ({info['name']!r})",
+            )
 
     _run(ctx, go)
 
