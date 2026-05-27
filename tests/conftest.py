@@ -63,14 +63,185 @@ _STANDARD_LAYOUTS = (
 # ---------------------------------------------------------------------------
 
 
-class _FakeTextRange:
+# A paragraph-aware text model (v0.3). The source of truth is a list of
+# `_FakePara` objects on the frame; a `_FakeTextRange` is a view over a 1-based
+# contiguous span of them. Setting/inserting text reconstructs the paragraph list
+# exactly as PowerPoint's char-spliced TextRange does (verified in text_spike.py),
+# so paragraph addressing, the trailing-CR behavior, and insert all round-trip.
+
+
+class _FakeFont:
+    def __init__(self) -> None:
+        self.Bold = 0
+        self.Italic = 0
+        self.Underline = 0
+        self.Size = 18.0
+        self.Name = "Calibri"
+        self.Color = SimpleNamespace(RGB=0)
+
+
+class _FakeBullet:
+    def __init__(self) -> None:
+        self.Visible = 0
+        self.Type = 0
+        self.Character = 0
+
+
+class _FakeParagraphFormat:
+    def __init__(self) -> None:
+        self.Alignment = 1
+        self.SpaceBefore = 0.0
+        self.SpaceAfter = 0.0
+        self.SpaceWithin = 1.0
+        self.Bullet = _FakeBullet()
+
+
+class _FakePara:
     def __init__(self, text: str = "") -> None:
-        self.Text = text
+        self.text = text
+        self.Font = _FakeFont()
+        self.ParagraphFormat = _FakeParagraphFormat()
+        self.IndentLevel = 1
+
+
+class _SpanNestedProxy:
+    """Forwards `.attr.sub.<name>` get/set across a range's paragraph span
+    (e.g. `Font.Color`, `ParagraphFormat.Bullet`): reads the first, writes all."""
+
+    def __init__(self, rng: _FakeTextRange, attr: str, sub: str) -> None:
+        object.__setattr__(self, "_rng", rng)
+        object.__setattr__(self, "_attr", attr)
+        object.__setattr__(self, "_sub", sub)
+
+    def __getattr__(self, name: str) -> Any:
+        p0 = self._rng._paras_in_span()[0]
+        return getattr(getattr(getattr(p0, self._attr), self._sub), name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        for p in self._rng._paras_in_span():
+            setattr(getattr(getattr(p, self._attr), self._sub), name, value)
+
+
+class _SpanAttrProxy:
+    """Forwards a per-paragraph sub-object's attrs across a range's span: reads
+    the first paragraph's value, writes to every paragraph (`Font`, `ParagraphFormat`)."""
+
+    def __init__(self, rng: _FakeTextRange, attr: str) -> None:
+        object.__setattr__(self, "_rng", rng)
+        object.__setattr__(self, "_attr", attr)
+
+    def __getattr__(self, name: str) -> Any:
+        if name in ("Color", "Bullet"):
+            return _SpanNestedProxy(self._rng, self._attr, name)
+        return getattr(getattr(self._rng._paras_in_span()[0], self._attr), name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        for p in self._rng._paras_in_span():
+            setattr(getattr(p, self._attr), name, value)
+
+
+class _FakeTextRange:
+    """A view over paragraphs [start .. start+length-1] (1-based) of a frame."""
+
+    def __init__(self, frame: _FakeTextFrame, start: int = 1, length: int = -1) -> None:
+        self._frame = frame
+        self._start = start
+        self._length = length
+
+    def _span(self) -> tuple[int, int]:
+        total = len(self._frame._paras)
+        start = max(1, self._start)
+        end = total if self._length == -1 else min(total, start + self._length - 1)
+        return start, end
+
+    def _paras_in_span(self) -> list[_FakePara]:
+        s, e = self._span()
+        return self._frame._paras[s - 1 : e]
+
+    @property
+    def Text(self) -> str:
+        s, e = self._span()
+        text = "\r".join(p.text for p in self._frame._paras[s - 1 : e])
+        if e < len(self._frame._paras):  # a non-final paragraph carries its break
+            text += "\r"
+        return text
+
+    @Text.setter
+    def Text(self, value: str) -> None:
+        s, e = self._span()
+        parts = str(value).split("\r")
+        if len(parts) == 1 and (e - s + 1) == 1:
+            self._frame._paras[s - 1].text = parts[0]  # keep the paragraph's formatting
+            return
+        replacement = [_FakePara(p) for p in parts]
+        self._frame._paras = self._frame._paras[: s - 1] + replacement + self._frame._paras[e:]
+        if not self._frame._paras:
+            self._frame._paras = [_FakePara("")]
+
+    @property
+    def Count(self) -> int:
+        s, e = self._span()
+        return e - s + 1
+
+    def Paragraphs(self, start: int = -1, length: int = -1) -> _FakeTextRange:
+        s, _e = self._span()
+        if start == -1:
+            return _FakeTextRange(self._frame, s, self._length)
+        return _FakeTextRange(self._frame, s + start - 1, length)
+
+    @property
+    def IndentLevel(self) -> int:
+        return self._paras_in_span()[0].IndentLevel
+
+    @IndentLevel.setter
+    def IndentLevel(self, value: int) -> None:
+        for p in self._paras_in_span():
+            p.IndentLevel = int(value)
+
+    @property
+    def Font(self) -> _SpanAttrProxy:
+        return _SpanAttrProxy(self, "Font")
+
+    @property
+    def ParagraphFormat(self) -> _SpanAttrProxy:
+        return _SpanAttrProxy(self, "ParagraphFormat")
+
+    def _full_text(self) -> str:
+        return "\r".join(p.text for p in self._frame._paras)
+
+    def _char_start(self) -> int:
+        s, _e = self._span()
+        return sum(len(p.text) + 1 for p in self._frame._paras[: s - 1])
+
+    def InsertBefore(self, text: str) -> _FakeTextRange:
+        full = self._full_text()
+        off = self._char_start()
+        self._frame._set_full_text(full[:off] + str(text) + full[off:])
+        return self
+
+    def InsertAfter(self, text: str) -> _FakeTextRange:
+        full = self._full_text()
+        off = self._char_start() + len(self.Text)
+        self._frame._set_full_text(full[:off] + str(text) + full[off:])
+        return self
+
+    def Delete(self) -> None:
+        s, e = self._span()
+        self._frame._paras = self._frame._paras[: s - 1] + self._frame._paras[e:]
+        if not self._frame._paras:
+            self._frame._paras = [_FakePara("")]
 
 
 class _FakeTextFrame:
     def __init__(self, text: str = "") -> None:
-        self.TextRange = _FakeTextRange(text)
+        self._paras = [_FakePara(p) for p in str(text).split("\r")]
+
+    @property
+    def TextRange(self) -> _FakeTextRange:
+        return _FakeTextRange(self, 1, -1)
+
+    def _set_full_text(self, full: str) -> None:
+        self._paras = [_FakePara(p) for p in str(full).split("\r")]
 
 
 class _FakeShape:

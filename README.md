@@ -60,6 +60,16 @@ with pl.attach() as ppt:
         shapes.add_picture("logo.png", left=600, top=40)   # embedded, never linked
         deck.slides[4].shapes["Picture 3"].move(top=140)   # absolute, points
         star.delete()
+
+    # Text structure — paragraphs, formatting, bullets (PowerPoint has no
+    # named styles, so "styling" is direct font formatting via format_text).
+    with deck.edit("Polish the body copy"):
+        body = deck.anchor_by_id("ph:4:body")
+        body.set_text("Revenue up 12%\nChurn down 3%\nNPS +9")
+        body.apply_list("bulleted")                 # bullets on every paragraph
+        body.paragraph(2).format_paragraph(indent_level=2, alignment="left")
+        body.paragraph(1).format_text(bold=True, size=24, color="#2E74B5")
+        body.insert_paragraph_after("Cash runway: 30 months")   # append a bullet
 ```
 
 ## Anchors
@@ -72,13 +82,15 @@ slide-index first:
 | -------------- | ----------- |
 | `shape:S:N`    | Nth shape (1-based z-order) on slide S — the canonical handle |
 | `ph:S:KIND`    | placeholder of semantic KIND (`title`/`ctrtitle`/`subtitle`/`body`/`footer`/`date`/`slidenum`) — the LLM-preferred form |
+| `para:S:N:P`   | paragraph P (1-based) of shape N on slide S |
 | `notes:S`      | speaker-notes body of slide S |
 
 z-order **drifts** when shapes are added or removed, so `shape:S:N` is resolved
 live and never cached; every shape listing also emits `name` (`Shape.Name`) and
 `id` (`Shape.Id`, stable across reorder) so you can re-identify after drift.
-Steer toward `ph:S:KIND` and `.Name` as the drift-proof forms.
-(`para:S:N:P` and `cell:S:N:R:C` arrive in later stages.)
+Steer toward `ph:S:KIND` and `.Name` as the drift-proof forms. `para:S:N:P` also
+resolves live (the paragraph count shifts as text is inserted/deleted).
+(`cell:S:N:R:C` arrives in a later stage.)
 
 ## CLI
 
@@ -111,6 +123,13 @@ pptlive shape add --slide 4 --kind picture --path logo.png --left 600 --top 40
 pptlive shape move   --anchor-id shape:4:3 --left 100 --top 140
 pptlive shape resize --anchor-id shape:4:3 --width 300 --height 200
 pptlive shape delete --anchor-id shape:4:3
+
+pptlive paragraphs --anchor-id ph:4:body         # [{anchor_id (para:S:N:P), text, indent_level, bullet}]
+pptlive insert --anchor-id para:4:2:3 --text "New bullet" [--before|--after]
+pptlive format-paragraph --anchor-id para:4:2:1 --alignment center --indent-level 2
+pptlive format-text --anchor-id ph:4:title --bold --size 40 --color "#2E74B5"
+pptlive list apply  --anchor-id ph:4:body --type bulleted [--char "•"]
+pptlive list remove --anchor-id ph:4:body
 
 pptlive go-to --anchor-id shape:3:1              # deliberate, opt-in view move
 ```

@@ -419,3 +419,139 @@ def autoshape_type_for(name: str | int) -> int:
         choices = ", ".join(AUTOSHAPE_CHOICES)
         raise ValueError(f"unknown autoshape {name!r}; expected one of: {choices}")
     return int(found)
+
+
+# ---------------------------------------------------------------------------
+# Text structure (v0.3): paragraph alignment, bullets, font color
+# ---------------------------------------------------------------------------
+
+
+class PpParagraphAlignment(IntEnum):
+    """`ParagraphFormat.Alignment` — horizontal alignment of a paragraph."""
+
+    LEFT = 1
+    CENTER = 2
+    RIGHT = 3
+    JUSTIFY = 4
+    DISTRIBUTE = 5
+    THAI_DISTRIBUTE = 6
+    JUSTIFY_LOW = 7
+
+
+_ALIGNMENT_NAMES: dict[str, PpParagraphAlignment] = {
+    "left": PpParagraphAlignment.LEFT,
+    "center": PpParagraphAlignment.CENTER,
+    "centre": PpParagraphAlignment.CENTER,
+    "right": PpParagraphAlignment.RIGHT,
+    "justify": PpParagraphAlignment.JUSTIFY,
+    "distribute": PpParagraphAlignment.DISTRIBUTE,
+}
+
+ALIGNMENT_CHOICES: tuple[str, ...] = ("left", "center", "right", "justify", "distribute")
+
+
+def alignment_for(value: str | int) -> int:
+    """Coerce an alignment name/int to a `PpParagraphAlignment` int.
+
+    Accepts `"left"`/`"center"`/`"right"`/`"justify"`/`"distribute"` (case-
+    insensitive, `"centre"` too) or a raw int. Raises `ValueError` for an
+    unknown name — symmetric with `autoshape_type_for`.
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"invalid alignment: {value!r}")
+    if isinstance(value, int):
+        return int(value)
+    found = _ALIGNMENT_NAMES.get(_normalize_name(value))
+    if found is None:
+        choices = ", ".join(ALIGNMENT_CHOICES)
+        raise ValueError(f"unknown alignment {value!r}; expected one of: {choices}")
+    return int(found)
+
+
+class PpBulletType(IntEnum):
+    """`ParagraphFormat.Bullet.Type` — what kind of bullet a paragraph carries."""
+
+    NONE = 0
+    UNNUMBERED = 1
+    NUMBERED = 2
+    MIXED = -2
+
+
+# Accepted `list_type` strings -> the bullet type to apply. The two canonical
+# names are bulleted / numbered; common variants alias on.
+_BULLET_TYPE_FOR: dict[str, PpBulletType] = {
+    "bulleted": PpBulletType.UNNUMBERED,
+    "bullet": PpBulletType.UNNUMBERED,
+    "bullets": PpBulletType.UNNUMBERED,
+    "unnumbered": PpBulletType.UNNUMBERED,
+    "numbered": PpBulletType.NUMBERED,
+    "number": PpBulletType.NUMBERED,
+    "numbers": PpBulletType.NUMBERED,
+}
+
+LIST_TYPE_CHOICES: tuple[str, ...] = ("bulleted", "numbered")
+
+
+def bullet_type_for(list_type: str) -> PpBulletType:
+    """Resolve a `list_type` string to its `PpBulletType`.
+
+    `"bulleted"` -> unnumbered, `"numbered"` -> numbered. Raises `ValueError`
+    for an unknown name.
+    """
+    found = _BULLET_TYPE_FOR.get(_normalize_name(list_type))
+    if found is None:
+        choices = ", ".join(LIST_TYPE_CHOICES)
+        raise ValueError(f"unknown list type {list_type!r}; expected one of: {choices}")
+    return found
+
+
+_BULLET_TYPE_NAMES: dict[int, str] = {
+    int(PpBulletType.NONE): "none",
+    int(PpBulletType.UNNUMBERED): "bulleted",
+    int(PpBulletType.NUMBERED): "numbered",
+    int(PpBulletType.MIXED): "mixed",
+}
+
+
+def bullet_type_name(value: Any) -> str:
+    """Friendly name for a `Bullet.Type` int (e.g. 1 -> "bulleted")."""
+    try:
+        return _BULLET_TYPE_NAMES.get(int(value), f"bullet:{int(value)}")
+    except (TypeError, ValueError):
+        return "none"
+
+
+def parse_color(value: str | int | tuple[int, int, int]) -> int:
+    """Coerce a color to the long PowerPoint's `Font.Color.RGB` expects.
+
+    Accepts `"#RRGGBB"` / `"RRGGBB"` hex, an `(r, g, b)` tuple (0-255 each), or a
+    raw int (passed through — the escape hatch). PowerPoint stores the long in
+    R-low-byte order (`red == 0x0000FF`), so `"#FF0000"` -> 255. Raises
+    `ValueError` for a malformed hex string or out-of-range channel.
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"invalid color: {value!r}")
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, tuple):
+        if len(value) != 3 or any(not (0 <= int(c) <= 255) for c in value):
+            raise ValueError(f"color tuple must be three 0-255 channels, got {value!r}")
+        r, g, b = (int(c) for c in value)
+        return r | (g << 8) | (b << 16)
+    text = str(value).strip().lstrip("#")
+    if len(text) != 6:
+        raise ValueError(f"color must be '#RRGGBB' hex, an (r,g,b) tuple, or an int; got {value!r}")
+    try:
+        r = int(text[0:2], 16)
+        g = int(text[2:4], 16)
+        b = int(text[4:6], 16)
+    except ValueError:
+        raise ValueError(f"invalid hex color {value!r}") from None
+    return r | (g << 8) | (b << 16)
+
+
+def color_hex(value: Any) -> str:
+    """Render a PowerPoint `Font.Color.RGB` long as `"#RRGGBB"`."""
+    n = int(value)
+    r, g, b = n & 0xFF, (n >> 8) & 0xFF, (n >> 16) & 0xFF
+    return f"#{r:02X}{g:02X}{b:02X}"

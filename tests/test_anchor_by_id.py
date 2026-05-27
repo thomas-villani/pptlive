@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from pptlive import Notes, PlaceholderShape, Shape
+from pptlive import Notes, Paragraph, PlaceholderShape, Shape
 from pptlive.exceptions import AnchorNotFoundError, SlideNotFoundError
 
 
@@ -26,6 +26,13 @@ def test_resolve_notes(deck) -> None:  # type: ignore[no-untyped-def]
     assert anchor.text == "Lead with the vision."
 
 
+def test_resolve_paragraph(deck) -> None:  # type: ignore[no-untyped-def]
+    # slide 2, shape 2 (body) is "Intro\rDemo\rQ&A"; paragraph 2 is "Demo".
+    anchor = deck.anchor_by_id("para:2:2:2")
+    assert isinstance(anchor, Paragraph)
+    assert anchor.text == "Demo"
+
+
 @pytest.mark.parametrize(
     "anchor_id",
     [
@@ -36,7 +43,9 @@ def test_resolve_notes(deck) -> None:  # type: ignore[no-untyped-def]
         "ph:2",
         "ph:2:banner",
         "notes:x",
-        "para:1:1:1",
+        "para:1:1",
+        "para:2:2:99",
+        "para:2:2:two",
     ],
 )
 def test_bad_anchor_ids_raise_anchor_not_found(deck, anchor_id) -> None:  # type: ignore[no-untyped-def]

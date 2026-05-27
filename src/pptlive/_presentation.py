@@ -130,14 +130,15 @@ class Presentation:
     def anchor_by_id(self, anchor_id: str) -> Anchor:
         """Resolve an `anchor_id` string into an `Anchor`.
 
-        Recognised in v0:
+        Recognised:
           - `shape:S:N`   — Nth shape (1-based z-order) on slide S
           - `ph:S:KIND`   — placeholder of semantic KIND on slide S
                             (title/ctrtitle/subtitle/body/footer/date/slidenum)
+          - `para:S:N:P`  — paragraph P of shape N on slide S (v0.3)
           - `notes:S`     — speaker-notes body of slide S
 
         `slide:S` is a *container*, not a text anchor — use `deck.slides[S]`.
-        `para:`/`cell:` arrive in later stages and are not yet resolvable.
+        `cell:` arrives in a later stage and is not yet resolvable.
 
         Raises `AnchorNotFoundError` for unknown schemes or missing anchors
         (`SlideNotFoundError`, a subclass, for an out-of-range slide).
@@ -155,6 +156,16 @@ class Presentation:
             except ValueError as e:
                 raise AnchorNotFoundError("shape", anchor_id) from e
             return self.slides[s].shapes[n]
+
+        if kind == "para":
+            parts = rest.split(":")
+            if len(parts) != 3:
+                raise AnchorNotFoundError("paragraph", anchor_id)
+            try:
+                s, n, p = int(parts[0]), int(parts[1]), int(parts[2])
+            except ValueError as e:
+                raise AnchorNotFoundError("paragraph", anchor_id) from e
+            return self.slides[s].shapes[n].paragraph(p)
 
         if kind == "ph":
             s_str, sep, ph_kind = rest.partition(":")

@@ -254,6 +254,108 @@ def test_shape_add_fences_one_undo_entry(fake_powerpoint) -> None:  # type: igno
     assert fake_powerpoint._undo_entries == 1
 
 
+def test_paragraphs_list(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["paragraphs", "--anchor-id", "shape:2:2"])
+    assert result.exit_code == 0
+    rows = _json(result)
+    assert [r["text"] for r in rows] == ["Intro", "Demo", "Q&A"]
+    assert rows[1]["anchor_id"] == "para:2:2:2"
+
+
+def test_paragraphs_non_shape_anchor_exit_2(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["paragraphs", "--anchor-id", "notes:1"])
+    assert result.exit_code == 2
+
+
+def test_insert_after(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["insert", "--anchor-id", "para:2:2:3", "--text", "Wrap-up"])
+    assert result.exit_code == 0
+    assert _json(result)["where"] == "after"
+    body = fake_powerpoint.ActivePresentation.Slides(2).Shapes(2)
+    assert body.TextFrame.TextRange.Text == "Intro\rDemo\rQ&A\rWrap-up"
+
+
+def test_insert_before(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main, ["insert", "--anchor-id", "para:2:2:1", "--text", "Title", "--before"]
+    )
+    assert result.exit_code == 0
+    body = fake_powerpoint.ActivePresentation.Slides(2).Shapes(2)
+    assert body.TextFrame.TextRange.Text == "Title\rIntro\rDemo\rQ&A"
+
+
+def test_format_paragraph(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main,
+        [
+            "format-paragraph",
+            "--anchor-id",
+            "para:2:2:1",
+            "--alignment",
+            "center",
+            "--indent-level",
+            "2",
+        ],
+    )
+    assert result.exit_code == 0
+    para = (
+        fake_powerpoint.ActivePresentation.Slides(2).Shapes(2).TextFrame.TextRange.Paragraphs(1, 1)
+    )
+    assert int(para.ParagraphFormat.Alignment) == 2
+    assert int(para.IndentLevel) == 2
+
+
+def test_format_paragraph_no_options_exit_2(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["format-paragraph", "--anchor-id", "para:2:2:1"])
+    assert result.exit_code == 2  # click UsageError
+
+
+def test_format_text(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main,
+        [
+            "format-text",
+            "--anchor-id",
+            "ph:2:title",
+            "--bold",
+            "--size",
+            "40",
+            "--color",
+            "#00FF00",
+        ],
+    )
+    assert result.exit_code == 0
+    title = fake_powerpoint.ActivePresentation.Slides(2).Shapes(1).TextFrame.TextRange
+    assert int(title.Font.Bold) == -1
+    assert float(title.Font.Size) == 40.0
+    assert int(title.Font.Color.RGB) == 0x00FF00  # green = 65280
+
+
+def test_format_text_no_options_exit_2(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["format-text", "--anchor-id", "ph:2:title"])
+    assert result.exit_code == 2  # click UsageError
+
+
+def test_list_apply_and_remove(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    body = fake_powerpoint.ActivePresentation.Slides(2).Shapes(2).TextFrame.TextRange
+    apply = CliRunner().invoke(
+        main, ["list", "apply", "--anchor-id", "shape:2:2", "--type", "numbered"]
+    )
+    assert apply.exit_code == 0
+    assert int(body.ParagraphFormat.Bullet.Visible) == -1
+    assert int(body.ParagraphFormat.Bullet.Type) == 2
+    remove = CliRunner().invoke(main, ["list", "remove", "--anchor-id", "shape:2:2"])
+    assert remove.exit_code == 0
+    assert int(body.ParagraphFormat.Bullet.Visible) == 0
+
+
+def test_format_text_fences_one_undo_entry(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    assert fake_powerpoint._undo_entries == 0
+    result = CliRunner().invoke(main, ["format-text", "--anchor-id", "ph:2:title", "--bold"])
+    assert result.exit_code == 0
+    assert fake_powerpoint._undo_entries == 1
+
+
 def test_go_to(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     fake_powerpoint._viewed = 1
     result = CliRunner().invoke(main, ["go-to", "--anchor-id", "shape:3:1"])

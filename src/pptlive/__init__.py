@@ -22,7 +22,7 @@ scope — PowerPoint groups a block's edits into a single Ctrl-Z (fenced with
 from __future__ import annotations
 
 from . import constants, units
-from ._anchors import Anchor, Notes
+from ._anchors import Anchor, Notes, Paragraph, ParagraphCollection
 from ._app import PowerPoint, attach, connect
 from ._edit import EditScope
 from ._presentation import Presentation, PresentationCollection
@@ -51,6 +51,8 @@ __all__ = [
     "LayoutNotFoundError",
     "NoTextFrameError",
     "Notes",
+    "Paragraph",
+    "ParagraphCollection",
     "PlaceholderShape",
     "PowerPoint",
     "PowerPointBusyError",

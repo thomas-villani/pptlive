@@ -7,14 +7,17 @@ resolved open questions inline (strike them through, link the commit).
 
 **Status legend:** `[ ]` not started · `[~]` in progress · `[x]` shipped.
 
-> **Bootstrap + v0 + v0.1 + v0.2 have landed** (fake-COM unit tests green:
-> `ruff`, `mypy`, `pytest` all pass; 112 tests). The library is usable as an LLM
+> **Bootstrap + v0 + v0.1 + v0.2 + v0.3 have landed** (fake-COM unit tests green:
+> `ruff`, `mypy`, `pytest` all pass; 142 tests). The library is usable as an LLM
 > tool against a real, already-running PowerPoint; it drives the **slide
 > lifecycle** (`slide add/delete/duplicate/move/set-layout` + layout-name
-> resolution) — verified live 2026-05-26 via `scripts/layout_spike.py` — and
+> resolution) — verified live 2026-05-26 via `scripts/layout_spike.py` —
 > **shapes & geometry** (`shape add` textbox/autoshape/picture + `move/resize/
-> delete`) — verified live 2026-05-27 via `scripts/shape_spike.py` (both net-zero;
-> the v0.1/v0.2 sections record the findings). The four **Spike** items below were
+> delete`) — verified live 2026-05-27 via `scripts/shape_spike.py` — and **text
+> structure** (`para:S:N:P` anchors, insert, paragraph/font formatting, bullets) —
+> designed from a live COM probe and verified via `scripts/text_spike.py` (all
+> net-zero; the v0.1/v0.2/v0.3 sections record the findings). The four **Spike**
+> items below were
 > **verified against real COM on 2026-05-26** (PowerPoint desktop, a 3-slide
 > deck). Items #2/#3/#4 confirmed as specced. **#1 overturned the spec's
 > headline assumption:** PowerPoint *does* group consecutive in-session COM edits
@@ -202,12 +205,39 @@ read/set text on the common anchors, polite view/Selection scope, the JSON CLI.
   default AutoSize) — requesting `height=72` for "MARKER-TB" came back ~29 pt. The
   `left`/`top`/`width` you pass are honored; height is advisory when AutoSize is on.
 
-## v0.3 — text structure
+## v0.3 — text structure — SHIPPED
 
-- [ ] `para:S:N:P` anchors (`Paragraph` over a `TextRange`).
-- [ ] `insert` before/after within a text frame; `apply_style`;
-  `format_paragraph`; list verbs (`TextRange.ParagraphFormat` / `IndentLevel`).
-- [ ] CLI `insert`, `style apply`, `format-paragraph`, list commands.
+- [x] `para:S:N:P` anchors (`Paragraph` over `TextRange.Paragraphs(P, 1)`),
+  plus `Shape.paragraphs` / `Shape.paragraph(p)` and the structured
+  `paragraphs.list()`. Resolves live (the paragraph count drifts as text is
+  inserted/deleted); out-of-range `P` is exit 2, a frameless shape is
+  `NoTextFrameError` (exit 6).
+- [x] `insert_paragraph_before/after`, `format_text`, `format_paragraph`,
+  `apply_list`/`remove_list` live on the **base `Anchor`** (act on
+  `self._text_range()`), so they work on a whole-shape anchor *and* on one
+  `Paragraph`. **`apply_style` reframed → `format_text`:** PowerPoint has no
+  named paragraph styles (no `Presentation.Styles` analog), so "styling" is
+  direct font formatting (bold/italic/underline/size/font/color). Indent is
+  `IndentLevel` (1-5), PowerPoint's only paragraph-indent notion (there is no
+  points-based `LeftIndent` on `ParagraphFormat`).
+- [x] CLI `paragraphs`, `insert` (`--before/--after`), `format-paragraph`
+  (alignment/spacing/indent-level), `format-text` (the `style apply` reframe),
+  and the `list` group (`apply`/`remove`). Exit codes reuse the mapping.
+- [x] **Spike RESOLVED (designed from a live COM probe 2026-05-27, then verified
+  via `scripts/text_spike.py`, net-zero).** Findings that shaped the code:
+  `TextRange.Paragraphs(P, 1)` is 1-based and a non-final paragraph's `.Text`
+  **includes its trailing `\r`** (the last one doesn't); assigning
+  `Paragraphs(P,1).Text` **preserves the paragraph break** (no Word-style
+  trailing-mark gymnastics needed); `InsertBefore(text+"\r")` cleanly prepends a
+  paragraph, while `InsertAfter` needs **end-detection** (append `text+"\r"` for a
+  non-final paragraph, prepend `"\r"+text` for the final one) — both verified to
+  land a clean paragraph; alignment ints are left=1/center=2/right=3/justify=4;
+  `SpaceBefore`/`SpaceAfter` are points and `SpaceWithin` is the line-spacing
+  multiple; `Bullet.Visible/Type/Character` and `Font.Bold/Italic/Underline/Size/
+  Name/Color.RGB` round-trip; `Font.Color.RGB` is R-low-byte (`#FF0000` -> 255);
+  `IndentLevel` (1-5) works on both a textbox and a body placeholder. The fake's
+  paragraph model reproduces the char-splice behavior exactly, so the unit tests
+  are faithful.
 
 ## v0.4 — tables
 

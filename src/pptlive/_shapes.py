@@ -22,7 +22,7 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 from . import _com
-from ._anchors import Anchor
+from ._anchors import Anchor, Paragraph, ParagraphCollection
 from .constants import (
     MsoShapeType,
     MsoTextOrientation,
@@ -194,6 +194,17 @@ class Shape(Anchor):
         if not has_text_frame(sh):
             raise NoTextFrameError(self.anchor_id)
         return sh.TextFrame.TextRange
+
+    # -- paragraphs (v0.3) -------------------------------------------------
+
+    @property
+    def paragraphs(self) -> ParagraphCollection:
+        """The shape's paragraphs (`para:S:N:P`); raises `NoTextFrameError` if none."""
+        return ParagraphCollection(self)
+
+    def paragraph(self, index: int) -> Paragraph:
+        """The `index`-th paragraph (1-based) of this shape's text frame."""
+        return ParagraphCollection(self)[index]
 
     # -- geometry (points throughout, never EMUs) --------------------------
 

@@ -3,8 +3,9 @@
 v0 surface: status, slides, outline, slide read, shapes, read (anchor/notes),
 write, replace, go-to. v0.1 adds the slide-lifecycle verbs under the `slide`
 group: add, delete, duplicate, move, set-layout, and layouts. v0.2 adds the
-`shape` group: add (textbox/shape/picture), move, resize, delete. find/replace
-and the `show` group arrive in later stages.
+`shape` group: add (textbox/shape/picture), move, resize, delete. v0.3 adds text
+structure: paragraphs, insert, format-paragraph, format-text, and the `list`
+group (apply/remove). find/replace and the `show` group arrive in later stages.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import click
 from .. import attach
 from .._presentation import Presentation
 from .._shapes import Shape
-from ..constants import AUTOSHAPE_CHOICES
+from ..constants import ALIGNMENT_CHOICES, AUTOSHAPE_CHOICES, LIST_TYPE_CHOICES
 from ..exceptions import AnchorNotFoundError, PowerPointNotRunningError
 from .main import _run, emit
 
@@ -112,6 +113,18 @@ def _fmt_geometry(geo: dict[str, float] | None) -> str:
     )
 
 
+def _fmt_paragraphs(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "(no paragraphs)"
+    lines = []
+    for r in rows:
+        bullet = "" if r.get("bullet") in (None, "none") else f" •{r['bullet']}"
+        lvl = r.get("indent_level")
+        indent = "  " * (int(lvl) - 1) if isinstance(lvl, int) and lvl > 1 else ""
+        lines.append(f"[{r['anchor_id']}] {indent}{r.get('text', '')!r}{bullet}")
+    return "\n".join(lines)
+
+
 def register(group: click.Group) -> None:
     group.add_command(status)
     group.add_command(slides_cmd)
@@ -122,6 +135,11 @@ def register(group: click.Group) -> None:
     group.add_command(read)
     group.add_command(write)
     group.add_command(replace)
+    group.add_command(paragraphs_cmd)
+    group.add_command(insert)
+    group.add_command(format_paragraph)
+    group.add_command(format_text)
+    group.add_command(list_cmd)
     group.add_command(go_to)
 
 
@@ -539,6 +557,218 @@ def shape_delete(ctx: click.Context, anchor_id: str) -> None:
                 {"ok": True, **info},
                 as_text=not ctx.obj["as_json"],
                 text=f"deleted {info['anchor_id']} ({info['name']!r})",
+            )
+
+    _run(ctx, go)
+
+
+# ---------------------------------------------------------------------------
+# text structure (v0.3): paragraphs, insert, format-paragraph, format-text, list
+# ---------------------------------------------------------------------------
+
+
+@click.command(name="paragraphs")
+@click.option(
+    "--anchor-id", "anchor_id", required=True, help="Shape whose paragraphs to list (shape:/ph:)."
+)
+@click.pass_context
+def paragraphs_cmd(ctx: click.Context, anchor_id: str) -> None:
+    """List a shape's paragraphs: anchor_id (para:S:N:P), text, indent, bullet."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            sh = _resolve_shape(deck, anchor_id)
+            rows = sh.paragraphs.list()
+            emit(rows, as_text=not ctx.obj["as_json"], text=_fmt_paragraphs(rows))
+
+    _run(ctx, go)
+
+
+@click.command(name="insert")
+@click.option("--anchor-id", "anchor_id", required=True, help="Text anchor to insert relative to.")
+@click.option("--text", "text", required=True, help="Paragraph text to insert.")
+@click.option(
+    "--after/--before",
+    "after",
+    default=True,
+    show_default=True,
+    help="Insert the new paragraph after (default) or before the anchor.",
+)
+@click.pass_context
+def insert(ctx: click.Context, anchor_id: str, text: str, after: bool) -> None:
+    """Insert a new paragraph before/after a text anchor (para:/ph:/shape:/notes:)."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            anchor = deck.anchor_by_id(anchor_id)
+            with deck.edit(f"CLI: insert paragraph at {anchor_id}"):
+                if after:
+                    anchor.insert_paragraph_after(text)
+                else:
+                    anchor.insert_paragraph_before(text)
+            emit(
+                {
+                    "ok": True,
+                    "anchor_id": anchor.anchor_id,
+                    "where": "after" if after else "before",
+                },
+                as_text=not ctx.obj["as_json"],
+                text=f"inserted paragraph {'after' if after else 'before'} {anchor.anchor_id}",
+            )
+
+    _run(ctx, go)
+
+
+@click.command(name="format-paragraph")
+@click.option("--anchor-id", "anchor_id", required=True, help="Text anchor to format.")
+@click.option("--alignment", type=click.Choice(ALIGNMENT_CHOICES), default=None, help="Alignment.")
+@click.option("--space-before", type=float, default=None, help="Space before (points).")
+@click.option("--space-after", type=float, default=None, help="Space after (points).")
+@click.option("--line-spacing", type=float, default=None, help="Line spacing (multiple, e.g. 1.5).")
+@click.option(
+    "--indent-level", type=click.IntRange(1, 5), default=None, help="Outline/bullet level (1-5)."
+)
+@click.pass_context
+def format_paragraph(
+    ctx: click.Context,
+    anchor_id: str,
+    alignment: str | None,
+    space_before: float | None,
+    space_after: float | None,
+    line_spacing: float | None,
+    indent_level: int | None,
+) -> None:
+    """Set paragraph formatting (alignment, spacing, indent level) on a text anchor."""
+
+    def go() -> None:
+        if all(
+            v is None for v in (alignment, space_before, space_after, line_spacing, indent_level)
+        ):
+            raise click.UsageError("format-paragraph requires at least one formatting option")
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            anchor = deck.anchor_by_id(anchor_id)
+            with deck.edit(f"CLI: format paragraph {anchor_id}"):
+                anchor.format_paragraph(
+                    alignment=alignment,
+                    space_before=space_before,
+                    space_after=space_after,
+                    line_spacing=line_spacing,
+                    indent_level=indent_level,
+                )
+            emit(
+                {"ok": True, "anchor_id": anchor.anchor_id},
+                as_text=not ctx.obj["as_json"],
+                text=f"formatted {anchor.anchor_id}",
+            )
+
+    _run(ctx, go)
+
+
+@click.command(name="format-text")
+@click.option("--anchor-id", "anchor_id", required=True, help="Text anchor to format.")
+@click.option("--bold/--no-bold", "bold", default=None, help="Bold on/off.")
+@click.option("--italic/--no-italic", "italic", default=None, help="Italic on/off.")
+@click.option("--underline/--no-underline", "underline", default=None, help="Underline on/off.")
+@click.option("--size", type=float, default=None, help="Font size (points).")
+@click.option("--font", "font", default=None, help="Font name (e.g. 'Arial').")
+@click.option("--color", "color", default=None, help="Font color, '#RRGGBB'.")
+@click.pass_context
+def format_text(
+    ctx: click.Context,
+    anchor_id: str,
+    bold: bool | None,
+    italic: bool | None,
+    underline: bool | None,
+    size: float | None,
+    font: str | None,
+    color: str | None,
+) -> None:
+    """Set font formatting (bold/italic/size/font/color) on a text anchor.
+
+    PowerPoint's analog of `style apply` — it has no named paragraph styles, so
+    styling is direct font formatting.
+    """
+
+    def go() -> None:
+        if all(v is None for v in (bold, italic, underline, size, font, color)):
+            raise click.UsageError("format-text requires at least one formatting option")
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            anchor = deck.anchor_by_id(anchor_id)
+            with deck.edit(f"CLI: format text {anchor_id}"):
+                anchor.format_text(
+                    bold=bold,
+                    italic=italic,
+                    underline=underline,
+                    size=size,
+                    font=font,
+                    color=color,
+                )
+            emit(
+                {"ok": True, "anchor_id": anchor.anchor_id},
+                as_text=not ctx.obj["as_json"],
+                text=f"formatted text of {anchor.anchor_id}",
+            )
+
+    _run(ctx, go)
+
+
+@click.group(name="list")
+def list_cmd() -> None:
+    """List/bullet formatting: apply (bulleted/numbered) or remove."""
+
+
+@list_cmd.command(name="apply")
+@click.option("--anchor-id", "anchor_id", required=True, help="Text anchor to make a list.")
+@click.option(
+    "--type",
+    "list_type",
+    type=click.Choice(LIST_TYPE_CHOICES),
+    default="bulleted",
+    show_default=True,
+    help="List type.",
+)
+@click.option("--char", "char", default=None, help="Custom bullet character (bulleted only).")
+@click.pass_context
+def list_apply(ctx: click.Context, anchor_id: str, list_type: str, char: str | None) -> None:
+    """Turn a text anchor's paragraphs into a bulleted or numbered list."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            anchor = deck.anchor_by_id(anchor_id)
+            with deck.edit(f"CLI: apply {list_type} list to {anchor_id}"):
+                anchor.apply_list(list_type, character=char)
+            emit(
+                {"ok": True, "anchor_id": anchor.anchor_id, "type": list_type},
+                as_text=not ctx.obj["as_json"],
+                text=f"applied {list_type} list to {anchor.anchor_id}",
+            )
+
+    _run(ctx, go)
+
+
+@list_cmd.command(name="remove")
+@click.option(
+    "--anchor-id", "anchor_id", required=True, help="Text anchor to strip list formatting."
+)
+@click.pass_context
+def list_remove(ctx: click.Context, anchor_id: str) -> None:
+    """Strip bullets / numbering from a text anchor's paragraphs."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            anchor = deck.anchor_by_id(anchor_id)
+            with deck.edit(f"CLI: remove list from {anchor_id}"):
+                anchor.remove_list()
+            emit(
+                {"ok": True, "anchor_id": anchor.anchor_id},
+                as_text=not ctx.obj["as_json"],
+                text=f"removed list from {anchor.anchor_id}",
             )
 
     _run(ctx, go)
