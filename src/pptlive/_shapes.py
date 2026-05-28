@@ -37,6 +37,7 @@ from .exceptions import AnchorNotFoundError, NoTextFrameError
 
 if TYPE_CHECKING:
     from ._slides import Slide
+    from ._tables import Table
 
 # Default geometry (points) for added shapes when the caller names none. A wide,
 # short box for text; a square for autoshapes; a picture keeps its native size.
@@ -46,6 +47,8 @@ _DEFAULT_TEXTBOX_WIDTH = 288.0  # 4 in
 _DEFAULT_TEXTBOX_HEIGHT = 72.0  # 1 in
 _DEFAULT_SHAPE_WIDTH = 144.0  # 2 in
 _DEFAULT_SHAPE_HEIGHT = 144.0  # 2 in
+_DEFAULT_TABLE_WIDTH = 480.0  # ~6.7 in
+_DEFAULT_ROW_HEIGHT = 30.0  # advisory; PowerPoint auto-fits rows to content
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +68,19 @@ def is_placeholder(com_shape: Any) -> bool:
     """True iff the shape is a layout placeholder (`Shape.Type == msoPlaceholder`)."""
     try:
         return int(com_shape.Type) == int(MsoShapeType.PLACEHOLDER)
+    except Exception:
+        return False
+
+
+def has_table(com_shape: Any) -> bool:
+    """True iff the shape holds a table (`Shape.HasTable == msoTrue`).
+
+    The reliable gate — a table that fills a content placeholder reports
+    `Shape.Type == placeholder` (14), not table (19), so `Type` can't be trusted
+    (verified live in `scripts/table_spike.py`).
+    """
+    try:
+        return is_true(com_shape.HasTable)
     except Exception:
         return False
 
@@ -105,6 +121,7 @@ def shape_to_dict(com_shape: Any, slide_index: int, z_index: int) -> dict[str, A
     else:
         d["placeholder"] = None
 
+    d["has_table"] = has_table(com_shape)
     if has_text_frame(com_shape):
         d["has_text_frame"] = True
         try:
@@ -188,6 +205,26 @@ class Shape(Anchor):
     def has_text_frame(self) -> bool:
         with _com.translate_com_errors():
             return has_text_frame(self._com_shape())
+
+    @property
+    def has_table(self) -> bool:
+        """Whether this shape holds a table (`Shape.HasTable`)."""
+        with _com.translate_com_errors():
+            return has_table(self._com_shape())
+
+    @property
+    def table(self) -> Table:
+        """The shape's `Table` (cells are `cell:S:N:R:C` anchors).
+
+        Raises `AnchorNotFoundError` (kind `"table"`, exit 2) if the shape holds
+        no table.
+        """
+        from ._tables import Table
+
+        with _com.translate_com_errors():
+            if not has_table(self._com_shape()):
+                raise AnchorNotFoundError("table", self.anchor_id)
+        return Table(self)
 
     def _text_range(self) -> Any:
         sh = self._com_shape()
@@ -441,6 +478,34 @@ class ShapeCollection:
                 -1.0 if width is None else float(width),  # -1 = native size
                 -1.0 if height is None else float(height),
             )
+            return self._added()
+
+    def add_table(
+        self,
+        rows: int,
+        columns: int,
+        *,
+        left: float | None = None,
+        top: float | None = None,
+        width: float | None = None,
+        height: float | None = None,
+    ) -> Shape:
+        """Add a `rows`×`columns` table and return its `Shape` (`Shapes.AddTable`).
+
+        Geometry is in points; omitted values default to a wide grid near the
+        top-left (height is advisory — PowerPoint auto-fits rows to content).
+        Address cells through the returned shape's `.table` or the `cell:S:N:R:C`
+        anchor; the shape's `.has_table` is True. Raises `ValueError` for
+        non-positive `rows`/`columns` (before any COM).
+        """
+        if int(rows) < 1 or int(columns) < 1:
+            raise ValueError(f"table needs >=1 row and >=1 column, got {rows}x{columns}")
+        left = _DEFAULT_LEFT if left is None else float(left)
+        top = _DEFAULT_TOP if top is None else float(top)
+        width = _DEFAULT_TABLE_WIDTH if width is None else float(width)
+        height = _DEFAULT_ROW_HEIGHT * int(rows) if height is None else float(height)
+        with _com.translate_com_errors():
+            self._com_collection.AddTable(int(rows), int(columns), left, top, width, height)
             return self._added()
 
     def list(self) -> list[dict[str, Any]]:

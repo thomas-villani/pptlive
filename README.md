@@ -71,6 +71,15 @@ with pl.attach() as ppt:
         body.paragraph(1).format_text(bold=True, size=24, color="#2E74B5")
         body.insert_paragraph_after("Cash runway: 30 months")   # append a bullet
 
+    # Tables — a table is a shape (Shape.has_table); cells are cell:S:N:R:C anchors.
+    with deck.edit("Add a metrics table"):
+        table = deck.slides[4].shapes.add_table(rows=3, columns=2).table
+        table.cell(1, 1).set_text("Metric")
+        table.cell(1, 2).set_text("Q3")
+        table.add_row(["Revenue", "$4.2M"])          # appends + fills a row
+        deck.anchor_by_id("cell:4:5:1:1").format_text(bold=True)   # a Cell is an anchor
+    grid = table.read()                              # {slide, shape, rows, columns, cells:[...]}
+
     # Render — let a vision model *see* the slide it just built (export → read → iterate).
     png = deck.slides[4].export_image(width=1280)    # temp PNG (or pass a path); polite
     #   ...hand `png` to your image tool, look, then revise.
@@ -93,15 +102,16 @@ slide-index first:
 | `shape:S:N`    | Nth shape (1-based z-order) on slide S — the canonical handle |
 | `ph:S:KIND`    | placeholder of semantic KIND (`title`/`ctrtitle`/`subtitle`/`body`/`footer`/`date`/`slidenum`) — the LLM-preferred form |
 | `para:S:N:P`   | paragraph P (1-based) of shape N on slide S |
+| `cell:S:N:R:C` | cell (row R, col C) of the table in shape N on slide S — a `Cell` *is* an anchor, so it takes every text/format verb |
 | `notes:S`      | speaker-notes body of slide S |
 | `here:`        | whatever the user has selected right now — the shape, or the paragraph holding the text caret (the opt-in way to act on the live selection) |
 
 z-order **drifts** when shapes are added or removed, so `shape:S:N` is resolved
 live and never cached; every shape listing also emits `name` (`Shape.Name`) and
 `id` (`Shape.Id`, stable across reorder) so you can re-identify after drift.
-Steer toward `ph:S:KIND` and `.Name` as the drift-proof forms. `para:S:N:P` also
-resolves live (the paragraph count shifts as text is inserted/deleted).
-(`cell:S:N:R:C` arrives in a later stage.)
+Steer toward `ph:S:KIND` and `.Name` as the drift-proof forms. `para:S:N:P` and
+`cell:S:N:R:C` also resolve live (the paragraph/row count shifts as text or rows
+are inserted/deleted).
 
 ## CLI
 
@@ -132,6 +142,7 @@ pptlive slide export --slide 2 --out slide2.png [--width 1280] [--format png]  #
 pptlive shape add --slide 4 --kind textbox --text "Revenue up 12%" --left 72 --top 72
 pptlive shape add --slide 4 --kind shape --shape-type star --left 400 --top 120 --width 120 --height 120
 pptlive shape add --slide 4 --kind picture --path logo.png --left 600 --top 40
+pptlive shape add --slide 4 --kind table --rows 3 --cols 2 --left 72 --top 120
 pptlive shape move   --anchor-id shape:4:3 --left 100 --top 140
 pptlive shape resize --anchor-id shape:4:3 --width 300 --height 200
 pptlive shape delete --anchor-id shape:4:3
@@ -142,6 +153,11 @@ pptlive format-paragraph --anchor-id para:4:2:1 --alignment center --indent-leve
 pptlive format-text --anchor-id ph:4:title --bold --size 40 --color "#2E74B5"
 pptlive list apply  --anchor-id ph:4:body --type bulleted [--char "•"]
 pptlive list remove --anchor-id ph:4:body
+
+pptlive table read --slide 4 --shape 5           # grid of cells, each with its cell:S:N:R:C anchor
+pptlive table add-row    --slide 4 --shape 5 --values '["Revenue", "$4.2M"]'
+pptlive table delete-row --slide 4 --shape 5 --row 2
+pptlive write --anchor-id cell:4:5:1:1 --text "Metric"   # a cell takes write/format-text/...
 
 pptlive selection                                # what the user has selected (-> here:)
 pptlive read anchor --anchor-id here:            # read the selected shape/paragraph

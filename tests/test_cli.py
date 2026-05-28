@@ -401,6 +401,92 @@ def test_selection_cli_none(fake_powerpoint) -> None:  # type: ignore[no-untyped
     assert _json(result)["type"] == "none"
 
 
+def test_shape_add_table(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main, ["shape", "add", "--slide", "3", "--kind", "table", "--rows", "2", "--cols", "3"]
+    )
+    assert result.exit_code == 0
+    payload = _json(result)
+    assert payload["ok"] is True
+    assert payload["has_table"] is True
+    assert payload["anchor_id"] == "shape:3:3"
+
+
+def test_shape_add_table_requires_dims_exit_2(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["shape", "add", "--slide", "3", "--kind", "table"])
+    assert result.exit_code == 2  # click UsageError
+    assert fake_powerpoint.ActivePresentation.Slides(3).Shapes.Count == 2  # untouched
+
+
+def test_table_read(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    # Add a table, fill a cell through its anchor, then read the grid.
+    CliRunner().invoke(
+        main, ["shape", "add", "--slide", "3", "--kind", "table", "--rows", "2", "--cols", "2"]
+    )
+    CliRunner().invoke(main, ["write", "--anchor-id", "cell:3:3:1:1", "--text", "TL"])
+    result = CliRunner().invoke(main, ["table", "read", "--slide", "3", "--shape", "3"])
+    assert result.exit_code == 0
+    grid = _json(result)
+    assert grid["rows"] == 2 and grid["columns"] == 2
+    assert grid["cells"][0][0]["text"] == "TL"
+    assert grid["cells"][0][0]["anchor_id"] == "cell:3:3:1:1"
+
+
+def test_table_read_no_table_exit_2(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    # shape:3:1 is the TextBox — no table.
+    result = CliRunner().invoke(main, ["table", "read", "--slide", "3", "--shape", "1"])
+    assert result.exit_code == 2
+
+
+def test_table_add_row(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    CliRunner().invoke(
+        main, ["shape", "add", "--slide", "3", "--kind", "table", "--rows", "1", "--cols", "2"]
+    )
+    result = CliRunner().invoke(
+        main,
+        ["table", "add-row", "--slide", "3", "--shape", "3", "--values", '["x", "y"]'],
+    )
+    assert result.exit_code == 0
+    assert _json(result)["rows"] == 2
+    # The new row's cells were filled.
+    read = CliRunner().invoke(main, ["table", "read", "--slide", "3", "--shape", "3"])
+    assert _json(read)["cells"][1] == [
+        {"row": 2, "col": 1, "text": "x", "anchor_id": "cell:3:3:2:1"},
+        {"row": 2, "col": 2, "text": "y", "anchor_id": "cell:3:3:2:2"},
+    ]
+
+
+def test_table_add_row_bad_values_exit_2(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    CliRunner().invoke(
+        main, ["shape", "add", "--slide", "3", "--kind", "table", "--rows", "1", "--cols", "2"]
+    )
+    result = CliRunner().invoke(
+        main, ["table", "add-row", "--slide", "3", "--shape", "3", "--values", "not-json"]
+    )
+    assert result.exit_code == 2  # click UsageError
+
+
+def test_table_delete_row(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    CliRunner().invoke(
+        main, ["shape", "add", "--slide", "3", "--kind", "table", "--rows", "3", "--cols", "1"]
+    )
+    result = CliRunner().invoke(
+        main, ["table", "delete-row", "--slide", "3", "--shape", "3", "--row", "2"]
+    )
+    assert result.exit_code == 0
+    assert _json(result)["rows"] == 2
+
+
+def test_table_fences_one_undo_entry(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    CliRunner().invoke(
+        main, ["shape", "add", "--slide", "3", "--kind", "table", "--rows", "1", "--cols", "1"]
+    )
+    fake_powerpoint._undo_entries = 0
+    result = CliRunner().invoke(main, ["table", "add-row", "--slide", "3", "--shape", "3"])
+    assert result.exit_code == 0
+    assert fake_powerpoint._undo_entries == 1
+
+
 def test_text_output_mode(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     result = CliRunner().invoke(main, ["--text", "slides"])
     assert result.exit_code == 0

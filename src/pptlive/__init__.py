@@ -29,6 +29,7 @@ from ._presentation import Presentation, PresentationCollection
 from ._selection import SelectionInfo, SelectionSnapshot
 from ._shapes import PlaceholderShape, Shape, ShapeCollection
 from ._slides import Slide, SlideCollection
+from ._tables import Cell, Table
 from .exceptions import (
     AmbiguousMatchError,
     AnchorNotFoundError,
@@ -46,6 +47,7 @@ __all__ = [
     "AmbiguousMatchError",
     "Anchor",
     "AnchorNotFoundError",
+    "Cell",
     "ComError",
     "EditScope",
     "LayoutNotFoundError",
@@ -68,6 +70,7 @@ __all__ = [
     "Slide",
     "SlideCollection",
     "SlideNotFoundError",
+    "Table",
     "attach",
     "connect",
     "constants",

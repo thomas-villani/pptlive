@@ -7,11 +7,14 @@ group: add, delete, duplicate, move, set-layout, and layouts. v0.2 adds the
 structure: paragraphs, insert, format-paragraph, format-text, and the `list`
 group (apply/remove). v0.4 adds `slide export` (render a slide to an image) and
 `selection` (what the user has selected, resolved to anchors; targetable via
-`here:`). find/replace and the `show` group arrive in later stages.
+`here:`). v0.5 adds the `table` group (read/add-row/delete-row) plus `shape add
+--kind table`; cells are `cell:S:N:R:C` anchors. find/replace and the `show`
+group arrive in later stages.
 """
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import click
@@ -132,6 +135,18 @@ def _fmt_paragraphs(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _fmt_table_read(grid: dict[str, Any]) -> str:
+    head = (
+        f"table at {grid.get('anchor_id')} (slide {grid.get('slide')}, "
+        f"{grid.get('rows')}x{grid.get('columns')})"
+    )
+    lines = [head]
+    for row in grid.get("cells") or []:
+        cells = [str(cell.get("text", "")).replace("\r", " / ").replace("\v", " ") for cell in row]
+        lines.append("  | " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
 def _fmt_selection(info: dict[str, Any]) -> str:
     kind = info.get("type")
     slide = info.get("slide")
@@ -164,6 +179,7 @@ def register(group: click.Group) -> None:
     group.add_command(format_paragraph)
     group.add_command(format_text)
     group.add_command(list_cmd)
+    group.add_command(table)
     group.add_command(selection_cmd)
     group.add_command(go_to)
 
@@ -494,11 +510,13 @@ def _resolve_shape(deck: Presentation, anchor_id: str) -> Shape:
 @click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
 @click.option(
     "--kind",
-    type=click.Choice(["textbox", "shape", "picture"]),
+    type=click.Choice(["textbox", "shape", "picture", "table"]),
     required=True,
     help="What to add.",
 )
 @click.option("--text", "text", default=None, help="Initial text (textbox/shape).")
+@click.option("--rows", type=int, default=None, help="Row count (required for --kind table).")
+@click.option("--cols", type=int, default=None, help="Column count (required for --kind table).")
 @click.option(
     "--path",
     "path",
@@ -524,6 +542,8 @@ def shape_add(
     slide_index: int,
     kind: str,
     text: str | None,
+    rows: int | None,
+    cols: int | None,
     path: str | None,
     shape_type: str,
     left: float | None,
@@ -536,6 +556,8 @@ def shape_add(
     def go() -> None:
         if kind == "picture" and not path:
             raise click.UsageError("shape add --kind picture requires --path")
+        if kind == "table" and (rows is None or cols is None):
+            raise click.UsageError("shape add --kind table requires --rows and --cols")
         with attach() as ppt:
             deck = _pick_deck(ppt, ctx.obj["doc_name"])
             shapes = deck.slides[slide_index].shapes  # exit 2 if slide out of range
@@ -547,6 +569,11 @@ def shape_add(
                 elif kind == "shape":
                     new = shapes.add_shape(
                         shape_type, left=left, top=top, width=width, height=height
+                    )
+                elif kind == "table":
+                    assert rows is not None and cols is not None  # guarded above
+                    new = shapes.add_table(
+                        rows, cols, left=left, top=top, width=width, height=height
                     )
                 else:  # picture
                     assert path is not None  # guarded above
@@ -850,6 +877,101 @@ def list_remove(ctx: click.Context, anchor_id: str) -> None:
                 {"ok": True, "anchor_id": anchor.anchor_id},
                 as_text=not ctx.obj["as_json"],
                 text=f"removed list from {anchor.anchor_id}",
+            )
+
+    _run(ctx, go)
+
+
+# ---------------------------------------------------------------------------
+# table read | add-row | delete-row  (a table is a shape: address it by slide + z-order)
+# ---------------------------------------------------------------------------
+
+
+@click.group(name="table")
+def table() -> None:
+    """Read + edit tables (a table is a shape; cells are anchors: cell:S:N:R:C)."""
+
+
+def _resolve_table(deck: Presentation, slide_index: int, shape_index: int) -> Any:
+    """Resolve the table on slide S, shape N (z-order). Exit 2 if no such table."""
+    return deck.slides[slide_index].shapes[shape_index].table
+
+
+@table.command(name="read")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--shape", "shape_index", type=int, required=True, help="1-based shape z-order index."
+)
+@click.pass_context
+def table_read(ctx: click.Context, slide_index: int, shape_index: int) -> None:
+    """Read a table as a grid of cells, each carrying its cell:S:N:R:C anchor."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            grid = _resolve_table(deck, slide_index, shape_index).read()
+            emit(grid, as_text=not ctx.obj["as_json"], text=_fmt_table_read(grid))
+
+    _run(ctx, go)
+
+
+@table.command(name="add-row")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--shape", "shape_index", type=int, required=True, help="1-based shape z-order index."
+)
+@click.option(
+    "--values", "values", default=None, help="Optional JSON array of cell values for the new row."
+)
+@click.pass_context
+def table_add_row(
+    ctx: click.Context, slide_index: int, shape_index: int, values: str | None
+) -> None:
+    """Append a row to a table (one Ctrl-Z)."""
+    parsed: list[Any] | None = None
+    if values is not None:
+        try:
+            parsed = json.loads(values)
+        except json.JSONDecodeError as e:
+            raise click.UsageError(f"--values must be a JSON array: {e}") from e
+        if not isinstance(parsed, list):
+            raise click.UsageError("--values must be a JSON array")
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            t = _resolve_table(deck, slide_index, shape_index)
+            with deck.edit(f"CLI: add row to table shape:{slide_index}:{shape_index}"):
+                t.add_row(parsed)
+            emit(
+                {"ok": True, "anchor_id": t.shape.anchor_id, "rows": t.row_count},
+                as_text=not ctx.obj["as_json"],
+                text=f"added row to {t.shape.anchor_id} (now {t.row_count} rows)",
+            )
+
+    _run(ctx, go)
+
+
+@table.command(name="delete-row")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--shape", "shape_index", type=int, required=True, help="1-based shape z-order index."
+)
+@click.option("--row", "row", type=int, required=True, help="1-based row to delete.")
+@click.pass_context
+def table_delete_row(ctx: click.Context, slide_index: int, shape_index: int, row: int) -> None:
+    """Delete a row from a table (one Ctrl-Z)."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            t = _resolve_table(deck, slide_index, shape_index)
+            with deck.edit(f"CLI: delete row {row} from table shape:{slide_index}:{shape_index}"):
+                t.delete_row(row)
+            emit(
+                {"ok": True, "anchor_id": t.shape.anchor_id, "rows": t.row_count},
+                as_text=not ctx.obj["as_json"],
+                text=f"deleted row {row} from {t.shape.anchor_id} (now {t.row_count} rows)",
             )
 
     _run(ctx, go)

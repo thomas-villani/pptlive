@@ -34,6 +34,7 @@ _MSO_LINE = 9
 _MSO_PICTURE = 13
 _MSO_PLACEHOLDER = 14
 _MSO_TEXT_BOX = 17
+_MSO_TABLE = 19
 
 # MsoTriState
 _MSO_TRUE = -1
@@ -271,6 +272,7 @@ class _FakeShape:
         shape_type: int,
         text: str | None = None,
         placeholder_type: int | None = None,
+        table: _FakeTable | None = None,
         left: float = 10.0,
         top: float = 20.0,
         width: float = 100.0,
@@ -286,6 +288,7 @@ class _FakeShape:
         self.Height = height
         self.Rotation = rotation
         self._placeholder_type = placeholder_type
+        self._table = table
         self._text_frame = _FakeTextFrame(text) if text is not None else None
         self.selected = False
         self._collection: _FakeShapes | None = None  # set when adopted by _FakeShapes
@@ -303,6 +306,16 @@ class _FakeShape:
         if self._text_frame is None:
             raise AttributeError("shape has no text frame")
         return self._text_frame
+
+    @property
+    def HasTable(self) -> int:
+        return _MSO_TRUE if self._table is not None else _MSO_FALSE
+
+    @property
+    def Table(self) -> _FakeTable:
+        if self._table is None:
+            raise AttributeError("shape has no table")
+        return self._table
 
     @property
     def PlaceholderFormat(self) -> Any:
@@ -328,6 +341,77 @@ class _FakeShape:
             height=self.Height,
             rotation=self.Rotation,
         )
+
+
+# ---------------------------------------------------------------------------
+# Table (v0.5): a shape with HasTable; cells carry their own text-framed Shape
+# ---------------------------------------------------------------------------
+
+
+class _FakeCell:
+    """A table cell — its text lives in `Cell.Shape.TextFrame.TextRange`, exactly
+    like real PowerPoint (a normal text frame, paragraphs split by `\\r`)."""
+
+    def __init__(self, text: str = "") -> None:
+        self.Shape = _FakeShape(name="Table Cell", shape_id=0, shape_type=_MSO_TEXT_BOX, text=text)
+
+
+class _FakeRows:
+    """`Table.Rows` — 1-based callable + `.Add()` (appends) + `.Count`."""
+
+    def __init__(self, table: _FakeTable) -> None:
+        self._table = table
+
+    @property
+    def Count(self) -> int:
+        return len(self._table._cells)
+
+    def Add(self, before_row: int | None = None) -> None:
+        self._table._cells.append([_FakeCell("") for _ in range(self._table._ncols)])
+
+    def __call__(self, index: int) -> _FakeRow:
+        return _FakeRow(self._table, int(index))
+
+
+class _FakeRow:
+    def __init__(self, table: _FakeTable, index: int) -> None:
+        self._table = table
+        self._index = index
+
+    def Delete(self) -> None:
+        del self._table._cells[self._index - 1]
+
+
+class _FakeColumns:
+    def __init__(self, table: _FakeTable) -> None:
+        self._table = table
+
+    @property
+    def Count(self) -> int:
+        return self._table._ncols
+
+
+class _FakeTable:
+    """A table grid: rows × columns of `_FakeCell`s, 1-based `Cell(r, c)`."""
+
+    def __init__(self, rows: int, cols: int) -> None:
+        self._ncols = int(cols)
+        self._cells = [[_FakeCell("") for _ in range(int(cols))] for _ in range(int(rows))]
+
+    @property
+    def Rows(self) -> _FakeRows:
+        return _FakeRows(self)
+
+    @property
+    def Columns(self) -> _FakeColumns:
+        return _FakeColumns(self)
+
+    def Cell(self, row: int, col: int) -> _FakeCell:
+        # 1-based; real COM raises for out-of-range, so do we (the wrapper
+        # bounds-checks first, but this keeps the fake honest).
+        if row < 1 or row > len(self._cells) or col < 1 or col > self._ncols:
+            raise IndexError((row, col))
+        return self._cells[row - 1][col - 1]
 
 
 class _FakeShapeRange:
@@ -428,6 +512,30 @@ class _FakeShapes:
                 top=top,
                 width=w,
                 height=h,
+            )
+        )
+
+    def AddTable(
+        self,
+        num_rows: int,
+        num_cols: int,
+        left: float,
+        top: float,
+        width: float,
+        height: float,
+    ) -> _FakeShape:
+        sid = self._next_id()
+        return self._adopt(
+            _FakeShape(
+                name=f"Table {sid}",
+                shape_id=sid,
+                shape_type=_MSO_TABLE,
+                text=None,  # the table shape itself has no text frame; cells do
+                table=_FakeTable(int(num_rows), int(num_cols)),
+                left=left,
+                top=top,
+                width=width,
+                height=height,
             )
         )
 

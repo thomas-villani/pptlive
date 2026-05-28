@@ -172,12 +172,12 @@ class Presentation:
           - `ph:S:KIND`   — placeholder of semantic KIND on slide S
                             (title/ctrtitle/subtitle/body/footer/date/slidenum)
           - `para:S:N:P`  — paragraph P of shape N on slide S (v0.3)
+          - `cell:S:N:R:C`— cell (row R, col C) of the table in shape N on slide S (v0.5)
           - `notes:S`     — speaker-notes body of slide S
           - `here:`       — whatever the user has selected right now (v0.4): the
                             selected shape, or the paragraph holding the text caret
 
         `slide:S` is a *container*, not a text anchor — use `deck.slides[S]`.
-        `cell:` arrives in a later stage and is not yet resolvable.
 
         Raises `AnchorNotFoundError` for unknown schemes or missing anchors
         (`SlideNotFoundError`, a subclass, for an out-of-range slide).
@@ -205,6 +205,16 @@ class Presentation:
             except ValueError as e:
                 raise AnchorNotFoundError("paragraph", anchor_id) from e
             return self.slides[s].shapes[n].paragraph(p)
+
+        if kind == "cell":
+            parts = rest.split(":")
+            if len(parts) != 4:
+                raise AnchorNotFoundError("table cell", anchor_id)
+            try:
+                s, n, r, c = (int(x) for x in parts)
+            except ValueError as e:
+                raise AnchorNotFoundError("table cell", anchor_id) from e
+            return self.slides[s].shapes[n].table.cell(r, c)
 
         if kind == "ph":
             s_str, sep, ph_kind = rest.partition(":")

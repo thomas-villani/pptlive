@@ -7,8 +7,8 @@ resolved open questions inline (strike them through, link the commit).
 
 **Status legend:** `[ ]` not started · `[~]` in progress · `[x]` shipped.
 
-> **Bootstrap + v0 + v0.1 + v0.2 + v0.3 + v0.4 have landed** (fake-COM unit tests
-> green: `ruff`, `mypy`, `pytest` all pass; 165 tests). The library is usable as an LLM
+> **Bootstrap + v0 + v0.1 + v0.2 + v0.3 + v0.4 + v0.5 have landed** (fake-COM unit
+> tests green: `ruff`, `mypy`, `pytest` all pass; 192 tests). The library is usable as an LLM
 > tool against a real, already-running PowerPoint; it drives the **slide
 > lifecycle** (`slide add/delete/duplicate/move/set-layout` + layout-name
 > resolution) — verified live 2026-05-26 via `scripts/layout_spike.py` —
@@ -18,8 +18,10 @@ resolved open questions inline (strike them through, link the commit).
 > designed from a live COM probe and verified via `scripts/text_spike.py` — and
 > **slide render + live selection** (`slide export` → PNG so a vision model can
 > *see* the slide; `selection` / `here:` over `ActiveWindow.Selection`) — verified
-> live 2026-05-27 via `scripts/render_select_spike.py` (all net-zero; the v0.1–v0.4
-> sections record the findings). The four **Spike**
+> live 2026-05-27 via `scripts/render_select_spike.py` — and **tables**
+> (`add_table`, `cell:S:N:R:C` cell anchors, `table read`/`add-row`/`delete-row`) —
+> verified live 2026-05-28 via `scripts/table_spike.py` (all net-zero; the
+> v0.1–v0.5 sections record the findings). The four **Spike**
 > items below were
 > **verified against real COM on 2026-05-26** (PowerPoint desktop, a 3-slide
 > deck). Items #2/#3/#4 confirmed as specced. **#1 overturned the spec's
@@ -285,10 +287,42 @@ the same Type→anchor map). Verified end-to-end on a live deck via the wrapper-
   reserves ("never target the Selection unless explicitly asked"). Defer if the
   read alone covers the workflow; the resolution reuses the read's Type→anchor map.
 
-## v0.5 — tables
+## v0.5 — tables — SHIPPED
 
-- [ ] `add_table`; `cell:S:N:R:C` anchors (`Cell` *is* an `Anchor`);
-  `table read --slide S --shape N`. Shape must satisfy `HasTable`.
+A table is a **shape on a slide** (not a doc-scoped collection as in wordlive):
+it satisfies `Shape.HasTable` and exposes the grid via `Shape.Table`. So there's
+no deck-wide `tables` collection — a table is reached through its shape
+(`slide.shapes[N].table`) or the `cell:S:N:R:C` anchor, and a `Cell` *is* an
+`Anchor` (it targets the cell's own text frame, so it inherits every text/format
+verb with no special-casing). Verified end-to-end on a live deck via the
+wrapper-level `scripts/table_spike.py` (net-zero).
+
+- [x] **`add_table` + the `HasTable` gate.** `ShapeCollection.add_table(rows,
+  columns, *, left/top/width/height)` over `Shapes.AddTable`, returning the table
+  `Shape` (last z-order). `Shape.has_table` / `Shape.table`; `shape_to_dict` now
+  emits `has_table` so a listing reveals which shapes are tables. **Spike RESOLVED
+  (2026-05-28, `scripts/table_spike.py`, net-zero): the headline finding is that
+  `AddTable` can return a shape whose `Type` reports placeholder (14), not table
+  (19)** — when it fills a content placeholder — so `HasTable` is the *only*
+  reliable gate (the wrapper never checks `Type`). `Shape.table` raises
+  `AnchorNotFoundError` (kind `"table"`, exit 2) on a non-table shape.
+- [x] **`cell:S:N:R:C` anchors (`Cell` *is* an `Anchor`).** `Table.cell(r, c)` →
+  `Cell` over `Table.Cell(r, c).Shape.TextFrame.TextRange`; inherits `set_text`/
+  `format_text`/`format_paragraph`/`apply_list`/`insert_paragraph_*` unchanged.
+  Resolved through `Presentation.anchor_by_id("cell:S:N:R:C")`. Bounds-checked
+  (out-of-range row/col → `AnchorNotFoundError`, since live COM raises on a bad
+  cell). Cell text is a plain text frame (paragraphs split by `\r`, multi-line
+  round-trips — no Word end-of-cell markers to strip).
+- [x] **`Table.read` / `grid` + row edits.** `read()` emits `{slide, shape,
+  anchor_id, rows, columns, cells}` with each cell carrying its `cell:S:N:R:C`
+  anchor; `grid()` is the row-major text. `add_row(values=None)` appends one row
+  (`Rows.Add()`) and fills it left-to-right; `delete_row(index)` removes it
+  (bounds-checked). Verified live: append grew 3→4 and the new row was
+  addressable/fillable; delete shrank back.
+- [x] **CLI.** `shape add --kind table --rows R --cols C`, and the `table` group:
+  `table read --slide S --shape N`, `table add-row --slide S --shape N [--values
+  JSON]`, `table delete-row --slide S --shape N --row R`. Exit codes reuse the
+  mapping (2 = no table at that shape / out-of-range cell).
 
 ## v0.6 — live slide show control (the most literally "live" surface)
 
