@@ -8,8 +8,9 @@ structure: paragraphs, insert, format-paragraph, format-text, and the `list`
 group (apply/remove). v0.4 adds `slide export` (render a slide to an image) and
 `selection` (what the user has selected, resolved to anchors; targetable via
 `here:`). v0.5 adds the `table` group (read/add-row/delete-row) plus `shape add
---kind table`; cells are `cell:S:N:R:C` anchors. find/replace and the `show`
-group arrive in later stages.
+--kind table`; cells are `cell:S:N:R:C` anchors. v0.6 adds the `show` group
+(start/end/next/prev/goto/black/white/resume/state) for live slide-show control.
+find/replace arrives in a later stage.
 """
 
 from __future__ import annotations
@@ -164,6 +165,16 @@ def _fmt_selection(info: dict[str, Any]) -> str:
     return str(info)
 
 
+def _fmt_show(info: dict[str, Any]) -> str:
+    if not info.get("running"):
+        return "(no slide show running)"
+    parts = [f"slide {info.get('current_slide')}/{info.get('slide_count')}"]
+    state = info.get("state")
+    if state and state != "running":
+        parts.append(f"[{state}]")
+    return "show running — " + " ".join(parts)
+
+
 def register(group: click.Group) -> None:
     group.add_command(status)
     group.add_command(slides_cmd)
@@ -181,6 +192,7 @@ def register(group: click.Group) -> None:
     group.add_command(list_cmd)
     group.add_command(table)
     group.add_command(selection_cmd)
+    group.add_command(show)
     group.add_command(go_to)
 
 
@@ -1107,6 +1119,104 @@ def selection_cmd(ctx: click.Context) -> None:
             emit(info, as_text=not ctx.obj["as_json"], text=_fmt_selection(info))
 
     _run(ctx, go)
+
+
+# ---------------------------------------------------------------------------
+# show — live slide-show control
+# ---------------------------------------------------------------------------
+
+
+@click.group(name="show")
+def show() -> None:
+    """Live slide-show control: start, end, next, prev, goto, black, white, resume, state.
+
+    These deliberately drive what the user sees on screen (unlike the polite edit
+    verbs). `show state` is the read; the control verbs all print the resulting
+    state. They need a running show (start one with `show start`) — `show next`
+    et al. exit 1 if none is running."""
+
+
+def _show_action(ctx: click.Context, fn: Any, text: str | None = None) -> None:
+    """Run a show verb `fn(show)` and emit the resulting state dict."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            info = fn(deck.show)
+            emit(
+                info,
+                as_text=not ctx.obj["as_json"],
+                text=text if text is not None else _fmt_show(info),
+            )
+
+    _run(ctx, go)
+
+
+@show.command(name="start")
+@click.option(
+    "--from", "from_slide", type=int, default=None, help="1-based slide to start on (default: top)."
+)
+@click.pass_context
+def show_start(ctx: click.Context, from_slide: int | None) -> None:
+    """Start the slide show (optionally on a given slide)."""
+    _show_action(ctx, lambda s: s.start(from_slide=from_slide))
+
+
+@show.command(name="end")
+@click.pass_context
+def show_end(ctx: click.Context) -> None:
+    """End the slide show (no-op if none is running)."""
+    _show_action(ctx, lambda s: s.end())
+
+
+@show.command(name="next")
+@click.pass_context
+def show_next(ctx: click.Context) -> None:
+    """Advance to the next build/slide."""
+    _show_action(ctx, lambda s: s.next())
+
+
+@show.command(name="prev")
+@click.pass_context
+def show_prev(ctx: click.Context) -> None:
+    """Step back to the previous build/slide."""
+    _show_action(ctx, lambda s: s.previous())
+
+
+@show.command(name="goto")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide to jump to.")
+@click.pass_context
+def show_goto(ctx: click.Context, slide_index: int) -> None:
+    """Jump the running show to a slide."""
+    _show_action(ctx, lambda s: s.goto(slide_index))
+
+
+@show.command(name="black")
+@click.pass_context
+def show_black(ctx: click.Context) -> None:
+    """Blank the screen to black (resume with `show resume`)."""
+    _show_action(ctx, lambda s: s.black())
+
+
+@show.command(name="white")
+@click.pass_context
+def show_white(ctx: click.Context) -> None:
+    """Blank the screen to white (resume with `show resume`)."""
+    _show_action(ctx, lambda s: s.white())
+
+
+@show.command(name="resume")
+@click.pass_context
+def show_resume(ctx: click.Context) -> None:
+    """Resume from a black/white blank screen."""
+    _show_action(ctx, lambda s: s.resume())
+
+
+@show.command(name="state")
+@click.pass_context
+def show_state(ctx: click.Context) -> None:
+    """Report whether a show is running and which slide is on screen (read-only)."""
+    _show_action(ctx, lambda s: s.state())
 
 
 # ---------------------------------------------------------------------------

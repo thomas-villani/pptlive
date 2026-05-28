@@ -28,6 +28,7 @@ from ._edit import EditScope
 from ._presentation import Presentation, PresentationCollection
 from ._selection import SelectionInfo, SelectionSnapshot
 from ._shapes import PlaceholderShape, Shape, ShapeCollection
+from ._show import SlideShow
 from ._slides import Slide, SlideCollection
 from ._tables import Cell, Table
 from .exceptions import (
@@ -41,6 +42,7 @@ from .exceptions import (
     PptliveError,
     PresentationNotFoundError,
     SlideNotFoundError,
+    SlideShowNotRunningError,
 )
 
 __all__ = [
@@ -70,6 +72,8 @@ __all__ = [
     "Slide",
     "SlideCollection",
     "SlideNotFoundError",
+    "SlideShow",
+    "SlideShowNotRunningError",
     "Table",
     "attach",
     "connect",

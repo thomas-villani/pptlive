@@ -591,3 +591,53 @@ def image_filter_for(fmt: str) -> tuple[str, str]:
         choices = ", ".join(IMAGE_FORMAT_CHOICES)
         raise ValueError(f"unknown image format {fmt!r}; expected one of: {choices}")
     return found
+
+
+# ---------------------------------------------------------------------------
+# Live slide show (v0.6): run state + slide range
+# ---------------------------------------------------------------------------
+
+
+class PpSlideShowState(IntEnum):
+    """`SlideShowView.State` — what a running slide show is currently doing.
+
+    `BLACK_SCREEN`/`WHITE_SCREEN` are the presenter "blank the screen" states
+    (the B / W keys); setting `State` back to `RUNNING` resumes. pptlive reports
+    `DONE` for a deck with no running show (the show window is gone), so the
+    `state` read has a value to return without raising.
+    """
+
+    RUNNING = 1
+    PAUSED = 2
+    BLACK_SCREEN = 3
+    WHITE_SCREEN = 4
+    DONE = 5
+
+
+_SLIDE_SHOW_STATE_NAMES: dict[int, str] = {
+    int(PpSlideShowState.RUNNING): "running",
+    int(PpSlideShowState.PAUSED): "paused",
+    int(PpSlideShowState.BLACK_SCREEN): "black",
+    int(PpSlideShowState.WHITE_SCREEN): "white",
+    int(PpSlideShowState.DONE): "done",
+}
+
+
+def slide_show_state_name(value: Any) -> str:
+    """Friendly name for a `SlideShowView.State` int (e.g. 3 -> "black")."""
+    try:
+        return _SLIDE_SHOW_STATE_NAMES.get(int(value), f"state:{int(value)}")
+    except (TypeError, ValueError):
+        return "unknown"
+
+
+class PpSlideShowRangeType(IntEnum):
+    """`SlideShowSettings.RangeType` — which slides a show runs.
+
+    pptlive sets `SLIDE_RANGE` only to honor `show.start(from_slide=...)`; the
+    default `ALL` runs the whole deck.
+    """
+
+    ALL = 1
+    SLIDE_RANGE = 2
+    NAMED_SLIDE_SHOW = 3

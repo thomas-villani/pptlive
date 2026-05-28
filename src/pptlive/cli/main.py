@@ -22,7 +22,7 @@ from ..exceptions import (
 EXIT_OK = 0
 EXIT_OTHER = 1
 EXIT_ANCHOR_NOT_FOUND = 2  # anchor / slide / shape / presentation not found; zero find matches
-EXIT_POWERPOINT_BUSY = 3  # modal dialog or slide show running
+EXIT_POWERPOINT_BUSY = 3  # PowerPoint busy / modal dialog (a running show does not block edits)
 EXIT_POWERPOINT_NOT_RUNNING = 4
 EXIT_AMBIGUOUS_MATCH = 5
 EXIT_NO_TEXT_FRAME = 6  # the one genuinely new code

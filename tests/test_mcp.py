@@ -28,6 +28,7 @@ from pptlive.mcp.server import (  # noqa: E402
     ppt_read,
     ppt_selection,
     ppt_shape_op,
+    ppt_show,
     ppt_slide_op,
     ppt_slide_read,
     ppt_slides,
@@ -57,6 +58,7 @@ def test_build_server_registers_all_tools() -> None:
         "ppt_shape_op",
         "ppt_table",
         "ppt_export",
+        "ppt_show",
         "ppt_navigate",
     }
 
@@ -332,6 +334,43 @@ def test_navigate_moves_the_view(fake_powerpoint: Any) -> None:
     out = ppt_navigate("shape:2:1")
     assert out["ok"] is True
     assert fake_powerpoint._viewed == 2
+
+
+# ---------------------------------------------------------------------------
+# Live slide show
+# ---------------------------------------------------------------------------
+
+
+def test_show_state_not_running(fake_powerpoint: Any) -> None:
+    out = ppt_show("state")
+    assert out["running"] is False
+    assert out["state"] == "done"
+    assert out["slide_count"] == 3
+
+
+def test_show_start_then_navigate(fake_powerpoint: Any) -> None:
+    started = ppt_show("start")
+    assert started["running"] is True
+    assert started["current_slide"] == 1
+    assert ppt_show("next")["current_slide"] == 2
+    assert ppt_show("goto", slide=3)["current_slide"] == 3
+    assert ppt_show("previous")["current_slide"] == 2
+    black = ppt_show("black")
+    assert black["state"] == "black"
+    assert ppt_show("resume")["state"] == "running"
+    assert ppt_show("end")["running"] is False
+
+
+def test_show_start_from_slide(fake_powerpoint: Any) -> None:
+    out = ppt_show("start", slide=2)
+    assert out["running"] is True
+    assert out["current_slide"] == 2
+
+
+def test_show_next_without_running_errors(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError) as exc:
+        ppt_show("next")
+    assert "error" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------

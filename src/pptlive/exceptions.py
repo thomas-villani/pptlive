@@ -89,6 +89,20 @@ class NoTextFrameError(PptliveError):
         self.anchor_id = anchor_id
 
 
+class SlideShowNotRunningError(PptliveError):
+    """A slide-show control verb was called with no slide show running.
+
+    `deck.show.next()` / `previous()` / `goto()` / `black()` / `white()` /
+    `resume()` all need a running show — start one with `deck.show.start()`
+    first. This is a precondition failure, not a missing anchor, so it maps to
+    the general exit code (1). `deck.show.state()` never raises it (it reports
+    `running: false` instead), and `end()` on an already-stopped show is a no-op.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("no slide show is running; start one with show.start() first")
+
+
 class AmbiguousMatchError(PptliveError):
     """A find/replace pattern matched more than one occurrence without disambiguation.
 
@@ -105,17 +119,18 @@ class AmbiguousMatchError(PptliveError):
 
 
 class PowerPointBusyError(PptliveError):
-    """PowerPoint rejected the RPC — a modal dialog, or a slide show is running.
+    """PowerPoint rejected the RPC — typically a modal dialog has focus.
 
-    Retryable in principle; caller decides. While a slide show is running most
-    editing calls reject with the same `RPC_E_*` HRESULTs a modal dialog
-    produces, so they surface here too — steer toward `deck.show` for live
-    presentation control instead.
+    Retryable in principle; caller decides. Raised when a COM call comes back with
+    a known busy `RPC_E_*` HRESULT (see `_BUSY_HRESULTS`). Note: a *running slide
+    show* does **not** itself block edits — the 2026-05-28 spike found a text edit
+    succeeds mid-show — so this is no longer claimed as a slide-show symptom;
+    drive a live show through `deck.show` regardless.
     """
 
     def __init__(
         self,
-        message: str = "PowerPoint is busy, in a modal dialog, or running a slide show",
+        message: str = "PowerPoint is busy or in a modal dialog",
         *,
         hresult: int | None = None,
     ) -> None:

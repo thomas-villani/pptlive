@@ -46,6 +46,13 @@ _SEL_SLIDES = 1
 _SEL_SHAPES = 2
 _SEL_TEXT = 3
 
+# PpSlideShowState / PpSlideShowRangeType
+_SHOW_RUNNING = 1
+_SHOW_BLACK = 3
+_SHOW_WHITE = 4
+_SHOW_DONE = 5
+_RANGE_SLIDE = 2
+
 
 def _minimal_png(width: int, height: int) -> bytes:
     """A 24-byte stub PNG (signature + IHDR) — enough that a reader can recover
@@ -776,6 +783,76 @@ class _FakeSlides:
         return slide
 
 
+# ---------------------------------------------------------------------------
+# Live slide show (v0.6): SlideShowSettings -> SlideShowWindow.View
+# ---------------------------------------------------------------------------
+
+
+class _FakeSlideShowView:
+    """`SlideShowView` — the running show's controller. `State` is read/write;
+    Next past the last slide ends the show, as PowerPoint does."""
+
+    def __init__(self, pres: _FakePresentation, start_pos: int) -> None:
+        self._pres = pres
+        self._pos = max(1, int(start_pos))
+        self.State = _SHOW_RUNNING
+
+    @property
+    def CurrentShowPosition(self) -> int:
+        return self._pos
+
+    @property
+    def Slide(self) -> _FakeSlide:
+        return self._pres.Slides(self._pos)
+
+    def Next(self) -> None:
+        if self._pos >= self._pres.Slides.Count:
+            self._pres._end_show()  # advancing past the last slide ends the show
+        else:
+            self._pos += 1
+
+    def Previous(self) -> None:
+        if self._pos > 1:
+            self._pos -= 1
+
+    def GotoSlide(self, index: int, reset: Any = None) -> None:
+        self._pos = int(index)
+
+    def First(self) -> None:
+        self._pos = 1
+
+    def Last(self) -> None:
+        self._pos = self._pres.Slides.Count
+
+    def Exit(self) -> None:
+        self._pres._end_show()
+
+
+class _FakeSlideShowWindow:
+    def __init__(self, pres: _FakePresentation, start_pos: int) -> None:
+        self._pres = pres
+        self.View = _FakeSlideShowView(pres, start_pos)
+
+    @property
+    def Presentation(self) -> _FakePresentation:
+        return self._pres
+
+
+class _FakeSlideShowSettings:
+    """`SlideShowSettings` — `.Run()` starts the show at StartingSlide when the
+    RangeType is a slide range, else from the top."""
+
+    def __init__(self, pres: _FakePresentation) -> None:
+        self._pres = pres
+        self.StartingSlide = 1
+        self.EndingSlide = pres.Slides.Count
+        self.RangeType = 1  # ppShowAll
+
+    def Run(self) -> _FakeSlideShowWindow:
+        start = int(self.StartingSlide) if self.RangeType == _RANGE_SLIDE else 1
+        return self._pres._start_show(start)
+
+
 class _FakePresentation:
     def __init__(
         self,
@@ -792,6 +869,27 @@ class _FakePresentation:
         self.Slides = _FakeSlides(slides)
         self.PageSetup = SimpleNamespace(SlideWidth=slide_width, SlideHeight=slide_height)
         self.SlideMaster = SimpleNamespace(CustomLayouts=_FakeCustomLayouts(layout_names))
+        self._show_settings = _FakeSlideShowSettings(self)
+        self._show_window: _FakeSlideShowWindow | None = None
+
+    @property
+    def SlideShowSettings(self) -> _FakeSlideShowSettings:
+        return self._show_settings
+
+    @property
+    def SlideShowWindow(self) -> _FakeSlideShowWindow:
+        # Real COM raises when no show is running; the wrapper treats any failure
+        # here as "not running", so raising keeps the fake honest.
+        if self._show_window is None:
+            raise RuntimeError("no slide show is running")
+        return self._show_window
+
+    def _start_show(self, start_pos: int) -> _FakeSlideShowWindow:
+        self._show_window = _FakeSlideShowWindow(self, start_pos)
+        return self._show_window
+
+    def _end_show(self) -> None:
+        self._show_window = None
 
 
 # ---------------------------------------------------------------------------

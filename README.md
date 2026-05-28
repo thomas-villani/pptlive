@@ -92,6 +92,12 @@ with pl.attach() as ppt:
     if sel.anchor_id:
         with deck.edit("Bold the selected text"):
             deck.anchor_by_id("here:").format_text(bold=True)
+
+    # Live slide show — drive the presentation like a clicker (deliberately moves the screen).
+    deck.show.start()                                # run from the top
+    deck.show.goto(5); deck.show.next(); deck.show.black()   # jump, advance, blank
+    deck.show.state()                                # {running, state, current_slide, ...}
+    deck.show.end()
 ```
 
 ## Anchors
@@ -165,10 +171,16 @@ pptlive write --anchor-id cell:4:5:1:1 --text "Metric"   # a cell takes write/fo
 pptlive selection                                # what the user has selected (-> here:)
 pptlive read anchor --anchor-id here:            # read the selected shape/paragraph
 pptlive go-to --anchor-id shape:3:1              # deliberate, opt-in view move
+
+pptlive show start [--from 2]                    # run the slide show (deliberately moves the screen)
+pptlive show next                                # advance; also: prev, goto --slide N
+pptlive show black                               # blank to black (white / resume too)
+pptlive show state                               # {running, state, current_slide, ...} (read-only)
+pptlive show end
 ```
 
 Exit codes: `0` ok · `1` other · `2` anchor/slide/shape/presentation not found ·
-`3` PowerPoint busy / slide show running · `4` PowerPoint not running · `5`
+`3` PowerPoint busy / modal dialog · `4` PowerPoint not running · `5`
 ambiguous match · `6` shape has no text frame.
 
 ## MCP server
@@ -196,7 +208,7 @@ Edit Config), then restart:
 (If `pptlive-mcp` isn't on the launcher's PATH, use the absolute path to the
 script — or `"command": "uv", "args": ["run", "pptlive-mcp"]` from the project.)
 
-It's a **curated ~13-tool** surface (smaller than the full CLI — several tools
+It's a **curated ~14-tool** surface (smaller than the full CLI — several tools
 take a verb-style `op`/`mode` argument), wrapping the same API, so the politeness
 model and one-Ctrl-Z `edit` fencing carry over and reads never move the view:
 
@@ -212,6 +224,7 @@ model and one-Ctrl-Z `edit` fencing carry over and reads never move the view:
 | `ppt_shape_op` | `add` (textbox/shape/picture/table) / `move` / `resize` / `delete` |
 | `ppt_table` | `read` / `add_row` / `delete_row` (cells are `cell:S:N:R:C` anchors) |
 | `ppt_export` | render a slide to a PNG a vision model can read |
+| `ppt_show` | live slide show: `state` / `start` / `end` / `next` / `previous` / `goto` / `black` / `white` / `resume` |
 | `ppt_navigate` | deliberately move the user's view to an anchor |
 
 Tool failures surface as MCP errors carrying a category token — `not_found`,

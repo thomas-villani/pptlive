@@ -7,12 +7,16 @@ resolved open questions inline (strike them through, link the commit).
 
 **Status legend:** `[ ]` not started · `[~]` in progress · `[x]` shipped.
 
-> **Bootstrap + v0 + v0.1 + v0.2 + v0.3 + v0.4 + v0.5 + the MCP server have landed**
-> (fake-COM unit tests green: `ruff`, `mypy`, `pytest` all pass; 229 tests). The
-> library is usable as an LLM tool two ways now — the JSON **CLI** and an optional
-> **MCP server** (`pptlive[mcp]` → `pptlive-mcp`, ~13 curated tools over stdio for
+> **Bootstrap + v0 + v0.1 + v0.2 + v0.3 + v0.4 + v0.5 + v0.6 + the MCP server have
+> landed** (fake-COM unit tests green: `ruff`, `mypy`, `pytest` all pass; 257 tests).
+> The library is usable as an LLM tool two ways now — the JSON **CLI** and an optional
+> **MCP server** (`pptlive[mcp]` → `pptlive-mcp`, ~14 curated tools over stdio for
 > Claude Desktop & other MCP agents; see the *MCP server* section below). It drives
-> the **slide
+> **live slide-show control** (`deck.show`: `start/end/next/prev/goto/black/white/
+> resume/state` over `SlideShowSettings.Run()` / `SlideShowWindow.View`) — **verified
+> live 2026-05-28** via `scripts/show_spike.py` (net-zero; every wrapper behaved as
+> coded, and the spike **overturned the spec's busy-during-show assumption** — see
+> v0.6 below). It drives the **slide
 > lifecycle** (`slide add/delete/duplicate/move/set-layout` + layout-name
 > resolution) — verified live 2026-05-26 via `scripts/layout_spike.py` —
 > **shapes & geometry** (`shape add` textbox/autoshape/picture + `move/resize/
@@ -337,14 +341,15 @@ pptlive.mcp`) running **FastMCP over stdio**. Lives in `src/pptlive/mcp/`
 (`server.py` + `__main__.py`); `tests/test_mcp.py` (37 tests, `importorskip`'d)
 drives the tool functions against the same `fake_powerpoint` deck.
 
-- [x] **Curated tool surface (~13, not 1:1 with the CLI).** Verb-param ops keep
+- [x] **Curated tool surface (~14, not 1:1 with the CLI).** Verb-param ops keep
   the agent's tool picker small: `ppt_status`, `ppt_slides`, `ppt_outline`,
   `ppt_slide_read`, `ppt_read` (any anchor; folds in notes + a `paragraphs`
   breakdown), `ppt_selection`, `ppt_write` (`mode=set|insert_after|insert_before`),
   `ppt_format` (font + paragraph + bullets in one call), `ppt_slide_op`
   (`add|delete|duplicate|move|set_layout|layouts`), `ppt_shape_op`
   (`add|move|resize|delete`), `ppt_table` (`read|add_row|delete_row`),
-  `ppt_export`, `ppt_navigate`. Each wraps `with attach()`; mutations go through
+  `ppt_export`, `ppt_show` (`state|start|end|next|previous|goto|black|white|resume`,
+  v0.6), `ppt_navigate`. Each wraps `with attach()`; mutations go through
   `deck.edit(label)`, so the politeness model + one-Ctrl-Z fence carry over for
   free, and reads never move the view.
 - [x] **Errors mirror the CLI exit-code taxonomy.** A `PptliveError` is re-raised
@@ -365,13 +370,52 @@ drives the tool functions against the same `fake_powerpoint` deck.
   full stdio path was also exercised end-to-end (a `stdio_client` spawned
   `pptlive-mcp`, initialized, and listed all 13 tools).
 
-## v0.6 — live slide show control (the most literally "live" surface)
+## v0.6 — live slide show control (the most literally "live" surface) — SHIPPED (fake-COM; live spike pending)
 
-- [ ] `deck.show`: `start`/`end`/`next`/`previous`/`goto(n)`/`black()`/`white()`/
-  `state()` over `SlideShowSettings.Run()` / `SlideShowWindow.View`.
-- [ ] While a show runs, editing calls reject → surface as `PowerPointBusyError`
-  (exit 3) and steer agents to the `show` group.
-- [ ] CLI `show start|end|next|prev|black|white|state|goto`.
+The most literally "live" surface: drive a running slide show like a presenter's
+clicker. No Word analog — pure PowerPoint. `deck.show` is **not** wrapped in
+`edit()` (a show deliberately takes over the screen, like `go_to`, and show
+control has no undo); the inverse interaction — edits *during* a show — is the
+busy one. Lives in `_show.py` (`SlideShow`), exposed as `Presentation.show`.
+
+- [x] **`deck.show` wrapper.** `start(*, from_slide=None)` (idempotent: a second
+  `start()` keeps the running show, but `from_slide` jumps it), `end()` (no-op if
+  none running), `next()`/`previous()`, `goto(n)`, `black()`/`white()`/`resume()`
+  (the B/W blank-screen states via `View.State`, a `PpSlideShowState`), `state()`
+  (the only side-effect-free verb, and the only one that never raises when no show
+  is running — it reports `running: false`), and `is_running()`. Every control
+  verb returns the post-action `state()` dict. `_window()` treats any failure to
+  reach `Presentation.SlideShowWindow` as "not running"; the control verbs then
+  raise the new `SlideShowNotRunningError` (exit 1, a precondition failure — not a
+  missing anchor). Out-of-range `goto`/`from_slide` → `SlideNotFoundError` (exit 2).
+- [x] **Editing-during-show — spec assumption OVERTURNED (2026-05-28 spike).** The
+  spec assumed "while a slide show is running, most editing calls reject → surface
+  as `PowerPointBusyError` (exit 3)". **It doesn't.** The spike ran a real show and
+  did a `set_text` on a slide-1 placeholder mid-show: it **succeeded**
+  (`edit_succeeded_during_show: true`), raised nothing, and round-tripped (text set,
+  then restored). So a text edit during a running show is *not* rejected and there
+  is **no busy HRESULT to add** to `_BUSY_HRESULTS` from this path. This is the
+  third spec assumption a spike has corrected (after undo grouping and `Visible`).
+  *Honest scope:* only a `TextRange.Text` set was probed; a structural op (add/
+  delete slide) during a show wasn't — if one is ever seen to reject, classify it
+  then. The `PowerPointBusyError` docs were softened accordingly (it stays the home
+  for genuine modal-dialog `RPC_E_*` rejections; "a show blocks edits" is no longer
+  claimed).
+- [x] **CLI** `show start|end|next|prev|goto|black|white|resume|state` (the new
+  `show` group; `show start --from N`, `show goto --slide N`). Each prints the
+  resulting state JSON; exit codes reuse the mapping (1 = no show running, 2 =
+  out-of-range slide).
+- [x] **MCP** `ppt_show` (op = `state|start|end|next|previous|goto|black|white|
+  resume`, optional `slide`) — the 14th curated tool.
+- [x] **Live spike RESOLVED (2026-05-28, `scripts/show_spike.py`, net-zero).** On a
+  real 4-slide deck: `state()` reported `done`/null before start; `start()` →
+  running on slide 1; `next`/`previous`/`goto(last)`/`goto(first)` tracked both
+  `current_slide` and `position` exactly; `black`/`white`/`resume` round-tripped
+  `View.State` (3 → 4 → 1); `end()` exited and `state()` went back to `done`. The
+  show **exits at the end of the run by design** (the spike's `finally` calls
+  `end()`, so it never strands the user in presentation mode). `net_zero_ok: true`
+  (slide count unchanged; the busy-probe text was restored). Plus the
+  editing-during-show finding above.
 
 ## v0.7 — pictures & charts
 

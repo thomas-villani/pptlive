@@ -19,6 +19,7 @@ from ._anchors import Anchor
 from ._edit import EditScope
 from ._selection import SelectionInfo, read_selection
 from ._shapes import Shape
+from ._show import SlideShow
 from ._slides import Slide, SlideCollection, _paragraphs
 from .constants import DEFAULT_LAYOUT_ALIAS, image_filter_for, match_layout_name
 from .exceptions import AnchorNotFoundError, LayoutNotFoundError, PresentationNotFoundError
@@ -52,6 +53,15 @@ class Presentation:
     @property
     def slides(self) -> SlideCollection:
         return SlideCollection(self)
+
+    @property
+    def show(self) -> SlideShow:
+        """Live slide-show control (`start`/`next`/`goto`/`black`/`state`/…).
+
+        Unlike the editing verbs, these deliberately drive what the user sees, so
+        they are *not* wrapped in `edit()`. See `_show.SlideShow`.
+        """
+        return SlideShow(self)
 
     def page_setup(self) -> dict[str, float]:
         """Slide canvas dimensions in points: `{width, height}`.

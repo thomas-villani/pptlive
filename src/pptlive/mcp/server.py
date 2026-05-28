@@ -17,7 +17,7 @@ Design notes (the things that make this safe and faithful):
   `deck.edit(label)` — preserving the user's viewed slide + Selection and
   fencing the change into a single Ctrl-Z.
 
-* **Curated, not 1:1.** ~13 tools, several of which take a `verb`-style argument
+* **Curated, not 1:1.** ~14 tools, several of which take a `verb`-style argument
   (`op` / `mode`) instead of one tool per CLI subcommand — a smaller surface for
   the agent's tool picker. The full CLI is still there for humans.
 
@@ -455,6 +455,47 @@ def ppt_export(
         return {"ok": True, "slide": slide, "path": str(path), "format": fmt}
 
 
+def ppt_show(
+    op: Literal[
+        "state", "start", "end", "next", "previous", "goto", "black", "white", "resume"
+    ] = "state",
+    slide: int | None = None,
+    doc: str | None = None,
+) -> dict[str, Any]:
+    """Drive a live slide show — the presenter's clicker. Unlike every other
+    mutating tool, this deliberately controls what's on the user's screen. `op`:
+    - "state": is a show running, and which slide is on screen (read-only).
+    - "start": begin the show (optional 1-based `slide` to start on).
+    - "end": exit the show (no-op if none is running).
+    - "next" / "previous": advance / step back one build or slide.
+    - "goto": jump to 1-based `slide`.
+    - "black" / "white": blank the screen; "resume" returns to the slide.
+
+    Every op returns the resulting show state. The control verbs (next/previous/
+    goto/black/white/resume) need a running show — they error otherwise."""
+    with _mcp_errors(), attach() as ppt:
+        sh = _pick_deck(ppt, doc).show
+        if op == "state":
+            return sh.state()
+        if op == "start":
+            return sh.start(from_slide=slide)
+        if op == "end":
+            return sh.end()
+        if op == "next":
+            return sh.next()
+        if op == "previous":
+            return sh.previous()
+        if op == "goto":
+            _require(slide is not None, "show op='goto' requires `slide`")
+            assert slide is not None
+            return sh.goto(slide)
+        if op == "black":
+            return sh.black()
+        if op == "white":
+            return sh.white()
+        return sh.resume()  # op == "resume"
+
+
 def ppt_navigate(anchor_id: str, select: bool = True, doc: str | None = None) -> dict[str, Any]:
     """Move the user's view to an anchor's slide — a deliberate, opt-in view move
     (every *other* tool is polite and leaves the view alone). With `select=True`
@@ -484,6 +525,7 @@ _TOOLS: list[Callable[..., Any]] = [
     ppt_shape_op,
     ppt_table,
     ppt_export,
+    ppt_show,
     ppt_navigate,
 ]
 
