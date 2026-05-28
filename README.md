@@ -18,6 +18,9 @@ want to edit it *live* — no close-the-file, let-the-agent-write, re-open dance
 ```
 pip install pptlive
 
+# with the MCP server for Claude Desktop & other MCP agents (see "MCP server")
+pip install "pptlive[mcp]"
+
 # add to a project
 uv add pptlive
 ```
@@ -167,6 +170,53 @@ pptlive go-to --anchor-id shape:3:1              # deliberate, opt-in view move
 Exit codes: `0` ok · `1` other · `2` anchor/slide/shape/presentation not found ·
 `3` PowerPoint busy / slide show running · `4` PowerPoint not running · `5`
 ambiguous match · `6` shape has no text frame.
+
+## MCP server
+
+The same live-PowerPoint control, exposed to **Claude Desktop** (and any other
+MCP client) as a small set of tools. Install the extra and point your client at
+the `pptlive-mcp` stdio server:
+
+```
+pip install "pptlive[mcp]"
+pptlive-mcp            # stdio MCP server (or: python -m pptlive.mcp)
+```
+
+Claude Desktop — add to `claude_desktop_config.json` (Settings → Developer →
+Edit Config), then restart:
+
+```json
+{
+  "mcpServers": {
+    "pptlive": { "command": "pptlive-mcp" }
+  }
+}
+```
+
+(If `pptlive-mcp` isn't on the launcher's PATH, use the absolute path to the
+script — or `"command": "uv", "args": ["run", "pptlive-mcp"]` from the project.)
+
+It's a **curated ~13-tool** surface (smaller than the full CLI — several tools
+take a verb-style `op`/`mode` argument), wrapping the same API, so the politeness
+model and one-Ctrl-Z `edit` fencing carry over and reads never move the view:
+
+| tool | what it does |
+| ---- | ------------ |
+| `ppt_status` / `ppt_slides` / `ppt_outline` | what's open; list slides; the outline |
+| `ppt_slide_read` | every shape on a slide (anchor_id, type, geometry, text, has-table) |
+| `ppt_read` | read any anchor's text (+ a `paragraphs` breakdown) |
+| `ppt_selection` | what the user has selected (→ `here:`) |
+| `ppt_write` | set text, or insert a paragraph (`mode`) |
+| `ppt_format` | font + paragraph + bullets in one call |
+| `ppt_slide_op` | `add` / `delete` / `duplicate` / `move` / `set_layout` / `layouts` |
+| `ppt_shape_op` | `add` (textbox/shape/picture/table) / `move` / `resize` / `delete` |
+| `ppt_table` | `read` / `add_row` / `delete_row` (cells are `cell:S:N:R:C` anchors) |
+| `ppt_export` | render a slide to a PNG a vision model can read |
+| `ppt_navigate` | deliberately move the user's view to an anchor |
+
+Tool failures surface as MCP errors carrying a category token — `not_found`,
+`ambiguous`, `busy`, `not_running`, `no_text_frame` — the string analog of the
+CLI's exit codes, so an agent can branch on them.
 
 ## Two things to know
 

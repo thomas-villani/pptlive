@@ -7,9 +7,12 @@ resolved open questions inline (strike them through, link the commit).
 
 **Status legend:** `[ ]` not started · `[~]` in progress · `[x]` shipped.
 
-> **Bootstrap + v0 + v0.1 + v0.2 + v0.3 + v0.4 + v0.5 have landed** (fake-COM unit
-> tests green: `ruff`, `mypy`, `pytest` all pass; 192 tests). The library is usable as an LLM
-> tool against a real, already-running PowerPoint; it drives the **slide
+> **Bootstrap + v0 + v0.1 + v0.2 + v0.3 + v0.4 + v0.5 + the MCP server have landed**
+> (fake-COM unit tests green: `ruff`, `mypy`, `pytest` all pass; 229 tests). The
+> library is usable as an LLM tool two ways now — the JSON **CLI** and an optional
+> **MCP server** (`pptlive[mcp]` → `pptlive-mcp`, ~13 curated tools over stdio for
+> Claude Desktop & other MCP agents; see the *MCP server* section below). It drives
+> the **slide
 > lifecycle** (`slide add/delete/duplicate/move/set-layout` + layout-name
 > resolution) — verified live 2026-05-26 via `scripts/layout_spike.py` —
 > **shapes & geometry** (`shape add` textbox/autoshape/picture + `move/resize/
@@ -323,6 +326,44 @@ wrapper-level `scripts/table_spike.py` (net-zero).
   `table read --slide S --shape N`, `table add-row --slide S --shape N [--values
   JSON]`, `table delete-row --slide S --shape N --row R`. Exit codes reuse the
   mapping (2 = no table at that shape / out-of-range cell).
+
+## MCP server — Claude Desktop & other MCP agents — SHIPPED
+
+A second front-end alongside the JSON CLI: an optional **Model Context Protocol**
+server so Claude Desktop (and any MCP client) can drive the live deck directly.
+Ships as the `pptlive[mcp]` extra (the official `mcp` SDK; folded into `dev` so
+the suite exercises it), with a `pptlive-mcp` console script (`python -m
+pptlive.mcp`) running **FastMCP over stdio**. Lives in `src/pptlive/mcp/`
+(`server.py` + `__main__.py`); `tests/test_mcp.py` (37 tests, `importorskip`'d)
+drives the tool functions against the same `fake_powerpoint` deck.
+
+- [x] **Curated tool surface (~13, not 1:1 with the CLI).** Verb-param ops keep
+  the agent's tool picker small: `ppt_status`, `ppt_slides`, `ppt_outline`,
+  `ppt_slide_read`, `ppt_read` (any anchor; folds in notes + a `paragraphs`
+  breakdown), `ppt_selection`, `ppt_write` (`mode=set|insert_after|insert_before`),
+  `ppt_format` (font + paragraph + bullets in one call), `ppt_slide_op`
+  (`add|delete|duplicate|move|set_layout|layouts`), `ppt_shape_op`
+  (`add|move|resize|delete`), `ppt_table` (`read|add_row|delete_row`),
+  `ppt_export`, `ppt_navigate`. Each wraps `with attach()`; mutations go through
+  `deck.edit(label)`, so the politeness model + one-Ctrl-Z fence carry over for
+  free, and reads never move the view.
+- [x] **Errors mirror the CLI exit-code taxonomy.** A `PptliveError` is re-raised
+  as an MCP `ToolError` whose message carries a stable category token (`not_found`
+  / `ambiguous` / `busy` / `not_running` / `no_text_frame` / `error`) — the string
+  analog of the CLI's exit codes — so the agent can branch on failure.
+- [x] **Spike RESOLVED (2026-05-28, `scripts/mcp_spike.py`).** The one genuine new
+  risk was COM under the server's event loop: PowerPoint COM is STA-thread-bound.
+  Finding: FastMCP calls a **sync** tool function *directly on its event-loop
+  thread* (no thread-pool offload — confirmed in the SDK's
+  `func_metadata.call_fn_with_arg_validation`, and empirically: `loop_thread ==
+  tool_thread == MainThread` driving the real `call_tool` path). So each tool's
+  `attach()` runs its whole `CoInitialize → work → CoUninitialize` cycle on one
+  consistent thread per call — the same shape as a one-shot CLI invocation, just
+  repeated in a long-lived process. **That is STA-safe**, so tools are deliberately
+  sync and never cache a COM object across calls; the only cost is that a COM call
+  briefly blocks the loop, fine for a single user driving PowerPoint serially. The
+  full stdio path was also exercised end-to-end (a `stdio_client` spawned
+  `pptlive-mcp`, initialized, and listed all 13 tools).
 
 ## v0.6 — live slide show control (the most literally "live" surface)
 

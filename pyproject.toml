@@ -28,16 +28,25 @@ dependencies = [
     "pywin32>=306 ; sys_platform == 'win32'",
 ]
 
+# The MCP server is optional: `pip install pptlive[mcp]` (or `uv add pptlive[mcp]`)
+# pulls in the official Model Context Protocol SDK and exposes the `pptlive-mcp`
+# stdio server for Claude Desktop and other MCP clients. CLI-only users never
+# pay for it. `mcp` is also folded into `dev` so the test suite exercises it.
 [project.optional-dependencies]
+mcp = [
+    "mcp>=1.2",
+]
 dev = [
     "pytest>=8",
     "pytest-mock>=3.12",
     "ruff>=0.8",
     "mypy>=1.13",
+    "mcp>=1.2",
 ]
 
 [project.scripts]
 pptlive = "pptlive.cli.main:main"
+pptlive-mcp = "pptlive.mcp.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
