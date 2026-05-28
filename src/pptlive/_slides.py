@@ -15,13 +15,16 @@ and a one-Ctrl-Z fence. Layout names resolve to a `CustomLayout` via
 
 from __future__ import annotations
 
+import os
+import tempfile
 from collections.abc import Iterator
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import _com
 from ._anchors import Notes
 from ._shapes import PlaceholderShape, ShapeCollection, is_placeholder
-from .constants import DEFAULT_LEGACY_LAYOUT, is_true, placeholder_types_for
+from .constants import DEFAULT_LEGACY_LAYOUT, image_filter_for, is_true, placeholder_types_for
 from .exceptions import AnchorNotFoundError, LayoutNotFoundError, SlideNotFoundError
 
 if TYPE_CHECKING:
@@ -155,6 +158,62 @@ class Slide:
             "title": self.title,
             "shapes": self.shapes.list(),
         }
+
+    # -- render (v0.4; a read — no mutation, polite by nature) -----------------
+
+    def export_image(
+        self,
+        path: str | os.PathLike[str] | None = None,
+        *,
+        width: int | None = None,
+        height: int | None = None,
+        fmt: str = "png",
+    ) -> Path:
+        """Render the slide to an image file and return its absolute path.
+
+        Wraps `Slide.Export(FileName, FilterName, ScaleWidth, ScaleHeight)`. The
+        export renders the slide's **current in-memory state** — unsaved edits
+        included — so an agent can edit over COM and immediately *see* the result;
+        and it's polite (it doesn't move the viewed slide or change the Selection).
+
+        `fmt` is a friendly token (`png`/`jpg`/`gif`/`bmp`/`tiff`; see
+        `constants.IMAGE_FORMAT_CHOICES`). When `path` is None a temp file is
+        created (so export-then-read is one step). `width`/`height` are output
+        **pixels**; pass one and the other is filled from the slide's aspect
+        ratio, pass neither for the slide's native pixel size. A relative `path`
+        is resolved to absolute first — PowerPoint otherwise drops the file in
+        its own working directory, not the caller's.
+        """
+        filter_name, ext = image_filter_for(fmt)  # ValueError before any COM
+        if path is None:
+            fd, tmp = tempfile.mkstemp(prefix="pptlive_slide_", suffix=f".{ext}")
+            os.close(fd)
+            os.remove(tmp)  # hand PowerPoint a clean path to write
+            abs_path = tmp
+        else:
+            abs_path = os.path.abspath(os.fspath(path))
+        with _com.translate_com_errors():
+            w, h = self._export_dims(width, height)
+            if w is not None and h is not None:
+                self._slide.Export(abs_path, filter_name, int(round(w)), int(round(h)))
+            else:
+                self._slide.Export(abs_path, filter_name)
+        return Path(abs_path)
+
+    def _export_dims(
+        self, width: int | None, height: int | None
+    ) -> tuple[float | None, float | None]:
+        """Resolve requested export pixels, filling a missing dimension from the
+        slide's point aspect ratio so a single `width`/`height` keeps proportions."""
+        if width is None and height is None:
+            return None, None
+        if width is not None and height is not None:
+            return float(width), float(height)
+        ps = self._deck.com.PageSetup
+        sw, sh = float(ps.SlideWidth), float(ps.SlideHeight)
+        if width is None:
+            return float(height) * (sw / sh), float(height)  # type: ignore[arg-type]
+        return float(width), float(width) * (sh / sw)
 
     # -- lifecycle (v0.1; wrap in deck.edit(...) for view + one-Ctrl-Z) --------
 

@@ -7,16 +7,19 @@ resolved open questions inline (strike them through, link the commit).
 
 **Status legend:** `[ ]` not started · `[~]` in progress · `[x]` shipped.
 
-> **Bootstrap + v0 + v0.1 + v0.2 + v0.3 have landed** (fake-COM unit tests green:
-> `ruff`, `mypy`, `pytest` all pass; 142 tests). The library is usable as an LLM
+> **Bootstrap + v0 + v0.1 + v0.2 + v0.3 + v0.4 have landed** (fake-COM unit tests
+> green: `ruff`, `mypy`, `pytest` all pass; 165 tests). The library is usable as an LLM
 > tool against a real, already-running PowerPoint; it drives the **slide
 > lifecycle** (`slide add/delete/duplicate/move/set-layout` + layout-name
 > resolution) — verified live 2026-05-26 via `scripts/layout_spike.py` —
 > **shapes & geometry** (`shape add` textbox/autoshape/picture + `move/resize/
 > delete`) — verified live 2026-05-27 via `scripts/shape_spike.py` — and **text
 > structure** (`para:S:N:P` anchors, insert, paragraph/font formatting, bullets) —
-> designed from a live COM probe and verified via `scripts/text_spike.py` (all
-> net-zero; the v0.1/v0.2/v0.3 sections record the findings). The four **Spike**
+> designed from a live COM probe and verified via `scripts/text_spike.py` — and
+> **slide render + live selection** (`slide export` → PNG so a vision model can
+> *see* the slide; `selection` / `here:` over `ActiveWindow.Selection`) — verified
+> live 2026-05-27 via `scripts/render_select_spike.py` (all net-zero; the v0.1–v0.4
+> sections record the findings). The four **Spike**
 > items below were
 > **verified against real COM on 2026-05-26** (PowerPoint desktop, a 3-slide
 > deck). Items #2/#3/#4 confirmed as specced. **#1 overturned the spec's
@@ -239,12 +242,55 @@ read/set text on the common anchors, polite view/Selection scope, the JSON CLI.
   paragraph model reproduces the char-splice behavior exactly, so the unit tests
   are faithful.
 
-## v0.4 — tables
+## v0.4 — render & live selection (the vision loop + cursor analog) — SHIPPED
+
+The highest agent-leverage surface left: let a vision model *see* the slide it
+just built (export → `Read` the PNG → iterate), and let the agent read — and,
+opt-in, target — what the user is currently looking at (wordlive's cursor/`here`
+marker, re-applied to PowerPoint's 2-D Selection). **Decisions made:** `slide
+export` writes to a temp PNG when `--out` is omitted (so export-then-`Read` is one
+step), and the `here:` anchor shipped alongside the `selection` read (it reuses
+the same Type→anchor map). Verified end-to-end on a live deck via the wrapper-level
+`scripts/render_select_spike.py` (net-zero): native dims 1280×720, requested
+640×480, aspect-fill 1920→1080, the export reflects an unsaved edit, it's polite
+(view+selection unchanged), and `here:` resolved to both `shape:2:3` and
+`para:2:3:2` ("Demo").
+
+- [x] **Slide render.** `Slide.export_image(path, *, width=None, height=None,
+  fmt="png") -> Path` over `Slide.Export(FileName, FilterName, ScaleWidth,
+  ScaleHeight)`; `Presentation.export_images(dir)` for the whole deck. CLI
+  `pptlive slide export --slide S --out PATH [--width N] [--height N]` → JSON
+  `{path, width, height, format}` (default `--out` to a temp PNG so the agent can
+  export-then-`Read` in a single step). **Spike DONE (2026-05-27,
+  `scripts/render_select_spike.py`, net-zero):** `Export(path, "PNG")` writes a
+  valid PNG; default dims = the slide's native pixel size (a 960×540 pt 16:9 slide
+  → **1280×720 px**, i.e. 96 DPI); `ScaleWidth`/`ScaleHeight` are honored (pixels);
+  the export **captures unsaved live edits** (re-rendering "BEFORE"→"AFTER" text
+  gave different bytes — it renders the in-memory state, not last-saved, which is
+  exactly the iterate loop); it is **polite** (viewed slide + Selection unchanged
+  before/after); a **relative path is a footgun** — it lands in PowerPoint's
+  Documents dir (OneDrive-redirected on this box), *not* the process CWD, so the
+  wrapper must `os.path.abspath` the target before calling `Export`.
+- [x] **Live selection read.** `deck.selection()` / `pptlive selection` → the
+  current `ActiveWindow.Selection` resolved to our anchor vocabulary (the read
+  complements `status`, which already reports the viewed slide). **Spike DONE:**
+  `Selection.Type` maps cleanly — NONE(0)→nothing, SHAPES(2)→`shape:S:N` per shape
+  (z-order recovered from the stable `Shape.Id`), TEXT(3)→host shape + recovered
+  paragraph index → `para:S:N:P` (selecting para 2 of `Intro\rDemo\rQ&A` gave
+  `start_char` 7 → index 2, text `"Demo\r"`). SLIDES(1) is a sorter/thumbnail-pane
+  state, **not** reproducible in Normal view — map it from `Selection.SlideRange`
+  only when it actually occurs. Reading the selection doesn't perturb it.
+- [x] **`here:` targetable anchor (opt-in).** `anchor_by_id("here:")` resolves
+  live to the selected shape/paragraph — the explicit opt-in the politeness model
+  reserves ("never target the Selection unless explicitly asked"). Defer if the
+  read alone covers the workflow; the resolution reuses the read's Type→anchor map.
+
+## v0.5 — tables
 
 - [ ] `add_table`; `cell:S:N:R:C` anchors (`Cell` *is* an `Anchor`);
   `table read --slide S --shape N`. Shape must satisfy `HasTable`.
 
-## v0.5 — live slide show control (the most literally "live" surface)
+## v0.6 — live slide show control (the most literally "live" surface)
 
 - [ ] `deck.show`: `start`/`end`/`next`/`previous`/`goto(n)`/`black()`/`white()`/
   `state()` over `SlideShowSettings.Run()` / `SlideShowWindow.View`.
@@ -252,18 +298,19 @@ read/set text on the common anchors, polite view/Selection scope, the JSON CLI.
   (exit 3) and steer agents to the `show` group.
 - [ ] CLI `show start|end|next|prev|black|white|state|goto`.
 
-## v0.6 — pictures & charts
+## v0.7 — pictures & charts
 
 - [ ] `add_picture` (embed, never link); alt text as the LLM re-identification
   handle (wordlive v0.8 pattern).
-- [ ] Image **extraction** for vision models (per-shape; wordlive v0.9 pattern).
+- [ ] Image **extraction** for vision models (per-shape `Shape.Export`; wordlive
+  v0.9 pattern — the per-shape complement to v0.4's whole-slide render).
 - [ ] `add_chart` with an embedded-Excel data spike (wordlive v0.10 reasoning).
 
-## v0.7+ — defer
+## v0.8+ — defer
 
 - [ ] Event sinks (`SlideShowNextSlide`, `WindowSelectionChange`); async wrapper.
-- [ ] Slide / thumbnail export (`Slide.Export`); transitions & animations;
-  master/layout authoring.
+- [ ] Transitions & animations; master/layout authoring. (Whole-slide
+  `Slide.Export` was promoted to v0.4.)
 
 ---
 

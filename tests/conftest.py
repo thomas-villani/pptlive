@@ -41,7 +41,23 @@ _MSO_FALSE = 0
 
 # PpSelectionType
 _SEL_NONE = 0
+_SEL_SLIDES = 1
 _SEL_SHAPES = 2
+_SEL_TEXT = 3
+
+
+def _minimal_png(width: int, height: int) -> bytes:
+    """A 24-byte stub PNG (signature + IHDR) — enough that a reader can recover
+    the dimensions, so `Slide.Export` round-trips in unit tests without rendering."""
+    sig = b"\x89PNG\r\n\x1a\n"
+    ihdr = (
+        (13).to_bytes(4, "big")
+        + b"IHDR"
+        + int(width).to_bytes(4, "big")
+        + int(height).to_bytes(4, "big")
+    )
+    return sig + ihdr
+
 
 # The standard Office layout names a deck's SlideMaster.CustomLayouts exposes;
 # the fake offers these so layout-name resolution can be exercised end to end.
@@ -322,6 +338,9 @@ class _FakeShapeRange:
     def __iter__(self) -> Any:
         return iter(self._shapes)
 
+    def __call__(self, index: int) -> _FakeShape:
+        return self._shapes[index - 1]
+
     @property
     def Count(self) -> int:
         return len(self._shapes)
@@ -571,6 +590,29 @@ class _FakeSlide:
         self._collection._adopt(clone)
         return _FakeSlideRange([clone])
 
+    def Export(
+        self,
+        FileName: str,
+        FilterName: str,
+        ScaleWidth: int | None = None,
+        ScaleHeight: int | None = None,
+    ) -> None:
+        """Render to a stub PNG. Honors ScaleWidth/Height; else the slide's native
+        pixel size at 96 DPI (so a 960x540 pt slide -> 1280x720, matching real COM)."""
+        if ScaleWidth and ScaleHeight:
+            w, h = int(ScaleWidth), int(ScaleHeight)
+        else:
+            w, h = 1280, 720
+            try:
+                ps = self._app.ActivePresentation.PageSetup  # type: ignore[union-attr]
+                w = int(round(float(ps.SlideWidth) * 96 / 72))
+                h = int(round(float(ps.SlideHeight) * 96 / 72))
+            except Exception:
+                pass
+        self.last_export = {"FileName": FileName, "FilterName": FilterName, "Width": w, "Height": h}
+        with open(FileName, "wb") as fh:
+            fh.write(_minimal_png(w, h))
+
 
 class _FakeSlides:
     def __init__(self, slides: list[_FakeSlide]) -> None:
@@ -670,15 +712,38 @@ class _FakeSelection:
     def Type(self) -> int:
         return self._app._selection_type
 
-    @property
-    def ShapeRange(self) -> list[_FakeShape]:
+    def _slide(self) -> _FakeSlide:
         pres = self._app.ActivePresentation
-        slide = pres.Slides(self._app._viewed)
-        return [s for s in slide.Shapes if s.Name in self._app._selected_names]
+        return pres.Slides(self._app._viewed)
+
+    @property
+    def ShapeRange(self) -> _FakeShapeRange:
+        slide = self._slide()
+        if self._app._selection_type == _SEL_TEXT and self._app._text_shape is not None:
+            names: tuple[str, ...] = (self._app._text_shape,)
+        else:
+            names = self._app._selected_names
+        shapes = [s for s in slide.Shapes if s.Name in names]
+        return _FakeShapeRange(self._app, shapes)
+
+    @property
+    def TextRange(self) -> Any:
+        """The selected text run — a paragraph caret. Exposes `Start` (1-based
+        char offset) and `Text`, the two fields read_selection reads."""
+        slide = self._slide()
+        host = next(s for s in slide.Shapes if s.Name == self._app._text_shape)
+        frame = host.TextFrame
+        para = self._app._text_para
+        start = sum(len(p.text) + 1 for p in frame._paras[: para - 1]) + 1
+        return SimpleNamespace(Start=start, Text=frame.TextRange.Paragraphs(para, 1).Text)
+
+    def SlideRange(self, index: int = 1) -> _FakeSlide:
+        return self._slide()
 
     def Unselect(self) -> None:
         self._app._selection_type = _SEL_NONE
         self._app._selected_names = ()
+        self._app._text_shape = None
 
 
 class _FakeWindow:
@@ -708,6 +773,8 @@ class _FakeApplication:
         self._viewed = 1
         self._selection_type = _SEL_NONE
         self._selected_names: tuple[str, ...] = ()
+        self._text_shape: str | None = None  # host shape name for a TEXT selection
+        self._text_para = 1  # 1-based paragraph the text caret is in
         self.Visible = True
         self._window = _FakeWindow(self)
         self._undo_entries = 0  # count of StartNewUndoEntry() calls (edit() fences)
@@ -721,6 +788,23 @@ class _FakeApplication:
     def StartNewUndoEntry(self) -> None:
         """Mirror PowerPoint's boundary primitive; edit() calls this on entry."""
         self._undo_entries += 1
+
+    # -- test helpers: drive the live Selection (what read_selection reads) -----
+
+    def _select_shapes(self, *names: str) -> None:
+        self._selection_type = _SEL_SHAPES
+        self._selected_names = tuple(names)
+        self._text_shape = None
+
+    def _select_text(self, shape_name: str, paragraph: int = 1) -> None:
+        self._selection_type = _SEL_TEXT
+        self._text_shape = shape_name
+        self._text_para = int(paragraph)
+
+    def _select_slide(self) -> None:
+        self._selection_type = _SEL_SLIDES
+        self._selected_names = ()
+        self._text_shape = None
 
     @property
     def Presentations(self) -> _FakePresentations:

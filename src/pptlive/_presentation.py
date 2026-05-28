@@ -8,16 +8,19 @@ document-wide character stream, so anchor ids are hierarchical and slide-first
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import _com
 from ._anchors import Anchor
 from ._edit import EditScope
+from ._selection import SelectionInfo, read_selection
 from ._shapes import Shape
 from ._slides import Slide, SlideCollection, _paragraphs
-from .constants import DEFAULT_LAYOUT_ALIAS, match_layout_name
+from .constants import DEFAULT_LAYOUT_ALIAS, image_filter_for, match_layout_name
 from .exceptions import AnchorNotFoundError, LayoutNotFoundError, PresentationNotFoundError
 
 if TYPE_CHECKING:
@@ -59,6 +62,40 @@ class Presentation:
         with _com.translate_com_errors():
             ps = self._pres.PageSetup
             return {"width": float(ps.SlideWidth), "height": float(ps.SlideHeight)}
+
+    def export_images(
+        self,
+        directory: str | os.PathLike[str],
+        *,
+        fmt: str = "png",
+        width: int | None = None,
+        height: int | None = None,
+    ) -> list[Path]:
+        """Render every slide into `directory`; return the image paths, in order.
+
+        Files are named `slide-001.<ext>`, `slide-002.<ext>`, …. A per-slide wrap
+        of `Slide.export_image` (same `fmt`/`width`/`height` semantics) — the
+        whole-deck "show me what I built" read.
+        """
+        _filter_name, ext = image_filter_for(fmt)  # validate before any work
+        out_dir = os.path.abspath(os.fspath(directory))
+        os.makedirs(out_dir, exist_ok=True)
+        paths: list[Path] = []
+        for slide in self.slides:
+            target = os.path.join(out_dir, f"slide-{slide.index:03d}.{ext}")
+            paths.append(slide.export_image(target, width=width, height=height, fmt=fmt))
+        return paths
+
+    def selection(self) -> SelectionInfo:
+        """The user's current selection, resolved to anchors — a polite read.
+
+        Snapshots `ActiveWindow.Selection` without changing it (the complement to
+        `status`, which reports the viewed slide): the selected shapes as
+        `shape:S:N`, or a text caret as `para:S:N:P`. To *act on* the selection,
+        resolve `anchor_by_id("here:")` — the explicit opt-in (pptlive never
+        targets the live Selection unless asked).
+        """
+        return read_selection(self._ppt)
 
     def layouts(self) -> list[dict[str, Any]]:
         """The deck's slide layouts: `[{index, name}, ...]` (1-based index).
@@ -136,6 +173,8 @@ class Presentation:
                             (title/ctrtitle/subtitle/body/footer/date/slidenum)
           - `para:S:N:P`  — paragraph P of shape N on slide S (v0.3)
           - `notes:S`     — speaker-notes body of slide S
+          - `here:`       — whatever the user has selected right now (v0.4): the
+                            selected shape, or the paragraph holding the text caret
 
         `slide:S` is a *container*, not a text anchor — use `deck.slides[S]`.
         `cell:` arrives in a later stage and is not yet resolvable.
@@ -187,6 +226,21 @@ class Presentation:
             except ValueError as e:
                 raise AnchorNotFoundError("notes", anchor_id) from e
             return self.slides[s].notes
+
+        if kind == "here":
+            # The explicit opt-in to target the live Selection (politeness:
+            # never otherwise). Resolves live to a Shape or Paragraph.
+            info = read_selection(self._ppt)
+            if (
+                info.type == "text"
+                and info.slide is not None
+                and info.shape_index is not None
+                and info.paragraph is not None
+            ):
+                return self.slides[info.slide].shapes[info.shape_index].paragraph(info.paragraph)
+            if info.type == "shapes" and info.slide is not None and info.shape_index is not None:
+                return self.slides[info.slide].shapes[info.shape_index]
+            raise AnchorNotFoundError("selection", anchor_id)
 
         raise AnchorNotFoundError("anchor", anchor_id)
 

@@ -70,6 +70,16 @@ with pl.attach() as ppt:
         body.paragraph(2).format_paragraph(indent_level=2, alignment="left")
         body.paragraph(1).format_text(bold=True, size=24, color="#2E74B5")
         body.insert_paragraph_after("Cash runway: 30 months")   # append a bullet
+
+    # Render — let a vision model *see* the slide it just built (export → read → iterate).
+    png = deck.slides[4].export_image(width=1280)    # temp PNG (or pass a path); polite
+    #   ...hand `png` to your image tool, look, then revise.
+
+    # Read what the user is looking at, and (opt-in) target it with the here: anchor.
+    sel = deck.selection()                           # {type, slide, anchor_id, shapes, ...}
+    if sel.anchor_id:
+        with deck.edit("Bold the selected text"):
+            deck.anchor_by_id("here:").format_text(bold=True)
 ```
 
 ## Anchors
@@ -84,6 +94,7 @@ slide-index first:
 | `ph:S:KIND`    | placeholder of semantic KIND (`title`/`ctrtitle`/`subtitle`/`body`/`footer`/`date`/`slidenum`) — the LLM-preferred form |
 | `para:S:N:P`   | paragraph P (1-based) of shape N on slide S |
 | `notes:S`      | speaker-notes body of slide S |
+| `here:`        | whatever the user has selected right now — the shape, or the paragraph holding the text caret (the opt-in way to act on the live selection) |
 
 z-order **drifts** when shapes are added or removed, so `shape:S:N` is resolved
 live and never cached; every shape listing also emits `name` (`Shape.Name`) and
@@ -116,6 +127,7 @@ pptlive slide duplicate --slide 7
 pptlive slide move --slide 9 --to 2
 pptlive slide set-layout --slide 4 --layout title_and_content
 pptlive slide delete --slide 5
+pptlive slide export --slide 2 --out slide2.png [--width 1280] [--format png]  # render to image
 
 pptlive shape add --slide 4 --kind textbox --text "Revenue up 12%" --left 72 --top 72
 pptlive shape add --slide 4 --kind shape --shape-type star --left 400 --top 120 --width 120 --height 120
@@ -131,6 +143,8 @@ pptlive format-text --anchor-id ph:4:title --bold --size 40 --color "#2E74B5"
 pptlive list apply  --anchor-id ph:4:body --type bulleted [--char "•"]
 pptlive list remove --anchor-id ph:4:body
 
+pptlive selection                                # what the user has selected (-> here:)
+pptlive read anchor --anchor-id here:            # read the selected shape/paragraph
 pptlive go-to --anchor-id shape:3:1              # deliberate, opt-in view move
 ```
 

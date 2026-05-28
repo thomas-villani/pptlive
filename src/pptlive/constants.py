@@ -555,3 +555,39 @@ def color_hex(value: Any) -> str:
     n = int(value)
     r, g, b = n & 0xFF, (n >> 8) & 0xFF, (n >> 16) & 0xFF
     return f"#{r:02X}{g:02X}{b:02X}"
+
+
+# ---------------------------------------------------------------------------
+# Slide render (v0.4): image-export formats
+# ---------------------------------------------------------------------------
+
+
+# Friendly format token -> (graphics-filter name, file extension). `Slide.Export`'s
+# FilterName uses PowerPoint's registered export filters; the common raster set is
+# reliably present. Added as the feature needs them (the wordlive rule).
+_IMAGE_FILTERS: dict[str, tuple[str, str]] = {
+    "png": ("PNG", "png"),
+    "jpg": ("JPG", "jpg"),
+    "jpeg": ("JPG", "jpg"),
+    "gif": ("GIF", "gif"),
+    "bmp": ("BMP", "bmp"),
+    "tif": ("TIF", "tif"),
+    "tiff": ("TIF", "tif"),
+}
+
+IMAGE_FORMAT_CHOICES: tuple[str, ...] = ("png", "jpg", "gif", "bmp", "tiff")
+
+
+def image_filter_for(fmt: str) -> tuple[str, str]:
+    """Resolve an image-format token to its `(FilterName, extension)` for `Slide.Export`.
+
+    Accepts `"png"`/`"jpg"`/`"jpeg"`/`"gif"`/`"bmp"`/`"tif"`/`"tiff"` (case-
+    insensitive, a leading dot tolerated). Raises `ValueError` for an unknown
+    format — symmetric with `autoshape_type_for` / `alignment_for`.
+    """
+    key = str(fmt).strip().lower().lstrip(".")
+    found = _IMAGE_FILTERS.get(key)
+    if found is None:
+        choices = ", ".join(IMAGE_FORMAT_CHOICES)
+        raise ValueError(f"unknown image format {fmt!r}; expected one of: {choices}")
+    return found

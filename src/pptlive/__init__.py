@@ -26,7 +26,7 @@ from ._anchors import Anchor, Notes, Paragraph, ParagraphCollection
 from ._app import PowerPoint, attach, connect
 from ._edit import EditScope
 from ._presentation import Presentation, PresentationCollection
-from ._selection import SelectionSnapshot
+from ._selection import SelectionInfo, SelectionSnapshot
 from ._shapes import PlaceholderShape, Shape, ShapeCollection
 from ._slides import Slide, SlideCollection
 from .exceptions import (
@@ -61,6 +61,7 @@ __all__ = [
     "PresentationCollection",
     "PresentationNotFoundError",
     "PptliveError",
+    "SelectionInfo",
     "SelectionSnapshot",
     "Shape",
     "ShapeCollection",

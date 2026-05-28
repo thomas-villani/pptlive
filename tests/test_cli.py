@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 from click.testing import CliRunner
 
@@ -361,6 +362,43 @@ def test_go_to(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     result = CliRunner().invoke(main, ["go-to", "--anchor-id", "shape:3:1"])
     assert result.exit_code == 0
     assert fake_powerpoint._viewed == 3
+
+
+def test_slide_export(fake_powerpoint, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    out = tmp_path / "slide2.png"
+    result = CliRunner().invoke(
+        main, ["slide", "export", "--slide", "2", "--out", str(out), "--width", "640"]
+    )
+    assert result.exit_code == 0
+    payload = _json(result)
+    assert payload["path"] == str(out)
+    assert os.path.isfile(payload["path"])
+
+
+def test_slide_export_temp_default(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["slide", "export", "--slide", "2"])
+    assert result.exit_code == 0
+    path = _json(result)["path"]
+    try:
+        assert os.path.isfile(path)
+    finally:
+        os.remove(path)
+
+
+def test_selection_cli_shapes(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    fake_powerpoint._viewed = 2
+    fake_powerpoint._select_shapes("Title 1")
+    result = CliRunner().invoke(main, ["selection"])
+    assert result.exit_code == 0
+    payload = _json(result)
+    assert payload["type"] == "shapes"
+    assert payload["anchor_id"] == "shape:2:1"
+
+
+def test_selection_cli_none(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["selection"])
+    assert result.exit_code == 0
+    assert _json(result)["type"] == "none"
 
 
 def test_text_output_mode(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]

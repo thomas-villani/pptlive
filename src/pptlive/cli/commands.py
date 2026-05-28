@@ -5,7 +5,9 @@ write, replace, go-to. v0.1 adds the slide-lifecycle verbs under the `slide`
 group: add, delete, duplicate, move, set-layout, and layouts. v0.2 adds the
 `shape` group: add (textbox/shape/picture), move, resize, delete. v0.3 adds text
 structure: paragraphs, insert, format-paragraph, format-text, and the `list`
-group (apply/remove). find/replace and the `show` group arrive in later stages.
+group (apply/remove). v0.4 adds `slide export` (render a slide to an image) and
+`selection` (what the user has selected, resolved to anchors; targetable via
+`here:`). find/replace and the `show` group arrive in later stages.
 """
 
 from __future__ import annotations
@@ -17,7 +19,12 @@ import click
 from .. import attach
 from .._presentation import Presentation
 from .._shapes import Shape
-from ..constants import ALIGNMENT_CHOICES, AUTOSHAPE_CHOICES, LIST_TYPE_CHOICES
+from ..constants import (
+    ALIGNMENT_CHOICES,
+    AUTOSHAPE_CHOICES,
+    IMAGE_FORMAT_CHOICES,
+    LIST_TYPE_CHOICES,
+)
 from ..exceptions import AnchorNotFoundError, PowerPointNotRunningError
 from .main import _run, emit
 
@@ -125,6 +132,23 @@ def _fmt_paragraphs(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _fmt_selection(info: dict[str, Any]) -> str:
+    kind = info.get("type")
+    slide = info.get("slide")
+    if kind == "none":
+        return "(nothing selected)"
+    if kind == "slides":
+        return f"slide {slide} selected"
+    if kind == "shapes":
+        shapes = info.get("shapes") or []
+        names = ", ".join(f"{s.get('name')!r} [{s.get('anchor_id')}]" for s in shapes)
+        return f"slide {slide}: {len(shapes)} shape(s) selected — {names}"
+    if kind == "text":
+        snippet = (info.get("text") or "").replace("\r", " / ").replace("\v", " ")
+        return f"slide {slide}: text caret in {info.get('anchor_id')} — {snippet!r}"
+    return str(info)
+
+
 def register(group: click.Group) -> None:
     group.add_command(status)
     group.add_command(slides_cmd)
@@ -140,6 +164,7 @@ def register(group: click.Group) -> None:
     group.add_command(format_paragraph)
     group.add_command(format_text)
     group.add_command(list_cmd)
+    group.add_command(selection_cmd)
     group.add_command(go_to)
 
 
@@ -242,6 +267,62 @@ def slide_layouts(ctx: click.Context) -> None:
             deck = _pick_deck(ppt, ctx.obj["doc_name"])
             rows = deck.layouts()
             emit(rows, as_text=not ctx.obj["as_json"], text=_fmt_layouts(rows))
+
+    _run(ctx, go)
+
+
+@slide.command(name="export")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--out",
+    "out",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Output image path (default: a temp file you can then read).",
+)
+@click.option("--width", type=int, default=None, help="Output width (pixels).")
+@click.option("--height", type=int, default=None, help="Output height (pixels).")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(IMAGE_FORMAT_CHOICES),
+    default="png",
+    show_default=True,
+    help="Image format.",
+)
+@click.pass_context
+def slide_export(
+    ctx: click.Context,
+    slide_index: int,
+    out: str | None,
+    width: int | None,
+    height: int | None,
+    fmt: str,
+) -> None:
+    """Render a slide to an image file — so a vision model can *see* it.
+
+    Renders the slide's current (unsaved) state; polite (doesn't move the view).
+    Prints the absolute path; pass `--width`/`--height` for a specific pixel size
+    (one is enough — the other follows the slide's aspect ratio).
+    """
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            path = deck.slides[slide_index].export_image(out, width=width, height=height, fmt=fmt)
+            payload = {
+                "ok": True,
+                "slide": slide_index,
+                "path": str(path),
+                "format": fmt,
+                "width": width,
+                "height": height,
+            }
+            emit(
+                payload,
+                as_text=not ctx.obj["as_json"],
+                text=f"exported slide {slide_index} -> {path}",
+            )
 
     _run(ctx, go)
 
@@ -880,6 +961,30 @@ def replace(ctx: click.Context, anchor_id: str, text: str) -> None:
     `replace --find OLD --text NEW` arrives with the find/replace stage.
     """
     _set_text(ctx, anchor_id, text, f"CLI: replace {anchor_id}")
+
+
+# ---------------------------------------------------------------------------
+# selection
+# ---------------------------------------------------------------------------
+
+
+@click.command(name="selection")
+@click.pass_context
+def selection_cmd(ctx: click.Context) -> None:
+    """Report the user's current selection, resolved to anchors.
+
+    A polite read (it doesn't change the selection): the selected shapes as
+    `shape:S:N`, or a text caret as `para:S:N:P`, with the single targetable
+    `anchor_id` that `--anchor-id here:` resolves to.
+    """
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            info = deck.selection().to_dict()
+            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_selection(info))
+
+    _run(ctx, go)
 
 
 # ---------------------------------------------------------------------------
