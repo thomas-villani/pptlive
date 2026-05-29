@@ -36,29 +36,36 @@ Dev pins Python 3.13 (`.python-version`), but the **library targets 3.10+** to
 match wordlive — do not use 3.11+ syntax. `ruff` and `mypy` are configured for
 `py310` in `pyproject.toml`.
 
-## Module layout (to be built — see IMPLEMENTATION.md)
+## Module layout (built through v0.9 — see IMPLEMENTATION.md)
 
 ```
 src/pptlive/
   __init__.py        public surface + __all__
-  constants.py       typed IntEnums for Mso*/Pp* magic constants (+ friendly string aliases)
+  constants.py       typed IntEnums for Mso*/Pp*/Xl* magic constants (+ friendly string aliases)
   exceptions.py      PptliveError taxonomy; _decode_com_error / from_com_error / _BUSY_HRESULTS
   units.py           points / inches() / cm() helpers — never expose EMUs
   _com.py            the ONLY pywin32 seam: com_apartment, get_active_powerpoint,
-                     launch_powerpoint, translate_com_errors (tests monkeypatch the getters)
+                     launch_powerpoint, translate_com_errors, retry_on_busy
+                     (tests monkeypatch the getters)
   _app.py            PowerPoint handle + attach() / connect()
   _presentation.py   Presentation (the wordlive Document analog) + PresentationCollection
   _slides.py         SlideCollection / Slide  (add/delete/duplicate/move_to/set_layout, notes, read())
   _shapes.py         ShapeCollection / Shape  (a Shape IS an Anchor when it has a text frame; geometry verbs)
   _anchors.py        Anchor base + Paragraph, Cell, Notes
+  _tables.py         Table / Cell  (a table is a shape; cell:S:N:R:C anchors)         [v0.5]
+  _charts.py         Chart       (a chart is a shape; data via embedded Excel)         [v0.7]
+  _smartart.py       SmartArt    (a diagram is a shape; node tree read/set_nodes)      [v0.8]
+  _theme.py          Theme + Master  (deck-wide palette/fonts/text-styles/background)  [v0.9]
   _selection.py      viewed-slide + Selection snapshot/restore
   _edit.py           EditScope — view/Selection preservation + atomic undo via StartNewUndoEntry (see below)
-  _findreplace.py    find() / find_replace()
   _show.py           SlideShow control (deck.show)
   cli/{__init__,__main__,main,commands}.py
-  _skill/SKILL.md    LLM-facing CLI reference
+  mcp/{__init__,__main__,server}.py   five op-dispatch tools (ppt_read/edit/render/show/batch); pptlive[mcp]
 tests/conftest.py    fake_powerpoint fixture (MagicMock COM), no_powerpoint, real_powerpoint
 ```
+
+Not yet built (still in `spec.md`): `_findreplace.py` (`find()` / `find_replace()`)
+and `_skill/SKILL.md` (the LLM-facing CLI reference).
 
 ## Conventions (inherited from wordlive — keep them)
 

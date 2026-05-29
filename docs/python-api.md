@@ -105,6 +105,30 @@ categories, and series, and writes them back with `set_type` / `set_data`.
 
 ::: pptlive.Chart
 
+## SmartArt
+
+A SmartArt diagram is a shape too (`Shape.has_smartart` / `Shape.smartart`); its
+content is a tree of nodes. [`SmartArt`](#pptlive.SmartArt) reads the layout kind
+and the nested node tree, and replaces it with `set_nodes` — a flat list of
+strings, or `{text, children}` mappings that nest. Create one via
+`shapes.add_smartart(kind, nodes)`.
+
+::: pptlive.SmartArt
+
+## Theme & master — deck-wide styling
+
+Where `format_text` styles one anchor, [`deck.theme`](#pptlive.Theme) and
+[`deck.master`](#pptlive.Master) restyle the **whole deck** by editing what every
+slide inherits. `Theme` is the 12-slot palette plus the heading/body typefaces;
+`Master` is the primary slide master's text styles (`title` / `body` /
+`default`, 5 levels each) and background. These are deliberately global and
+anti-polite — one call recolors or re-fonts every inheriting slide — so wrap them
+in `deck.edit()` for the one-Ctrl-Z fence (the user's view doesn't move).
+
+::: pptlive.Theme
+
+::: pptlive.Master
+
 ## Slide show
 
 [`deck.show`](#pptlive.SlideShow) drives a running slide show like a presenter's

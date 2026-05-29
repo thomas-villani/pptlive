@@ -77,8 +77,16 @@ with pl.attach() as ppt:
         chart.set_type("line")                           # change the kind
     data = chart.read()                                  # {chart_type, categories, series:[...]}
 
-    # Text structure — paragraphs, formatting, bullets (PowerPoint has no
-    # named styles, so "styling" is direct font formatting via format_text).
+    # SmartArt — a diagram is a shape too; its content is a node tree.
+    with deck.edit("Add a process diagram"):
+        sa = deck.slides[3].shapes.add_smartart(
+            "process", ["Discover", "Design", "Build", "Ship"]   # flat list…
+        ).smartart
+        sa.set_nodes([{"text": "CEO", "children": ["VP Eng", "VP Sales"]}])  # …or a tree
+    tree = sa.read()                                     # {layout, nodes:[{text, level, children}]}
+
+    # Text structure — paragraphs, formatting, bullets. (Per-anchor formatting;
+    # for deck-wide styling use deck.theme / deck.master below.)
     with deck.edit("Polish the body copy"):
         body = deck.anchor_by_id("ph:4:body")
         body.set_text("Revenue up 12%\nChurn down 3%\nNPS +9")
@@ -95,6 +103,16 @@ with pl.attach() as ppt:
         table.add_row(["Revenue", "$4.2M"])          # appends + fills a row
         deck.anchor_by_id("cell:4:5:1:1").format_text(bold=True)   # a Cell is an anchor
     grid = table.read()                              # {slide, shape, rows, columns, cells:[...]}
+
+    # Deck-wide styling — theme (palette + fonts) and master (text styles +
+    # background) restyle every inheriting slide at once. Global + anti-polite,
+    # but still one Ctrl-Z; your view doesn't move.
+    with deck.edit("Rebrand the deck"):
+        deck.theme.set_color("accent1", "#C00000")       # recolor the whole deck
+        deck.theme.set_font("major", "Georgia")          # major = headings, minor = body
+        deck.master.format_text_style("body", 1, font="Georgia", size=28)
+        deck.master.set_background("#1F1F1F")            # solid fill
+    palette = deck.theme.read()                          # {colors:{slot:#RRGGBB}, fonts:{major, minor}}
 
     # Render — let a vision model *see* the slide it just built (export → read → iterate).
     png = deck.slides[4].export_image(width=1280)    # temp PNG (or pass a path); polite
@@ -177,6 +195,18 @@ pptlive chart read     --slide 4 --shape 5                    # {chart_type, cat
 pptlive chart set-type --slide 4 --shape 5 --chart-type line
 pptlive chart set-data --slide 4 --shape 5 --categories "A,B" --series '{"S":[1,2]}'
 
+pptlive shape add --slide 3 --kind smartart --smartart-kind process \
+    --nodes '["Discover","Design","Build","Ship"]'           # flat list or {text,children} tree
+pptlive smartart read      --slide 3 --shape 2               # {layout, nodes:[{text, level, children}]}
+pptlive smartart set-nodes --slide 3 --shape 2 --nodes '[{"text":"CEO","children":["Eng","Sales"]}]'
+
+pptlive theme  read                              # deck palette (12 slots) + heading/body fonts
+pptlive theme  set-color --slot accent1 --color "#C00000"    # recolors the whole deck
+pptlive theme  set-font  --which major --name "Georgia"      # major = headings, minor = body
+pptlive master read                              # master text styles (title/body/default) + background
+pptlive master format-text-style --style body --level 1 --font "Georgia" --size 28
+pptlive master set-background --color "#1F1F1F"  # deck-wide; solid fill
+
 pptlive paragraphs --anchor-id ph:4:body         # [{anchor_id (para:S:N:P), text, indent_level, bullet}]
 pptlive insert --anchor-id para:4:2:3 --text "New bullet" [--before|--after]
 pptlive format-paragraph --anchor-id para:4:2:1 --alignment center --indent-level 2
@@ -236,14 +266,15 @@ one-Ctrl-Z `edit` fencing carry over and reads never move the view:
 
 | tool | `op`s |
 | ---- | ----- |
-| `ppt_read` | `status` · `slides` · `outline` · `slide` · `anchor` · `selection` · `table` · `chart` · `layouts` — every read; never moves the view |
-| `ppt_edit` | `write` · `format` · `slide_add`/`slide_delete`/`slide_duplicate`/`slide_move`/`set_layout` · `shape_add`/`shape_move`/`shape_resize`/`shape_delete`/`set_alt` · `table_add_row`/`table_delete_row` · `chart_set_type`/`chart_set_data` — every mutation; one Ctrl-Z each |
+| `ppt_read` | `status` · `slides` · `outline` · `slide` · `anchor` · `selection` · `table` · `chart` · `smartart` · `theme` · `master` · `layouts` — every read; never moves the view |
+| `ppt_edit` | `write` · `format` · `slide_add`/`slide_delete`/`slide_duplicate`/`slide_move`/`set_layout` · `shape_add`/`shape_move`/`shape_resize`/`shape_delete`/`set_alt` · `table_add_row`/`table_delete_row` · `chart_set_type`/`chart_set_data` · `smartart_set_nodes` · `theme_set_color`/`theme_set_font` · `master_format_text_style`/`master_format_paragraph_style`/`master_set_background` — every mutation; one Ctrl-Z each |
 | `ppt_render` | `slide_image` · `shape_image` (PNGs a vision model can read) · `navigate` (the one deliberate view move) |
 | `ppt_show` | live slide show: `state` · `start` · `end` · `next` · `previous` · `goto` · `black` · `white` · `resume` |
 | `ppt_batch` | run a **list** of the ops above against one connection — all `edit`s fenced into a **single** undo entry (`atomic`), with `stop_on_error` control |
 
-Tables and charts are addressed by their shape's `anchor_id` (a `shape:S:N`);
-cells stay `cell:S:N:R:C` anchors you write to with `ppt_edit op="write"`.
+Tables, charts, and SmartArt are addressed by their shape's `anchor_id` (a
+`shape:S:N`); cells stay `cell:S:N:R:C` anchors you write to with `ppt_edit
+op="write"`. The `theme_*`/`master_*` ops are deck-wide (no anchor).
 
 Tool failures surface as MCP errors carrying a category token — `not_found`,
 `ambiguous`, `busy`, `not_running`, `no_text_frame`, `invalid_args` — the string

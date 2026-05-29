@@ -220,7 +220,73 @@ with pl.attach() as ppt:
     deck.slides[4].shapes["Picture 3"].move(top=60)
 ```
 
-## 9. LLM tool-use loop
+## 9. Add and edit a SmartArt diagram
+
+A SmartArt diagram is a shape; its content is a **node tree**. Flat layouts
+(`process`, `cycle`, `list`, `pyramid`, `venn`) take any number of top-level
+nodes; tree layouts (`hierarchy`, `orgchart`) take a single root with nested
+children.
+
+```python
+with pl.attach() as ppt:
+    deck = ppt.presentations.active
+
+    with deck.edit("Add a process diagram"):
+        sa = deck.slides[3].shapes.add_smartart(
+            "process", ["Discover", "Design", "Build", "Ship"],
+            left=72, top=160, width=720, height=200,
+        ).smartart
+
+    # Reshape it later — strings are leaves, {text, children} nests:
+    with deck.edit("Turn it into an org chart"):
+        deck.slides[3].shapes[2].smartart.set_nodes(
+            [{"text": "CEO", "children": ["VP Eng", "VP Sales", "VP Ops"]}]
+        )
+
+    tree = sa.read()      # {layout, layout_id, node_count, nodes:[{text, level, children}]}
+```
+
+From the CLI, `--nodes` is the same JSON shape:
+
+```bash
+pptlive smartart set-nodes --slide 3 --shape 2 \
+    --nodes '["Plan", {"text": "Execute", "children": ["Build", "Test"]}, "Ship"]'
+```
+
+## 10. Restyle the whole deck (theme + master)
+
+`format_text` styles one anchor; `deck.theme` and `deck.master` restyle **every
+inheriting slide** at once — the palette, the heading/body fonts, the master
+text styles, and the background. They're deliberately global and anti-polite,
+but each `edit()` block is still one Ctrl-Z and your view doesn't move.
+
+```python
+with pl.attach() as ppt:
+    deck = ppt.presentations.active
+
+    with deck.edit("Rebrand the deck"):
+        # Theme: the 12-slot palette + heading/body typefaces.
+        deck.theme.set_color("accent1", "#C00000")
+        deck.theme.set_color("dark1",   "#1F1F1F")
+        deck.theme.set_font("major", "Georgia")     # headings
+        deck.theme.set_font("minor", "Calibri")     # body
+
+        # Master: text styles (title/body/default × 5 levels) + background.
+        deck.master.format_text_style("title", 1, bold=True, size=40)
+        deck.master.format_paragraph_style("body", 1, alignment="left", space_after=12)
+        deck.master.set_background("#FBFBFB")
+
+    palette = deck.theme.read()   # {colors:{slot:#RRGGBB}, fonts:{major, minor}}
+    styles  = deck.master.read()  # {text_styles:{...}, background:{type, color}}
+```
+
+```bash
+pptlive theme  set-color --slot accent1 --color "#C00000"
+pptlive master format-text-style --style title --level 1 --bold --size 40
+pptlive master set-background --color "#FBFBFB"
+```
+
+## 11. LLM tool-use loop
 
 The CLI is built for this: discover anchors, let the model choose, apply, and
 branch on the exit code.
@@ -274,7 +340,7 @@ For Claude Desktop and other MCP hosts, prefer the [MCP server](mcp.md) — same
 control, no shelling out, and it can return rendered slide images as native
 image content.
 
-## 10. Presenter-assistant: drive a live slide show
+## 12. Presenter-assistant: drive a live slide show
 
 The `show` group deliberately controls what's on screen — a clicker for an
 agent. Unlike edits, it's *not* polite (that's the point).
@@ -304,7 +370,7 @@ pptlive show state
 pptlive show end
 ```
 
-## 11. Work across multiple open decks
+## 13. Work across multiple open decks
 
 `--doc NAME` (CLI) or `ppt.presentations[name]` (Python) targets a specific open
 presentation instead of the active one — so you never disturb which deck the

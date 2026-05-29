@@ -429,6 +429,78 @@ pptlive chart set-data --slide 4 --shape 6 \
 
 ---
 
+## SmartArt — the `smartart` group
+
+A SmartArt diagram is a shape too; its content is a **node tree**. Address by
+`--slide S --shape N`. Create one with `shape add --kind smartart` (with
+`--smartart-kind` and optional `--nodes`).
+
+```bash
+pptlive shape add --slide 3 --kind smartart --smartart-kind process \
+    --nodes '["Discover", "Design", "Build", "Ship"]'
+pptlive smartart read      --slide 3 --shape 2
+pptlive smartart set-nodes --slide 3 --shape 2 \
+    --nodes '["Plan", {"text": "Execute", "children": ["Build", "Test"]}, "Ship"]'
+```
+
+```json
+{
+  "slide": 3, "shape": 2, "anchor_id": "shape:3:2",
+  "layout": "process", "layout_id": "urn:microsoft.com/office/officeart/2005/8/layout/process1",
+  "node_count": 4,
+  "nodes": [{"text": "Discover", "level": 1, "children": []}, ...]
+}
+```
+
+`--nodes` is a JSON array of plain strings (leaves) and/or `{text, children}`
+objects (`children` nests recursively). Flat layouts (`process`, `cycle`,
+`list`, `pyramid`, `venn`) take any number of top-level nodes; tree layouts
+(`hierarchy`, `orgchart`) take a **single root** with nested children — passing
+more than one top-level node to a tree layout is an error (exit 1).
+
+---
+
+## Theme — the `theme` group
+
+Deck-wide styling: the 12-slot palette and the heading/body typefaces. These are
+**global, anti-polite** ops — one change recolors or re-fonts every slide that
+inherits the theme (the edit is still one Ctrl-Z, and your *view* doesn't move).
+
+```bash
+pptlive theme read                                   # {colors:{slot:#RRGGBB}, fonts:{major, minor}}
+pptlive theme set-color --slot accent1 --color "#C00000"
+pptlive theme set-font  --which major --name "Georgia"        # major = headings, minor = body
+pptlive theme set-font  --which minor --name "Calibri" --script latin
+```
+
+`--slot` is one of the 12 palette slots (`dark1`/`dark2`, `light1`/`light2`,
+`accent1`…`accent6`, `hyperlink`, `followed_hyperlink`). `--which` is `major`
+(headings) or `minor` (body); `--script` is `latin` (default), `east_asian`, or
+`complex_script`.
+
+---
+
+## Master — the `master` group
+
+The primary slide master's **text styles** (PowerPoint's nearest "named style"
+analog: `title` / `body` / `default`, 5 outline levels each) and its background.
+Also global and anti-polite, also one Ctrl-Z.
+
+```bash
+pptlive master read                                  # {text_styles:{...}, background:{type, color}}
+pptlive master format-text-style      --style body  --level 1 --font "Georgia" --size 28 --color "#333333"
+pptlive master format-paragraph-style --style title --level 1 --alignment center --space-after 12
+pptlive master set-background --color "#1F1F1F"      # solid fill (v0.9 ships solid only)
+```
+
+`format-text-style` mirrors `format-text` (`--bold/--no-bold`, `--italic`,
+`--underline`, `--size`, `--font`, `--color`) and `format-paragraph-style`
+mirrors `format-paragraph` (`--alignment`, `--space-before`, `--space-after`,
+`--line-spacing`) — but applied deck-wide to a `--style` + `--level` instead of
+to one anchor. Each needs at least one formatting option.
+
+---
+
 ## Selection & navigation
 
 ### `selection`

@@ -134,11 +134,14 @@ The current release covers the politeness / anchors / `EditScope` core, the
 LLM-first CLI, the slide lifecycle, shapes & geometry, text structure
 (paragraphs, font formatting, bullets), tables (cells as `cell:S:N:R:C`
 anchors), slide render + live selection (`here:`), pictures (alt text + per-shape
-export), charts (embedded-Excel data), and live slide-show control
+export), charts (embedded-Excel data), SmartArt diagrams (node-tree read /
+`set_nodes`), deck-wide styling via the theme and master (palette, heading/body
+fonts, master text styles, background), and live slide-show control
 (`deck.show`). It also ships an optional [MCP server](mcp.md) for Claude Desktop
 and other MCP clients. Deferred: event sinks
 (`SlideShowNextSlide`, `WindowSelectionChange`), an async wrapper, transitions &
-animations, and master/layout authoring.
+animations, find/replace, and custom slide-layout authoring (creating new
+layouts — distinct from the theme/master styling that already ships).
 
 ## Full design document
 
