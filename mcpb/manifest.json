@@ -1,0 +1,34 @@
+{
+  "manifest_version": "0.4",
+  "name": "pptlive",
+  "display_name": "pptlive",
+  "version": "0.1.0",
+  "description": "Read and edit the Microsoft PowerPoint deck you have open right now, live, directly inside Claude.",
+  "long_description": "pptlive's built-in MCP server, packaged for one-click install. Drives a running Microsoft PowerPoint instance over COM (Windows only): read slides, shapes, tables, charts, SmartArt, and theme/master styling; make polite edits (text, formatting, layouts, shapes, pictures, deck-wide styling) that preserve the user's viewed slide and selection and collapse into a single Ctrl-Z; render slides or shapes to images a vision model can see; and drive a live slide show. Five compact dispatch tools (ppt_read / ppt_edit / ppt_render / ppt_show / ppt_batch) addressed by hierarchical anchors.",
+  "author": {
+    "name": "Tom Villani, Ph.D.",
+    "url": "https://github.com/thomas-villani"
+  },
+  "homepage": "https://thomas-villani.github.io/pptlive/",
+  "documentation": "https://thomas-villani.github.io/pptlive/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thomas-villani/pptlive"
+  },
+  "license": "MIT",
+  "keywords": ["powerpoint", "pptx", "com-automation", "presentations", "pptlive"],
+  "server": {
+    "type": "uv",
+    "entry_point": "src/server.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": ["run", "--directory", "${__dirname}", "src/server.py"]
+    }
+  },
+  "compatibility": {
+    "platforms": ["win32"],
+    "runtimes": {
+      "python": ">=3.10"
+    }
+  }
+}

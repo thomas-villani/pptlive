@@ -43,6 +43,16 @@ def test_build_server_registers_all_tools() -> None:
     assert names == {"ppt_read", "ppt_edit", "ppt_render", "ppt_show", "ppt_batch"}
 
 
+def test_guide_resources_serve_skill_bodies() -> None:
+    srv = build_server()
+    resources = {str(r.uri): r for r in asyncio.run(srv.list_resources())}
+    assert "pptlive://guide" in resources
+    assert "pptlive://guide/python" in resources
+    cli = asyncio.run(srv.read_resource("pptlive://guide"))
+    body = cli[0].content if isinstance(cli, list) else cli
+    assert "# pptlive (CLI)" in body and "name: pptlive-cli" not in body  # frontmatter stripped
+
+
 def test_tool_schema_marks_required_args() -> None:
     srv = build_server()
     tools = {t.name: t for t in asyncio.run(srv.list_tools())}

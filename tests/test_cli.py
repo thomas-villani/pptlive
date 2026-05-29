@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 from click.testing import CliRunner
 
@@ -493,3 +494,135 @@ def test_text_output_mode(fake_powerpoint) -> None:  # type: ignore[no-untyped-d
     assert "Welcome" in result.output
     # Not JSON in text mode.
     assert not result.output.lstrip().startswith("[")
+
+
+# ---------------------------------------------------------------------------
+# llm-help / install-skill / install-mcp (offline — no PowerPoint needed)
+# ---------------------------------------------------------------------------
+
+
+def test_llm_help_prints_cli_skill_body() -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["llm-help"])
+    assert result.exit_code == 0
+    out = result.output
+    assert not out.lstrip().startswith("{")  # raw Markdown, not JSON
+    assert out.lstrip().startswith("# pptlive (CLI)")
+    assert "name: pptlive-cli" not in out  # frontmatter stripped
+    assert "--anchor-id" in out and "Exit codes" in out
+
+
+def test_llm_help_python_prints_python_skill_body() -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["llm-help", "--python"])
+    assert result.exit_code == 0
+    assert result.output.lstrip().startswith("# pptlive (Python API)")
+    assert "import pptlive as pl" in result.output
+
+
+def test_llm_help_ignores_json_flag() -> None:  # type: ignore[no-untyped-def]
+    default = CliRunner().invoke(main, ["llm-help"])
+    as_json = CliRunner().invoke(main, ["--json", "llm-help"])
+    assert default.exit_code == 0 and as_json.exit_code == 0
+    assert default.output == as_json.output
+    assert not as_json.output.lstrip().startswith("{")
+
+
+def test_install_skill_local_writes_both(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(main, ["install-skill"])
+    assert result.exit_code == 0
+    data = _json(result)
+    assert data["ok"] is True and data["scope"] == "local"
+    names = {r["name"] for r in data["installed"]}
+    assert names == {"pptlive-cli", "pptlive-python"}
+    cli = tmp_path / ".agents" / "skills" / "pptlive-cli" / "SKILL.md"
+    py = tmp_path / ".agents" / "skills" / "pptlive-python" / "SKILL.md"
+    assert cli.exists() and py.exists()
+    body = cli.read_text(encoding="utf-8")
+    assert body.startswith("---") and "name: pptlive-cli" in body  # frontmatter kept on disk
+
+
+def test_install_skill_only_cli(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(main, ["install-skill", "--cli"])
+    assert result.exit_code == 0
+    assert [r["name"] for r in _json(result)["installed"]] == ["pptlive-cli"]
+    assert (tmp_path / ".agents" / "skills" / "pptlive-cli" / "SKILL.md").exists()
+    assert not (tmp_path / ".agents" / "skills" / "pptlive-python").exists()
+
+
+def test_install_skill_system(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    result = CliRunner().invoke(main, ["install-skill", "--python", "--system"])
+    assert result.exit_code == 0
+    assert _json(result)["scope"] == "system"
+    assert (tmp_path / ".agents" / "skills" / "pptlive-python" / "SKILL.md").exists()
+
+
+def test_install_skill_refuses_overwrite_without_force(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.chdir(tmp_path)
+    assert CliRunner().invoke(main, ["install-skill", "--cli"]).exit_code == 0
+    again = CliRunner().invoke(main, ["install-skill", "--cli"])
+    assert again.exit_code == 1
+    assert "force" in again.output.lower()
+    assert CliRunner().invoke(main, ["install-skill", "--cli", "--force"]).exit_code == 0
+
+
+def test_llm_help_matches_installed_skill_body(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.chdir(tmp_path)
+    CliRunner().invoke(main, ["install-skill", "--cli"])
+    installed = (tmp_path / ".agents" / "skills" / "pptlive-cli" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    printed = CliRunner().invoke(main, ["llm-help"]).output
+    # The printed guide is the installed skill minus its YAML frontmatter.
+    assert installed.rstrip().endswith(printed.rstrip())
+
+
+def test_install_mcp_print_emits_uvx_entry_and_writes_nothing(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(main, ["install-mcp", "--print"])
+    assert result.exit_code == 0
+    data = _json(result)
+    assert data["mcpServers"]["pptlive"]["command"] == "uvx"
+    assert data["mcpServers"]["pptlive"]["args"] == ["--from", "pptlive[mcp]", "pptlive-mcp"]
+    # --print never touches the filesystem.
+    assert not (tmp_path / ".mcp.json").exists()
+
+
+def test_install_mcp_directory_form(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["install-mcp", "--print", "--directory", "C:/repo/pptlive"])
+    entry = _json(result)["entry"]
+    assert entry["command"] == "uv"
+    assert entry["args"] == ["run", "--directory", "C:/repo/pptlive", "pptlive-mcp"]
+
+
+def test_install_mcp_writes_config_and_merges(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = tmp_path / "claude_desktop_config.json"
+    cfg.write_text(json.dumps({"mcpServers": {"other": {"command": "x"}}}), encoding="utf-8")
+    result = CliRunner().invoke(main, ["install-mcp", "--config", str(cfg)])
+    assert result.exit_code == 0
+    assert _json(result)["action"] == "created"
+    written = json.loads(cfg.read_text(encoding="utf-8"))
+    # Existing servers are preserved; pptlive is added.
+    assert written["mcpServers"]["other"] == {"command": "x"}
+    assert written["mcpServers"]["pptlive"]["command"] == "uvx"
+
+
+def test_install_mcp_refuses_overwrite_without_force(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    cfg = tmp_path / "cfg.json"
+    assert CliRunner().invoke(main, ["install-mcp", "--config", str(cfg)]).exit_code == 0
+    again = CliRunner().invoke(main, ["install-mcp", "--config", str(cfg)])
+    assert again.exit_code == 1 and "force" in again.output.lower()
+    forced = CliRunner().invoke(main, ["install-mcp", "--config", str(cfg), "--force"])
+    assert forced.exit_code == 0 and _json(forced)["action"] == "updated"
+
+
+def test_install_mcp_claude_code_writes_project_mcp_json(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(main, ["install-mcp", "--client", "claude-code"])
+    assert result.exit_code == 0
+    target = tmp_path / ".mcp.json"
+    assert target.exists()
+    assert (
+        json.loads(target.read_text(encoding="utf-8"))["mcpServers"]["pptlive"]["command"] == "uvx"
+    )

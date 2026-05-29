@@ -59,13 +59,19 @@ src/pptlive/
   _selection.py      viewed-slide + Selection snapshot/restore
   _edit.py           EditScope — view/Selection preservation + atomic undo via StartNewUndoEntry (see below)
   _show.py           SlideShow control (deck.show)
-  cli/{__init__,__main__,main,commands}.py
-  mcp/{__init__,__main__,server}.py   five op-dispatch tools (ppt_read/edit/render/show/batch); pptlive[mcp]
+  _guide.py          loads the bundled SKILL.md guides (cli/python); shared by CLI + MCP
+  _skill/pptlive-cli/SKILL.md, _skill/pptlive-python/SKILL.md   the two agent skills
+  cli/{__init__,__main__,main,commands}.py   + llm-help / install-skill / install-mcp
+  mcp/{__init__,__main__,server}.py   five op-dispatch tools (ppt_read/edit/render/show/batch)
+                     + pptlive://guide resources; pptlive[mcp]
+mcpb/                one-click `.mcpb` bundle (manifest.json, pyproject.toml, src/server.py)
 tests/conftest.py    fake_powerpoint fixture (MagicMock COM), no_powerpoint, real_powerpoint
 ```
 
-Not yet built (still in `spec.md`): `_findreplace.py` (`find()` / `find_replace()`)
-and `_skill/SKILL.md` (the LLM-facing CLI reference).
+Not yet built (still in `spec.md`): `_findreplace.py` (`find()` / `find_replace()`).
+Agent skills shipped as **two** guides (`pptlive-cli` + `pptlive-python`), not
+wordlive's single one — `llm-help [--python]` dumps one, `install-skill` writes
+them to `.agents/skills/`, and `install-mcp` / the `mcpb/` bundle wire up MCP.
 
 ## Conventions (inherited from wordlive — keep them)
 

@@ -18,11 +18,15 @@ find/replace arrives in a later stage.
 from __future__ import annotations
 
 import json
+import os
+import sys
+from pathlib import Path
 from typing import Any
 
 import click
 
 from .. import attach
+from .._guide import bundled_skill, skill_body, skill_name
 from .._presentation import Presentation
 from .._shapes import Shape
 from ..constants import (
@@ -324,6 +328,9 @@ def register(group: click.Group) -> None:
     group.add_command(selection_cmd)
     group.add_command(show)
     group.add_command(go_to)
+    group.add_command(llm_help_cmd)
+    group.add_command(install_skill_cmd)
+    group.add_command(install_mcp_cmd)
 
 
 # ---------------------------------------------------------------------------
@@ -1880,3 +1887,243 @@ def go_to(ctx: click.Context, anchor_id: str, select: bool) -> None:
             )
 
     _run(ctx, go)
+
+
+# ---------------------------------------------------------------------------
+# Agent self-bootstrapping: llm-help / install-skill / install-mcp
+# (all offline — they never touch PowerPoint)
+# ---------------------------------------------------------------------------
+
+
+@click.command(name="llm-help")
+@click.option(
+    "--python",
+    "python",
+    is_flag=True,
+    default=False,
+    help="Print the Python-API guide instead of the CLI guide.",
+)
+def llm_help_cmd(python: bool) -> None:
+    """Print the full pptlive agent guide (the bundled skill) to stdout.
+
+    One-shot orientation for an LLM: the anchor model, every verb, and the
+    exit-code taxonomy. `pptlive --help` points here. Defaults to the CLI guide;
+    `--python` prints the Python-API guide instead. Output is raw Markdown — not
+    JSON, and unaffected by `--json/--text` — so it reads cleanly straight into a
+    model's context, exactly like `--help`. Offline: never touches PowerPoint.
+    """
+    kind = "python" if python else "cli"
+    try:
+        click.echo(skill_body(kind))
+    except (FileNotFoundError, ModuleNotFoundError, OSError, ValueError) as e:
+        raise click.ClickException(f"could not read the bundled skill: {e}") from e
+
+
+@click.command(name="install-skill")
+@click.option("--cli", "cli", is_flag=True, default=False, help="Install only the CLI skill.")
+@click.option(
+    "--python", "python", is_flag=True, default=False, help="Install only the Python-API skill."
+)
+@click.option(
+    "--system",
+    "system",
+    is_flag=True,
+    default=False,
+    help="Install to ~/.agents/skills/ instead of the current project's ./.agents/skills/.",
+)
+@click.option(
+    "--force", "force", is_flag=True, default=False, help="Overwrite an existing SKILL.md."
+)
+@click.pass_context
+def install_skill_cmd(
+    ctx: click.Context, cli: bool, python: bool, system: bool, force: bool
+) -> None:
+    """Install pptlive's agent skills (SKILL.md) for LLM coding tools.
+
+    pptlive ships two skills — `pptlive-cli` (the command-line workflow) and
+    `pptlive-python` (the `import pptlive as pl` API). By default both are
+    written under `.agents/skills/<name>/SKILL.md`; pass `--cli` or `--python`
+    for just one. They land under the current directory (default) or your home
+    directory (`--system`). Offline — this doesn't touch PowerPoint.
+    """
+    if cli and not python:
+        kinds = ["cli"]
+    elif python and not cli:
+        kinds = ["python"]
+    else:
+        kinds = ["cli", "python"]
+
+    base = Path.home() if system else Path.cwd()
+    scope = "system" if system else "local"
+    dests = [(kind, base / ".agents" / "skills" / skill_name(kind) / "SKILL.md") for kind in kinds]
+
+    # Check every target up front so we never half-write when --force is absent.
+    clashes = [str(dest) for _, dest in dests if dest.exists()]
+    if clashes and not force:
+        raise click.ClickException(
+            "already exists (pass --force to overwrite): " + ", ".join(clashes)
+        )
+
+    installed = []
+    try:
+        for kind, dest in dests:
+            content = bundled_skill(kind)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(content, encoding="utf-8")
+            installed.append(
+                {
+                    "kind": kind,
+                    "name": skill_name(kind),
+                    "path": str(dest),
+                    "bytes": len(content.encode("utf-8")),
+                }
+            )
+    except (FileNotFoundError, ModuleNotFoundError, OSError, ValueError) as e:
+        raise click.ClickException(f"could not install the skill: {e}") from e
+
+    emit(
+        {"ok": True, "scope": scope, "installed": installed},
+        as_text=not ctx.obj["as_json"],
+        text="installed:\n" + "\n".join(f"  {r['name']} → {r['path']}" for r in installed),
+    )
+
+
+def _claude_desktop_config_path() -> Path:
+    """Where Claude Desktop keeps `claude_desktop_config.json` on this OS."""
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA")
+        base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+        return base / "Claude" / "claude_desktop_config.json"
+    if sys.platform == "darwin":
+        return (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "Claude"
+            / "claude_desktop_config.json"
+        )
+    return Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+
+
+def _mcp_server_entry(directory: str | None) -> dict[str, Any]:
+    """The `mcpServers` entry that launches the pptlive stdio server.
+
+    Default (repo-less) form runs the published package straight from PyPI with
+    `uvx` — `pptlive-mcp` is a console script *inside* `pptlive`, so it needs
+    `--from "pptlive[mcp]"` to tell uv which package provides it. With
+    `--directory` (a local checkout) pptlive *is* the project, so a plain
+    `uv run pptlive-mcp` resolves it without `--from`.
+    """
+    if directory:
+        return {"command": "uv", "args": ["run", "--directory", directory, "pptlive-mcp"]}
+    return {"command": "uvx", "args": ["--from", "pptlive[mcp]", "pptlive-mcp"]}
+
+
+@click.command(name="install-mcp")
+@click.option(
+    "--client",
+    type=click.Choice(["claude-desktop", "claude-code"]),
+    default="claude-desktop",
+    help="Which MCP client's config to write (default: claude-desktop).",
+)
+@click.option(
+    "--name", "server_name", default="pptlive", help="Server key to register (default: pptlive)."
+)
+@click.option(
+    "--directory",
+    "directory",
+    default=None,
+    help="Register a local checkout via `uv run --directory DIR` (dev), instead of the default `uvx --from pptlive[mcp]`.",
+)
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    type=click.Path(),
+    help="Write to this config file instead of the client's default location.",
+)
+@click.option(
+    "--print",
+    "print_only",
+    is_flag=True,
+    default=False,
+    help="Print the JSON server snippet to stdout instead of writing any file.",
+)
+@click.option(
+    "--force", "force", is_flag=True, default=False, help="Overwrite an existing server entry."
+)
+@click.pass_context
+def install_mcp_cmd(
+    ctx: click.Context,
+    client: str,
+    server_name: str,
+    directory: str | None,
+    config_path: str | None,
+    print_only: bool,
+    force: bool,
+) -> None:
+    """Register the pptlive MCP server in an agent's config.
+
+    Merges an `mcpServers.<name>` entry into Claude Desktop's
+    `claude_desktop_config.json` (default) or a Claude Code `.mcp.json`
+    (`--client claude-code`, project-local). The entry launches the stdio server
+    with `uvx --from "pptlive[mcp]" pptlive-mcp` (no separate install needed), or
+    `uv run --directory DIR pptlive-mcp` for a local checkout. Use `--print` to
+    just emit the snippet for any client. Offline — never touches PowerPoint;
+    restart the client to pick up the change.
+    """
+    entry = _mcp_server_entry(directory)
+
+    if print_only:
+        emit(
+            {"ok": True, "server": server_name, "entry": entry, "mcpServers": {server_name: entry}},
+            as_text=not ctx.obj["as_json"],
+            text=json.dumps({"mcpServers": {server_name: entry}}, indent=2),
+        )
+        return
+
+    if config_path is not None:
+        target = Path(config_path)
+    elif client == "claude-desktop":
+        target = _claude_desktop_config_path()
+    else:  # claude-code: portable, project-local server file
+        target = Path.cwd() / ".mcp.json"
+
+    cfg: dict[str, Any] = {}
+    if target.exists():
+        try:
+            raw = target.read_text(encoding="utf-8").strip()
+            cfg = json.loads(raw) if raw else {}
+        except (OSError, json.JSONDecodeError) as e:
+            raise click.ClickException(f"could not read existing config {target}: {e}") from e
+        if not isinstance(cfg, dict):
+            raise click.ClickException(f"existing config {target} is not a JSON object")
+
+    servers = cfg.setdefault("mcpServers", {})
+    if not isinstance(servers, dict):
+        raise click.ClickException(f"'mcpServers' in {target} is not a JSON object")
+    action = "updated" if server_name in servers else "created"
+    if server_name in servers and not force:
+        raise click.ClickException(
+            f"server '{server_name}' is already in {target}; pass --force to overwrite"
+        )
+    servers[server_name] = entry
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    except OSError as e:
+        raise click.ClickException(f"could not write {target}: {e}") from e
+
+    emit(
+        {
+            "ok": True,
+            "client": client,
+            "path": str(target),
+            "server": server_name,
+            "action": action,
+            "entry": entry,
+        },
+        as_text=not ctx.obj["as_json"],
+        text=f"{action} server '{server_name}' → {target}\n(restart {client} to load it)",
+    )

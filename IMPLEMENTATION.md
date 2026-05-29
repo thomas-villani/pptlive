@@ -664,8 +664,22 @@ create by `ph:S:KIND` or `.Name`. Symbolic binding (`add_shape "as": "label"` �
   Python API, CLI, MCP server, Cookbook (11 end-to-end recipes), Errors & exit
   codes, Design. `spec.md` stays the canonical design doc. Builds clean under
   `uv run --extra docs mkdocs build --strict`.
-- [ ] **`SKILL.md`** — port wordlive's agent-facing CLI reference once v0 CLI is
-  stable; add an `install-skill` command.
+- [x] **Agent skills + self-bootstrapping** — pptlive ships **two** skills
+  (`pptlive-cli` + `pptlive-python`) under `src/pptlive/_skill/<name>/SKILL.md`,
+  loaded via `_guide.py` (bundled in the wheel by hatchling's default data-file
+  inclusion). CLI: `llm-help [--python]` dumps a skill body to stdout (raw
+  Markdown, like `--help`, which now points at it); `install-skill
+  [--cli|--python] [--system] [--force]` writes them to `.agents/skills/`. The
+  MCP server exposes them as `pptlive://guide` / `pptlive://guide/python`
+  resources + server `instructions`.
+- [x] **MCP install** — `install-mcp [--client claude-desktop|claude-code]
+  [--directory DIR] [--config PATH] [--print] [--force]` merges an `mcpServers`
+  entry (`uvx --from "pptlive[mcp]" pptlive-mcp`, or `uv run --directory DIR`
+  for a checkout) into the client config. Plus a one-click `.mcpb` bundle under
+  `mcpb/` (manifest validated; `uv` runtime; Windows-only `compatibility`),
+  built with `@anthropic-ai/mcpb pack` at release. **Note:** keep the version in
+  `mcpb/manifest.json` + `mcpb/pyproject.toml` in sync with the root
+  `pyproject.toml` on each bump (no bumpversion wiring yet).
 
 ---
 

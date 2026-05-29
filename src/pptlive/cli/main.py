@@ -69,7 +69,13 @@ def _exit_for(exc: PptliveError) -> int:
 )
 @click.pass_context
 def main(ctx: click.Context, as_json: bool, doc_name: str | None) -> None:
-    """pptlive — drive a running Microsoft PowerPoint instance."""
+    """pptlive — drive a running Microsoft PowerPoint instance.
+
+    LLM agent? Run `pptlive llm-help` for the full agent guide in one shot: the
+    anchor model, every command, and the exit-code taxonomy (add `--python` for
+    the Python-API guide). `pptlive install-skill` drops those guides into
+    `.agents/skills/`, and `pptlive install-mcp` registers the MCP server.
+    """
     ctx.ensure_object(dict)
     ctx.obj["as_json"] = as_json
     ctx.obj["doc_name"] = doc_name

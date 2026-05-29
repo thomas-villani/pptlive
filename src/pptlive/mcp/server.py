@@ -47,6 +47,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
 from .. import attach
+from .._guide import skill_body
 from .._presentation import Presentation
 from .._shapes import Shape
 from ..exceptions import (
@@ -810,15 +811,36 @@ _TOOLS: list[Callable[..., Any]] = [
 ]
 
 
+_INSTRUCTIONS = (
+    "Drive the PowerPoint deck the user has open right now. Five dispatch tools "
+    "(ppt_read / ppt_edit / ppt_render / ppt_show / ppt_batch), each taking an "
+    "`op`. Address content with hierarchical anchors (`ph:S:KIND`, `shape:S:N`, "
+    "`para:S:N:P`, `cell:S:N:R:C`, `notes:S`); reads never move the view and every "
+    "edit is one Ctrl-Z. Read the `pptlive://guide` resource for the full op "
+    "vocabulary and anchor model (`pptlive://guide/python` for the Python API)."
+)
+
+
 def build_server(name: str = "pptlive") -> FastMCP:
     """Construct a FastMCP server with every pptlive tool registered.
 
     Kept as a factory (rather than only a module-level singleton) so tests can
     stand up a fresh server, and so an embedder can mount the tools elsewhere.
     """
-    srv = FastMCP(name)
+    srv = FastMCP(name, instructions=_INSTRUCTIONS)
     for fn in _TOOLS:
         srv.add_tool(fn)
+
+    @srv.resource("pptlive://guide", mime_type="text/markdown")
+    def guide() -> str:
+        """The full pptlive agent guide: anchor model, every verb, the op vocabulary."""
+        return skill_body("cli")
+
+    @srv.resource("pptlive://guide/python", mime_type="text/markdown")
+    def guide_python() -> str:
+        """The pptlive Python-API guide (`import pptlive as pl`)."""
+        return skill_body("python")
+
     return srv
 
 

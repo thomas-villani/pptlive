@@ -12,6 +12,9 @@ wheels/
 # MkDocs build output
 site/
 
+# Built MCPB bundles (produced by `mcpb pack`; attached to releases, not checked in)
+*.mcpb
+
 # Spike harness scratch state (scripts/undo_test.py)
 scripts/.undo_test_state.json
 

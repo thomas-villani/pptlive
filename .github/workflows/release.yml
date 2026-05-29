@@ -29,6 +29,17 @@ jobs:
             echo "::error::Tag '$GITHUB_REF_NAME' does not match pyproject version '$version'. Bump the version in pyproject.toml or retag."
             exit 1
           fi
+          # The .mcpb bundle pins the same version in two files; we keep them in
+          # sync by hand (no bumpversion wiring yet), so guard against shipping a
+          # stale-versioned bundle.
+          mcpb_manifest=$(python -c "import json; print(json.load(open('mcpb/manifest.json'))['version'])")
+          mcpb_pyproject=$(python -c "import tomllib; print(tomllib.load(open('mcpb/pyproject.toml','rb'))['project']['version'])")
+          echo "mcpb manifest version:  $mcpb_manifest"
+          echo "mcpb pyproject version: $mcpb_pyproject"
+          if [ "$mcpb_manifest" != "$tag" ] || [ "$mcpb_pyproject" != "$tag" ]; then
+            echo "::error::mcpb/ version ($mcpb_manifest / $mcpb_pyproject) does not match tag '$tag'. Update mcpb/manifest.json and mcpb/pyproject.toml (the '>=' dep pin too) to $tag."
+            exit 1
+          fi
 
       - name: Build sdist + wheel
         run: |
@@ -40,6 +51,27 @@ jobs:
         with:
           name: dist
           path: dist/
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build the .mcpb bundle
+        # Package the built-in MCP server as a .mcpb for one-click install in
+        # Claude Desktop. The bundle only declares `pptlive[mcp]` as a dependency
+        # (resolved by uv on the user's machine at install time), so packing here
+        # before the PyPI publish is fine. Pin the CLI for reproducible releases.
+        run: |
+          npm install -g @anthropic-ai/mcpb@2.1.2
+          mcpb validate mcpb/manifest.json
+          mcpb pack mcpb pptlive.mcpb
+
+      # Kept out of the `dist` artifact on purpose: PyPI rejects non-wheel/sdist
+      # files, and the github-release job attaches this separately.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mcpb
+          path: pptlive.mcpb
 
   pypi-publish:
     needs: build
@@ -70,6 +102,11 @@ jobs:
           name: dist
           path: dist/
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: mcpb
+          path: .
+
       - name: Create GitHub Release from the tag
         env:
           GH_TOKEN: ${{ github.token }}
@@ -78,4 +115,4 @@ jobs:
           --repo "$GITHUB_REPOSITORY"
           --title "$GITHUB_REF_NAME"
           --generate-notes
-          dist/*
+          dist/* pptlive.mcpb

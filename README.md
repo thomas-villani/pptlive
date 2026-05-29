@@ -245,19 +245,33 @@ pip install "pptlive[mcp]"
 pptlive-mcp            # stdio MCP server (or: python -m pptlive.mcp)
 ```
 
-Claude Desktop — add to `claude_desktop_config.json` (Settings → Developer →
-Edit Config), then restart:
+**One-click install (Claude Desktop).** Download `pptlive.mcpb` from the
+[latest release](https://github.com/thomas-villani/pptlive/releases/latest) and
+drag it onto **Settings → Extensions**. The bundle pulls in pptlive via `uv` on
+first run — no separate Python install. (Windows only; see [`mcpb/`](mcpb/).)
+
+**Or let pptlive write the config for you:**
+
+```
+pptlive install-mcp                       # → Claude Desktop's claude_desktop_config.json
+pptlive install-mcp --client claude-code  # → ./.mcp.json (project-local)
+pptlive install-mcp --print               # just print the snippet for any client
+```
+
+It registers `uvx --from "pptlive[mcp]" pptlive-mcp` (resolves the published
+package — no PATH assumptions). For a local checkout, add `--directory .` to get
+`uv run --directory <dir> pptlive-mcp` instead. Restart the client afterward.
+
+To wire it by hand instead, add to `claude_desktop_config.json` (Settings →
+Developer → Edit Config) and restart:
 
 ```json
 {
   "mcpServers": {
-    "pptlive": { "command": "pptlive-mcp" }
+    "pptlive": { "command": "uvx", "args": ["--from", "pptlive[mcp]", "pptlive-mcp"] }
   }
 }
 ```
-
-(If `pptlive-mcp` isn't on the launcher's PATH, use the absolute path to the
-script — or `"command": "uv", "args": ["run", "pptlive-mcp"]` from the project.)
 
 It's a compact **five-tool dispatch surface** — each tool takes an `op` argument
 and routes to the right verb, so the agent's tool picker sees five definitions
@@ -280,6 +294,31 @@ Tool failures surface as MCP errors carrying a category token — `not_found`,
 `ambiguous`, `busy`, `not_running`, `no_text_frame`, `invalid_args` — the string
 analog of the CLI's exit codes, so an agent can branch on them. Inside
 `ppt_batch` the same tokens are reported per-command instead of aborting.
+
+## For LLM agents — self-bootstrapping
+
+An agent with a shell can orient itself in one command:
+
+```
+pptlive llm-help            # the full CLI guide (anchors, every verb, exit codes)
+pptlive llm-help --python   # the Python-API guide instead
+```
+
+Output is raw Markdown (like `--help`), unaffected by `--json/--text`, so it
+drops straight into a model's context. `pptlive --help` points here too.
+
+pptlive ships **two agent skills** — `pptlive-cli` and `pptlive-python` — for
+tools that load `SKILL.md` files:
+
+```
+pptlive install-skill            # writes both to ./.agents/skills/<name>/SKILL.md
+pptlive install-skill --cli      # just one (also --python)
+pptlive install-skill --system   # into ~/.agents/skills/ instead
+```
+
+For MCP clients, `pptlive install-mcp` (above) registers the server, and the MCP
+server also exposes the same guides as `pptlive://guide` /
+`pptlive://guide/python` resources.
 
 ## Two things to know
 
