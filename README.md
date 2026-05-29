@@ -5,7 +5,7 @@ PowerPoint. Built for both human scripting and LLM agents. Windows-only.
 
 The live-app sibling of [`python-pptx`](https://python-pptx.readthedocs.io/)
 (which works the `.pptx` on disk) and the PowerPoint counterpart of
-[`wordlive`](../wordlive). Use it when the user already has the deck open and you
+[`wordlive`](https://github.com/thomas-villani/wordlive). Use it when the user already has the deck open and you
 want to edit it *live* — no close-the-file, let-the-agent-write, re-open dance.
 
 | Library     | Target                    | Mechanism                |
