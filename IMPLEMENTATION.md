@@ -8,10 +8,11 @@ resolved open questions inline (strike them through, link the commit).
 **Status legend:** `[ ]` not started · `[~]` in progress · `[x]` shipped.
 
 > **Bootstrap + v0 + v0.1 + v0.2 + v0.3 + v0.4 + v0.5 + v0.6 + v0.7 (pictures &
-> charts) + v0.8 (SmartArt) + the MCP server have
-> landed** (fake-COM unit tests green: `ruff`, `mypy`, `pytest` all pass; 340 tests;
+> charts) + v0.8 (SmartArt) + v0.9 (master/theme styling) + the MCP server have
+> landed** (fake-COM unit tests green: `ruff`, `mypy`, `pytest` all pass; 374 tests;
 > v0.7 verified live 2026-05-28 via `scripts/picture_spike.py` + `scripts/chart_spike.py`;
-> v0.8 verified live 2026-05-28 via `scripts/smartart_spike.py` + a shipped-wrapper run).
+> v0.8 verified live 2026-05-28 via `scripts/smartart_spike.py` + a shipped-wrapper run;
+> v0.9 verified live 2026-05-29 via `scripts/master_spike.py`, net-zero).
 > The library is usable as an LLM tool two ways now — the JSON **CLI** and an optional
 > **MCP server** (`pptlive[mcp]` → `pptlive-mcp`, five `op`-dispatch tools over stdio
 > for Claude Desktop & other MCP agents; see the *MCP server* section below). It drives
@@ -567,32 +568,59 @@ tree layout rejects multiple top-level roots):
   availability across Office versions (the 7 are core/stable on this build), and
   widening past the 7 core layouts on demand.
 
-## v0.9 — master / theme styling (feasibility CONFIRMED; design PENDING)
+## v0.9 — master / theme styling — SHIPPED
 
 "Overall / master styles" — the deck-wide counterpart to v0.3's per-run
-`format_text`. **All reachable *and* writable via COM, confirmed live
-(2026-05-28, ad-hoc probe with write+restore round-trips):**
+`format_text`. These are **global, anti-polite** authoring ops (they restyle the
+whole deck at once — the opposite of the per-anchor model), so they get their own
+two surfaces — `deck.theme` and `deck.master` — *not* a fold into `format_text`.
+They still mutate, so they go through `deck.edit()` for the one-Ctrl-Z fence (the
+view doesn't move, so restore is a no-op). Lives in `_theme.py` (`Theme` +
+`Master`, both bound to the `Presentation`, reaching the primary
+`SlideMaster`). **All four sub-areas built and verified live 2026-05-29
+(`scripts/master_spike.py`, net-zero — every write round-tripped):**
 
-- **Master text styles** (PowerPoint's nearest "named style" analog):
-  `SlideMaster.TextStyles(ppTitleStyle=2 / ppBodyStyle=3 / ppDefaultStyle=1)
-  .Levels(1–5).Font` + `.ParagraphFormat`. Wrote body L1 → Georgia 32 and restored
-  to Calibri 28 cleanly. Editing one re-renders every slide that inherits it.
-- **Theme color scheme:** `SlideMaster.Theme.ThemeColorScheme.Colors(1–12).RGB`
-  (dark1/light1/dark2/light2/accent1–6/hlink/folHlink). Wrote accent1 → red,
-  restored.
-- **Theme font scheme:** `Theme.ThemeFontScheme.MajorFont`/`MinorFont`, accessed
-  by `.Item(1=Latin / 2=EastAsian / 3=ComplexScript)` — **the late-bound `.Latin`
-  accessor raises `AttributeError`; use `.Item(n)`.**
-- **Background:** `SlideMaster.Background.Fill`, per-layout `CustomLayouts(i)
-  .Background`.
+- [x] **`_theme.Theme` (`deck.theme`) — palette + typefaces.** `read()` →
+  `{colors:{12 named slots}, fonts:{major, minor}}`; `set_color(slot, color)` over
+  `Theme.ThemeColorScheme.Colors(1–12).RGB`; `set_font(which, name, *, script)` over
+  `ThemeFontScheme.MajorFont`/`MinorFont`. The RGB long is the same R-low-byte form
+  as `Font.Color.RGB`, so `parse_color`/`color_hex` are reused. **Fonts go through
+  `.Item(1=Latin/2=EastAsian/3=ComplexScript)` — the late-bound `.Latin` accessor
+  raises `AttributeError`.**
+- [x] **`_theme.Master` (`deck.master`) — text styles + background.** `read()` →
+  `{text_styles:{title/body/default:{levels:[…5…]}}, background:{type, color}}`;
+  `format_text_style(style, level, …)` + `format_paragraph_style(style, level, …)`
+  over `TextStyles(ppTitleStyle=2/ppBodyStyle=3/ppDefaultStyle=1).Levels(1–5)`;
+  `set_background(color)` (solid fill). The text-style verbs drive the **same** COM
+  `Font`/`ParagraphFormat` objects as `Anchor.format_text`/`format_paragraph`, so
+  the application logic was lifted into shared `_anchors.apply_font` /
+  `apply_paragraph_format` helpers and reused verbatim.
+- [x] **Constants:** `PpTextStyleType` + `text_style_for`/`TEXT_STYLE_CHOICES`;
+  `MsoThemeColorSchemeIndex` + `theme_color_for`/`THEME_COLOR_CHOICES` (12 slots,
+  `hlink`/`folhlink` aliases); `theme_font_slot_for`/`theme_font_script_for` +
+  `THEME_FONT_SLOTS`/`THEME_FONT_SCRIPT_CHOICES`.
+- [x] **CLI** the `theme` group (`read`/`set-color`/`set-font`) and the `master`
+  group (`read`/`format-text-style`/`format-paragraph-style`/`set-background`).
+- [x] **MCP** `ppt_read` ops `theme`/`master` + `ppt_edit` ops `theme_set_color`/
+  `theme_set_font`/`master_format_text_style`/`master_format_paragraph_style`/
+  `master_set_background`.
+- [x] **Spike RESOLVED (2026-05-29, `scripts/master_spike.py`, net-zero).** Drove
+  the shipped wrappers on a live deck; theme color, theme font, master body-L1 font
+  + size, **and** the master background all round-tripped, then restored to their
+  captured originals (`net_zero_ok: true`). Open questions resolved: **(a)
+  multi-master** — `Presentation.Designs.Count == 1` on this deck; v0.9 targets the
+  *primary* `SlideMaster`, and `deck.master` staying the primary keeps the API
+  non-breaking if a `deck.masters` collection is added later. **(b) undo
+  granularity** — master edits carry the same `StartNewUndoEntry` fence as content
+  edits (the one-Ctrl-Z reversion is an interactive check, not auto-asserted).
+  **(c) background** — the master's background was a plain solid, so the round-trip
+  ran and reverted exactly; the spike *skips* the destructive solid write when the
+  background isn't already a plain solid (to stay net-zero).
 
-Design notes for when it's built: these are **global, anti-polite** authoring ops
-(they restyle the whole deck at once — the opposite of the per-anchor model), so
-they want their own surface (`deck.theme` / `deck.master`), *not* a fold into
-`format_text`. Caveats to resolve in its spike: multi-master decks
-(`Presentation.Designs` — the test deck had 1, but templates often carry several);
-theme-object behavior on legacy `.ppt`; whether master edits revert with one
-Ctrl-Z like content edits.
+**Deferred (not built):** multi-master / per-`Design` styling; per-layout
+(`CustomLayouts(i).Background`) backgrounds; non-solid background fills
+(gradient/picture); the East-Asian/Complex-Script theme fonts beyond the `--script`
+opt-in; legacy `.ppt` theme-object behavior.
 
 ## v1.0+ — defer
 

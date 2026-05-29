@@ -893,3 +893,180 @@ def smartart_layout_name(urn: Any) -> str:
     text = str(urn or "")
     seg = text.rsplit("/", 1)[-1] if text else text
     return _SMARTART_NAMES.get(seg, seg or "unknown")
+
+
+# ---------------------------------------------------------------------------
+# Master / theme styling (v0.9): deck-wide text styles, palette, fonts
+# ---------------------------------------------------------------------------
+#
+# The deck-wide counterpart to v0.3's per-run format_text. Feasibility confirmed
+# live 2026-05-28 (write+restore round-trips). Three small enums + the usual
+# friendly-name resolvers (mirroring smartart_layout_for / chart_type_for), added
+# only as v0.9 needs them.
+
+
+class PpTextStyleType(IntEnum):
+    """`SlideMaster.TextStyles(type)` — the master's three named text styles.
+
+    PowerPoint's nearest analog to Word's named paragraph styles: each style has
+    5 outline `Levels`, and editing one re-renders every slide that inherits it.
+    """
+
+    DEFAULT = 1
+    TITLE = 2
+    BODY = 3
+
+
+# Friendly name -> PpTextStyleType int.
+_TEXT_STYLES: dict[str, int] = {
+    "default": int(PpTextStyleType.DEFAULT),
+    "title": int(PpTextStyleType.TITLE),
+    "body": int(PpTextStyleType.BODY),
+}
+
+# The friendly names offered as a CLI choice (canonical spellings, ordered).
+TEXT_STYLE_CHOICES: tuple[str, ...] = ("title", "body", "default")
+
+_TEXT_STYLE_NAMES: dict[int, str] = {v: k for k, v in _TEXT_STYLES.items()}
+
+
+def text_style_for(style: str) -> int:
+    """Resolve a friendly master text-style name to its `PpTextStyleType` int.
+
+    Accepts `"title"`/`"body"`/`"default"` (case-insensitive). Raises
+    `ValueError` for an unknown name (before any COM) — symmetric with
+    `smartart_layout_for`.
+    """
+    key = str(style).strip().lower()
+    val = _TEXT_STYLES.get(key)
+    if val is None:
+        choices = ", ".join(TEXT_STYLE_CHOICES)
+        raise ValueError(f"unknown text style {style!r}; expected one of: {choices}")
+    return val
+
+
+def text_style_name(value: Any) -> str:
+    """Friendly name for a `PpTextStyleType` int (e.g. 3 -> "body")."""
+    try:
+        return _TEXT_STYLE_NAMES.get(int(value), f"style:{int(value)}")
+    except (TypeError, ValueError):
+        return "default"
+
+
+class MsoThemeColorSchemeIndex(IntEnum):
+    """`Theme.ThemeColorScheme.Colors(index)` — the 12 theme palette slots.
+
+    The slot ints PowerPoint uses; `.RGB` on each is the same R-low-byte long as
+    `Font.Color.RGB` (so `parse_color` / `color_hex` apply unchanged).
+    """
+
+    DARK1 = 1
+    LIGHT1 = 2
+    DARK2 = 3
+    LIGHT2 = 4
+    ACCENT1 = 5
+    ACCENT2 = 6
+    ACCENT3 = 7
+    ACCENT4 = 8
+    ACCENT5 = 9
+    ACCENT6 = 10
+    HYPERLINK = 11
+    FOLLOWED_HYPERLINK = 12
+
+
+# Friendly slot name -> palette index. Includes a couple of common aliases.
+_THEME_COLORS: dict[str, int] = {
+    "dark1": int(MsoThemeColorSchemeIndex.DARK1),
+    "light1": int(MsoThemeColorSchemeIndex.LIGHT1),
+    "dark2": int(MsoThemeColorSchemeIndex.DARK2),
+    "light2": int(MsoThemeColorSchemeIndex.LIGHT2),
+    "accent1": int(MsoThemeColorSchemeIndex.ACCENT1),
+    "accent2": int(MsoThemeColorSchemeIndex.ACCENT2),
+    "accent3": int(MsoThemeColorSchemeIndex.ACCENT3),
+    "accent4": int(MsoThemeColorSchemeIndex.ACCENT4),
+    "accent5": int(MsoThemeColorSchemeIndex.ACCENT5),
+    "accent6": int(MsoThemeColorSchemeIndex.ACCENT6),
+    "hyperlink": int(MsoThemeColorSchemeIndex.HYPERLINK),
+    "hlink": int(MsoThemeColorSchemeIndex.HYPERLINK),
+    "followed_hyperlink": int(MsoThemeColorSchemeIndex.FOLLOWED_HYPERLINK),
+    "folhlink": int(MsoThemeColorSchemeIndex.FOLLOWED_HYPERLINK),
+}
+
+# The canonical slot names, in palette order — used as CLI choices *and* as the
+# ordered key set when reading the whole scheme back.
+THEME_COLOR_CHOICES: tuple[str, ...] = (
+    "dark1",
+    "light1",
+    "dark2",
+    "light2",
+    "accent1",
+    "accent2",
+    "accent3",
+    "accent4",
+    "accent5",
+    "accent6",
+    "hyperlink",
+    "followed_hyperlink",
+)
+
+
+def theme_color_for(slot: str) -> int:
+    """Resolve a friendly theme-color slot name to its palette index (1-12).
+
+    Accepts `"accent1"`/`"dark1"`/`"hyperlink"`/… (case- and separator-
+    insensitive; `"hlink"`/`"folhlink"` aliases too). Raises `ValueError` for an
+    unknown name (before any COM).
+    """
+    key = str(slot).strip().lower().replace(" ", "").replace("-", "")
+    # Match against keys with their own separators stripped, so "accent 6",
+    # "accent6", and "followed-hyperlink" all resolve.
+    idx = _THEME_COLORS.get(key) or {k.replace("_", ""): v for k, v in _THEME_COLORS.items()}.get(
+        key
+    )
+    if idx is None:
+        choices = ", ".join(THEME_COLOR_CHOICES)
+        raise ValueError(f"unknown theme color slot {slot!r}; expected one of: {choices}")
+    return idx
+
+
+# Theme font scheme: the two typeface roles and the per-script sub-index.
+# `Theme.ThemeFontScheme.MajorFont`/`MinorFont` are accessed by
+# `.Item(1=Latin / 2=EastAsian / 3=ComplexScript).Name` — the late-bound `.Latin`
+# accessor raises AttributeError, so `.Item(n)` is the only reliable path.
+THEME_FONT_SLOTS: tuple[str, ...] = ("major", "minor")
+
+_THEME_FONT_SCRIPTS: dict[str, int] = {
+    "latin": 1,
+    "east_asian": 2,
+    "complex_script": 3,
+}
+
+THEME_FONT_SCRIPT_CHOICES: tuple[str, ...] = ("latin", "east_asian", "complex_script")
+
+
+def theme_font_slot_for(which: str) -> str:
+    """Normalize the typeface role to `"major"` or `"minor"`.
+
+    `"major"` is the headings font, `"minor"` the body font; `"heading"`/`"body"`
+    are accepted aliases. Raises `ValueError` for anything else (before any COM).
+    """
+    key = str(which).strip().lower()
+    if key in ("major", "heading", "headings"):
+        return "major"
+    if key in ("minor", "body"):
+        return "minor"
+    choices = ", ".join(THEME_FONT_SLOTS)
+    raise ValueError(f"unknown theme font {which!r}; expected one of: {choices}")
+
+
+def theme_font_script_for(script: str) -> int:
+    """Resolve a font script name to its `.Item(n)` index (latin=1/…).
+
+    Raises `ValueError` for an unknown name (before any COM).
+    """
+    key = str(script).strip().lower().replace(" ", "_").replace("-", "_")
+    idx = _THEME_FONT_SCRIPTS.get(key)
+    if idx is None:
+        choices = ", ".join(THEME_FONT_SCRIPT_CHOICES)
+        raise ValueError(f"unknown font script {script!r}; expected one of: {choices}")
+    return idx

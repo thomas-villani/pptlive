@@ -33,6 +33,7 @@ from ._show import SlideShow
 from ._slides import Slide, SlideCollection
 from ._smartart import SmartArt
 from ._tables import Cell, Table
+from ._theme import Master, Theme
 from .exceptions import (
     AmbiguousMatchError,
     AnchorNotFoundError,
@@ -56,6 +57,7 @@ __all__ = [
     "ComError",
     "EditScope",
     "LayoutNotFoundError",
+    "Master",
     "NoTextFrameError",
     "Notes",
     "Paragraph",
@@ -79,6 +81,7 @@ __all__ = [
     "SlideShowNotRunningError",
     "SmartArt",
     "Table",
+    "Theme",
     "attach",
     "connect",
     "constants",

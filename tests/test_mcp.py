@@ -451,6 +451,71 @@ def test_read_op_enum_includes_smartart() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Master / theme (ppt_read op=theme|master, ppt_edit op=theme_*/master_*)
+# ---------------------------------------------------------------------------
+
+
+def test_theme_read(fake_powerpoint: Any) -> None:
+    info = ppt_read("theme")
+    assert "colors" in info and "fonts" in info
+    assert "accent1" in info["colors"]
+
+
+def test_theme_set_color(fake_powerpoint: Any) -> None:
+    info = ppt_edit("theme_set_color", slot="accent1", color="#C00000")
+    assert info["colors"]["accent1"] == "#C00000"
+
+
+def test_theme_set_color_requires_color(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("theme_set_color", slot="accent1")
+    assert "invalid_args" in str(exc.value)
+
+
+def test_theme_set_font(fake_powerpoint: Any) -> None:
+    info = ppt_edit("theme_set_font", which="major", name="Georgia")
+    assert info["fonts"]["major"] == "Georgia"
+
+
+def test_master_read(fake_powerpoint: Any) -> None:
+    info = ppt_read("master")
+    assert set(info["text_styles"]) == {"title", "body", "default"}
+
+
+def test_master_format_text_style(fake_powerpoint: Any) -> None:
+    out = ppt_edit("master_format_text_style", style="body", level=1, font="Georgia", size=32)
+    assert out["ok"] is True
+    assert ppt_read("master")["text_styles"]["body"]["levels"][0]["font"] == "Georgia"
+
+
+def test_master_format_text_style_requires_an_option(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("master_format_text_style", style="body", level=1)
+    assert "invalid_args" in str(exc.value)
+
+
+def test_master_set_background(fake_powerpoint: Any) -> None:
+    out = ppt_edit("master_set_background", color="#202020")
+    assert out["ok"] is True
+    assert out["color"] == "#202020"
+
+
+def test_edit_op_enum_includes_theme_master() -> None:
+    srv = build_server()
+    tools = {t.name: t for t in asyncio.run(srv.list_tools())}
+    read_ops = tools["ppt_read"].inputSchema["properties"]["op"]["enum"]
+    edit_ops = tools["ppt_edit"].inputSchema["properties"]["op"]["enum"]
+    assert {"theme", "master"} <= set(read_ops)
+    assert {
+        "theme_set_color",
+        "theme_set_font",
+        "master_format_text_style",
+        "master_format_paragraph_style",
+        "master_set_background",
+    } <= set(edit_ops)
+
+
+# ---------------------------------------------------------------------------
 # Render + navigate (ppt_render op=...)
 # ---------------------------------------------------------------------------
 

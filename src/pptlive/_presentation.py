@@ -21,6 +21,7 @@ from ._selection import SelectionInfo, read_selection
 from ._shapes import Shape
 from ._show import SlideShow
 from ._slides import Slide, SlideCollection, _paragraphs
+from ._theme import Master, Theme
 from .constants import DEFAULT_LAYOUT_ALIAS, image_filter_for, match_layout_name
 from .exceptions import AnchorNotFoundError, LayoutNotFoundError, PresentationNotFoundError
 
@@ -62,6 +63,24 @@ class Presentation:
         they are *not* wrapped in `edit()`. See `_show.SlideShow`.
         """
         return SlideShow(self)
+
+    @property
+    def theme(self) -> Theme:
+        """Deck-wide theme styling — palette + typefaces (`set_color`/`set_font`).
+
+        A **global, anti-polite** surface: one call recolors/re-fonts every slide
+        that inherits the theme. Reaches `SlideMaster.Theme`. See `_theme.Theme`.
+        """
+        return Theme(self)
+
+    @property
+    def master(self) -> Master:
+        """Deck-wide master styling — text styles + background.
+
+        The counterpart to per-anchor `format_text`, applied to the primary
+        `SlideMaster` so every inheriting slide re-renders. See `_theme.Master`.
+        """
+        return Master(self)
 
     def page_setup(self) -> dict[str, float]:
         """Slide canvas dimensions in points: `{width, height}`.

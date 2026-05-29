@@ -57,6 +57,65 @@ def _bullet_char(character: str | int) -> int:
     return int(character)
 
 
+def apply_font(
+    f: Any,
+    *,
+    bold: bool | None = None,
+    italic: bool | None = None,
+    underline: bool | None = None,
+    size: float | None = None,
+    font: str | None = None,
+    color: str | int | tuple[int, int, int] | None = None,
+) -> None:
+    """Write font properties onto a COM `Font` object — only the kwargs passed.
+
+    Shared by `Anchor.format_text` (a text range's `.Font`) and the master text
+    styles (`Master.format_text_style`, a `TextStyles(t).Levels(n).Font`), so both
+    surfaces format fonts identically. `size` is points; `color` is `"#RRGGBB"`,
+    an `(r, g, b)` tuple, or a raw RGB int. Caller wraps this in
+    `translate_com_errors()`.
+    """
+    if bold is not None:
+        f.Bold = _tristate(bold)
+    if italic is not None:
+        f.Italic = _tristate(italic)
+    if underline is not None:
+        f.Underline = _tristate(underline)
+    if size is not None:
+        f.Size = float(size)
+    if font is not None:
+        f.Name = str(font)
+    if color is not None:
+        f.Color.RGB = parse_color(color)
+
+
+def apply_paragraph_format(
+    pf: Any,
+    *,
+    alignment: int | None = None,
+    space_before: float | None = None,
+    space_after: float | None = None,
+    line_spacing: float | None = None,
+) -> None:
+    """Write paragraph properties onto a COM `ParagraphFormat` object.
+
+    Shared by `Anchor.format_paragraph` and `Master.format_paragraph_style`.
+    `alignment` is the resolved int (caller coerces a name first);
+    `space_before`/`space_after` are points; `line_spacing` is the line-spacing
+    multiple (`SpaceWithin`). Indent level is *not* handled here — it lives on the
+    `TextRange`, not `ParagraphFormat`, so `Anchor.format_paragraph` sets it
+    separately. Caller wraps this in `translate_com_errors()`.
+    """
+    if alignment is not None:
+        pf.Alignment = alignment
+    if space_before is not None:
+        pf.SpaceBefore = float(space_before)
+    if space_after is not None:
+        pf.SpaceAfter = float(space_after)
+    if line_spacing is not None:
+        pf.SpaceWithin = float(line_spacing)
+
+
 class Anchor(ABC):
     """Abstract base for text-bearing handles.
 
@@ -134,21 +193,18 @@ class Anchor(ABC):
         formatting. Only the kwargs you pass are written. `size` is in points;
         `color` is `"#RRGGBB"`, an `(r, g, b)` tuple, or a raw RGB int.
         """
-        color_long = parse_color(color) if color is not None else None
+        if color is not None:
+            parse_color(color)  # validate before any COM
         with _com.translate_com_errors():
-            f = self._text_range().Font
-            if bold is not None:
-                f.Bold = _tristate(bold)
-            if italic is not None:
-                f.Italic = _tristate(italic)
-            if underline is not None:
-                f.Underline = _tristate(underline)
-            if size is not None:
-                f.Size = float(size)
-            if font is not None:
-                f.Name = str(font)
-            if color_long is not None:
-                f.Color.RGB = color_long
+            apply_font(
+                self._text_range().Font,
+                bold=bold,
+                italic=italic,
+                underline=underline,
+                size=size,
+                font=font,
+                color=color,
+            )
 
     def format_paragraph(
         self,
@@ -173,15 +229,13 @@ class Anchor(ABC):
             raise ValueError(f"indent_level must be between 1 and 5, got {indent_level}")
         with _com.translate_com_errors():
             tr = self._text_range()
-            pf = tr.ParagraphFormat
-            if align_int is not None:
-                pf.Alignment = align_int
-            if space_before is not None:
-                pf.SpaceBefore = float(space_before)
-            if space_after is not None:
-                pf.SpaceAfter = float(space_after)
-            if line_spacing is not None:
-                pf.SpaceWithin = float(line_spacing)
+            apply_paragraph_format(
+                tr.ParagraphFormat,
+                alignment=align_int,
+                space_before=space_before,
+                space_after=space_after,
+                line_spacing=line_spacing,
+            )
             if indent_level is not None:
                 tr.IndentLevel = int(indent_level)
 

@@ -33,6 +33,10 @@ from ..constants import (
     LIST_TYPE_CHOICES,
     SHAPE_IMAGE_FORMAT_CHOICES,
     SMARTART_CHOICES,
+    TEXT_STYLE_CHOICES,
+    THEME_COLOR_CHOICES,
+    THEME_FONT_SCRIPT_CHOICES,
+    THEME_FONT_SLOTS,
 )
 from ..exceptions import AnchorNotFoundError, PowerPointNotRunningError
 from .main import _run, emit
@@ -239,6 +243,37 @@ def _fmt_smartart_read(info: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _fmt_theme_read(info: dict[str, Any]) -> str:
+    lines = ["theme colors:"]
+    for slot, hexv in (info.get("colors") or {}).items():
+        lines.append(f"  {slot:<19} {hexv}")
+    fonts = info.get("fonts") or {}
+    lines.append("theme fonts:")
+    lines.append(f"  major (headings)    {fonts.get('major')}")
+    lines.append(f"  minor (body)        {fonts.get('minor')}")
+    return "\n".join(lines)
+
+
+def _fmt_master_read(info: dict[str, Any]) -> str:
+    lines = []
+    for style, body in (info.get("text_styles") or {}).items():
+        lines.append(f"{style} style:")
+        for lvl in body.get("levels") or []:
+            bits = []
+            if lvl.get("font") is not None:
+                bits.append(str(lvl["font"]))
+            if lvl.get("size") is not None:
+                bits.append(f"{lvl['size']}pt")
+            if lvl.get("bold"):
+                bits.append("bold")
+            if lvl.get("color") is not None:
+                bits.append(str(lvl["color"]))
+            lines.append(f"  L{lvl.get('level')}: " + " ".join(bits))
+    bg = info.get("background") or {}
+    lines.append(f"background: {bg.get('type')} {bg.get('color') or ''}".rstrip())
+    return "\n".join(lines)
+
+
 def _fmt_selection(info: dict[str, Any]) -> str:
     kind = info.get("type")
     slide = info.get("slide")
@@ -284,6 +319,8 @@ def register(group: click.Group) -> None:
     group.add_command(table)
     group.add_command(chart)
     group.add_command(smartart)
+    group.add_command(theme)
+    group.add_command(master)
     group.add_command(selection_cmd)
     group.add_command(show)
     group.add_command(go_to)
@@ -1370,6 +1407,215 @@ def smartart_set_nodes(ctx: click.Context, slide_index: int, shape_index: int, n
                 sa.set_nodes(parsed or [])
             info = sa.read()
             emit(info, as_text=not ctx.obj["as_json"], text=_fmt_smartart_read(info))
+
+    _run(ctx, go)
+
+
+# ---------------------------------------------------------------------------
+# theme — deck-wide palette + typefaces (read / set-color / set-font)
+# ---------------------------------------------------------------------------
+
+
+@click.group(name="theme")
+def theme() -> None:
+    """Read + edit the deck theme: the 12-slot palette and heading/body fonts.
+
+    Global, anti-polite ops — one change recolors/re-fonts every inheriting slide.
+    """
+
+
+@theme.command(name="read")
+@click.pass_context
+def theme_read(ctx: click.Context) -> None:
+    """Read the theme palette (12 slots) + the major/minor typefaces."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            info = deck.theme.read()
+            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_theme_read(info))
+
+    _run(ctx, go)
+
+
+@theme.command(name="set-color")
+@click.option(
+    "--slot", type=click.Choice(THEME_COLOR_CHOICES), required=True, help="Palette slot to set."
+)
+@click.option("--color", required=True, help="Color, '#RRGGBB' (or an (r,g,b)/int via the API).")
+@click.pass_context
+def theme_set_color(ctx: click.Context, slot: str, color: str) -> None:
+    """Set one theme palette slot (e.g. accent1) — recolors the whole deck."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            with deck.edit(f"CLI: set theme color {slot}"):
+                deck.theme.set_color(slot, color)
+            info = deck.theme.read()
+            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_theme_read(info))
+
+    _run(ctx, go)
+
+
+@theme.command(name="set-font")
+@click.option(
+    "--which",
+    type=click.Choice(THEME_FONT_SLOTS),
+    required=True,
+    help="major (headings) or minor (body).",
+)
+@click.option("--name", "name", required=True, help="Font name (e.g. 'Georgia').")
+@click.option(
+    "--script",
+    type=click.Choice(THEME_FONT_SCRIPT_CHOICES),
+    default="latin",
+    show_default=True,
+    help="Which script sub-typeface to set.",
+)
+@click.pass_context
+def theme_set_font(ctx: click.Context, which: str, name: str, script: str) -> None:
+    """Set the major (headings) or minor (body) theme typeface."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            with deck.edit(f"CLI: set theme {which} font"):
+                deck.theme.set_font(which, name, script=script)
+            info = deck.theme.read()
+            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_theme_read(info))
+
+    _run(ctx, go)
+
+
+# ---------------------------------------------------------------------------
+# master — deck-wide text styles + background (read / format-* / set-background)
+# ---------------------------------------------------------------------------
+
+
+@click.group(name="master")
+def master() -> None:
+    """Read + edit master text styles (title/body/default) and the background.
+
+    PowerPoint's nearest 'named style' analog, applied to the primary slide master.
+    """
+
+
+@master.command(name="read")
+@click.pass_context
+def master_read(ctx: click.Context) -> None:
+    """Read the three master text styles (5 levels each) + the background fill."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            info = deck.master.read()
+            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_master_read(info))
+
+    _run(ctx, go)
+
+
+@master.command(name="format-text-style")
+@click.option(
+    "--style", type=click.Choice(TEXT_STYLE_CHOICES), required=True, help="Which text style."
+)
+@click.option("--level", type=click.IntRange(1, 5), required=True, help="Outline level (1-5).")
+@click.option("--bold/--no-bold", "bold", default=None, help="Bold on/off.")
+@click.option("--italic/--no-italic", "italic", default=None, help="Italic on/off.")
+@click.option("--underline/--no-underline", "underline", default=None, help="Underline on/off.")
+@click.option("--size", type=float, default=None, help="Font size (points).")
+@click.option("--font", "font", default=None, help="Font name (e.g. 'Georgia').")
+@click.option("--color", "color", default=None, help="Font color, '#RRGGBB'.")
+@click.pass_context
+def master_format_text_style(
+    ctx: click.Context,
+    style: str,
+    level: int,
+    bold: bool | None,
+    italic: bool | None,
+    underline: bool | None,
+    size: float | None,
+    font: str | None,
+    color: str | None,
+) -> None:
+    """Set font formatting on a master text style + level (deck-wide)."""
+
+    def go() -> None:
+        if all(v is None for v in (bold, italic, underline, size, font, color)):
+            raise click.UsageError("format-text-style requires at least one formatting option")
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            with deck.edit(f"CLI: format master {style} L{level}"):
+                deck.master.format_text_style(
+                    style,
+                    level,
+                    bold=bold,
+                    italic=italic,
+                    underline=underline,
+                    size=size,
+                    font=font,
+                    color=color,
+                )
+            info = deck.master.read()
+            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_master_read(info))
+
+    _run(ctx, go)
+
+
+@master.command(name="format-paragraph-style")
+@click.option(
+    "--style", type=click.Choice(TEXT_STYLE_CHOICES), required=True, help="Which text style."
+)
+@click.option("--level", type=click.IntRange(1, 5), required=True, help="Outline level (1-5).")
+@click.option("--alignment", type=click.Choice(ALIGNMENT_CHOICES), default=None, help="Alignment.")
+@click.option("--space-before", type=float, default=None, help="Space before (points).")
+@click.option("--space-after", type=float, default=None, help="Space after (points).")
+@click.option("--line-spacing", type=float, default=None, help="Line spacing (multiple, e.g. 1.5).")
+@click.pass_context
+def master_format_paragraph_style(
+    ctx: click.Context,
+    style: str,
+    level: int,
+    alignment: str | None,
+    space_before: float | None,
+    space_after: float | None,
+    line_spacing: float | None,
+) -> None:
+    """Set paragraph formatting on a master text style + level (deck-wide)."""
+
+    def go() -> None:
+        if all(v is None for v in (alignment, space_before, space_after, line_spacing)):
+            raise click.UsageError("format-paragraph-style requires at least one option")
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            with deck.edit(f"CLI: format master paragraph {style} L{level}"):
+                deck.master.format_paragraph_style(
+                    style,
+                    level,
+                    alignment=alignment,
+                    space_before=space_before,
+                    space_after=space_after,
+                    line_spacing=line_spacing,
+                )
+            info = deck.master.read()
+            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_master_read(info))
+
+    _run(ctx, go)
+
+
+@master.command(name="set-background")
+@click.option("--color", required=True, help="Background color, '#RRGGBB' (solid fill).")
+@click.pass_context
+def master_set_background(ctx: click.Context, color: str) -> None:
+    """Set the master background to a solid color (deck-wide)."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            with deck.edit("CLI: set master background"):
+                deck.master.set_background(color)
+            info = deck.master.read()
+            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_master_read(info))
 
     _run(ctx, go)
 

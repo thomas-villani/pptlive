@@ -161,6 +161,10 @@ def _read_core(ppt: Any, op: str, p: dict[str, Any]) -> dict[str, Any]:
         return _resolve_shape(deck, p.get("anchor_id")).chart.read()
     if op == "smartart":
         return _resolve_shape(deck, p.get("anchor_id")).smartart.read()
+    if op == "theme":
+        return deck.theme.read()
+    if op == "master":
+        return deck.master.read()
     raise ToolError(f"invalid_args: unknown read op {op!r}")
 
 
@@ -331,6 +335,58 @@ def _edit_core(deck: Presentation, op: str, p: dict[str, Any]) -> dict[str, Any]
         sa.set_nodes(p["nodes"])
         return sa.read()
 
+    # -- theme (deck-wide palette + typefaces) -----------------------------
+    if op == "theme_set_color":
+        _require(p.get("slot") is not None, "edit op='theme_set_color' requires `slot`")
+        _require(p.get("color") is not None, "edit op='theme_set_color' requires `color`")
+        deck.theme.set_color(p["slot"], p["color"])
+        return deck.theme.read()
+    if op == "theme_set_font":
+        _require(p.get("which") is not None, "edit op='theme_set_font' requires `which`")
+        _require(p.get("name") is not None, "edit op='theme_set_font' requires `name`")
+        deck.theme.set_font(p["which"], p["name"], script=p.get("script") or "latin")
+        return deck.theme.read()
+
+    # -- master (deck-wide text styles + background) -----------------------
+    if op in ("master_format_text_style", "master_format_paragraph_style"):
+        _require(p.get("style") is not None, f"edit op={op!r} requires `style`")
+        _require(p.get("level") is not None, f"edit op={op!r} requires `level`")
+        if op == "master_format_text_style":
+            style_font_opts = ("bold", "italic", "underline", "size", "font", "color")
+            _require(
+                any(p.get(k) is not None for k in style_font_opts),
+                "edit op='master_format_text_style' needs at least one font option",
+            )
+            deck.master.format_text_style(
+                p["style"],
+                p["level"],
+                bold=p.get("bold"),
+                italic=p.get("italic"),
+                underline=p.get("underline"),
+                size=p.get("size"),
+                font=p.get("font"),
+                color=p.get("color"),
+            )
+        else:
+            style_para_opts = ("alignment", "space_before", "space_after", "line_spacing")
+            _require(
+                any(p.get(k) is not None for k in style_para_opts),
+                "edit op='master_format_paragraph_style' needs at least one paragraph option",
+            )
+            deck.master.format_paragraph_style(
+                p["style"],
+                p["level"],
+                alignment=p.get("alignment"),
+                space_before=p.get("space_before"),
+                space_after=p.get("space_after"),
+                line_spacing=p.get("line_spacing"),
+            )
+        return {"ok": True, "style": p["style"], "level": p["level"]}
+    if op == "master_set_background":
+        _require(p.get("color") is not None, "edit op='master_set_background' requires `color`")
+        deck.master.set_background(p["color"])
+        return {"ok": True, **deck.master.read().get("background", {})}
+
     raise ToolError(f"invalid_args: unknown edit op {op!r}")
 
 
@@ -398,6 +454,8 @@ def ppt_read(
         "table",
         "chart",
         "smartart",
+        "theme",
+        "master",
         "layouts",
     ],
     anchor_id: str | None = None,
@@ -418,6 +476,8 @@ def ppt_read(
     - "selection": what the user currently has selected, resolved to anchors.
     - "table" / "chart" / "smartart": the grid / chart data / node tree of the
       table-, chart-, or SmartArt shape at `anchor_id` (a `shape:S:N`).
+    - "theme": the deck-wide palette (12 slots, e.g. accent1) + heading/body fonts.
+    - "master": the master text styles (title/body/default, 5 levels each) + background.
     - "layouts": the layout names that `ppt_edit` slide_add/set_layout accept.
 
     `doc` targets a presentation by name (default: the active one)."""
@@ -444,6 +504,11 @@ def ppt_edit(
         "chart_set_type",
         "chart_set_data",
         "smartart_set_nodes",
+        "theme_set_color",
+        "theme_set_font",
+        "master_format_text_style",
+        "master_format_paragraph_style",
+        "master_set_background",
     ],
     anchor_id: str | None = None,
     text: str | None = None,
@@ -482,6 +547,12 @@ def ppt_edit(
     alt_text: str | None = None,
     values: list[str] | None = None,
     row: int | None = None,
+    slot: str | None = None,
+    which: Literal["major", "minor"] | None = None,
+    name: str | None = None,
+    script: Literal["latin", "east_asian", "complex_script"] = "latin",
+    style: Literal["title", "body", "default"] | None = None,
+    level: int | None = None,
     doc: str | None = None,
 ) -> dict[str, Any]:
     """Mutate the deck. Every call is ONE undo entry and preserves the user's view.
@@ -520,6 +591,17 @@ def ppt_edit(
       (flat) and/or {text, children} objects (nested; tree layouts take one root).
 
     To edit a table cell's text, write to its `cell:S:N:R:C` anchor with op="write".
+
+    Deck-wide styling (global — restyles every inheriting slide; no `anchor_id`):
+    - "theme_set_color": set palette `slot` (e.g. "accent1"/"dark1"/"hyperlink") to `color`.
+    - "theme_set_font": set the `which`="major" (headings) or "minor" (body) typeface
+      to `name` (optional `script`, default "latin").
+    - "master_format_text_style": font (`bold`/`italic`/`underline`/`size`/`font`/`color`)
+      on master text `style` ("title"/"body"/"default") + outline `level` (1-5).
+    - "master_format_paragraph_style": paragraph (`alignment`/`space_before`/
+      `space_after`/`line_spacing`) on `style` + `level`.
+    - "master_set_background": set the master background to solid `color`.
+
     `doc` targets a presentation by name (default: the active one)."""
     params = {
         "anchor_id": anchor_id,
@@ -559,6 +641,12 @@ def ppt_edit(
         "alt_text": alt_text,
         "values": values,
         "row": row,
+        "slot": slot,
+        "which": which,
+        "name": name,
+        "script": script,
+        "style": style,
+        "level": level,
     }
     with _mcp_errors(), attach() as ppt:
         deck = _pick_deck(ppt, doc)

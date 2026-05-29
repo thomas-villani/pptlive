@@ -1214,6 +1214,89 @@ class _FakeSlideShowSettings:
         return self._pres._start_show(start)
 
 
+# ---------------------------------------------------------------------------
+# Slide master: text styles + theme (palette/fonts) + background  (v0.9)
+# ---------------------------------------------------------------------------
+
+
+class _FakeThemeColorScheme:
+    """`Theme.ThemeColorScheme` — `Colors(1..12)` each carry a writable `.RGB`."""
+
+    def __init__(self) -> None:
+        # Seed 12 distinct longs so reads are deterministic and writes round-trip.
+        self._colors = [SimpleNamespace(RGB=(i * 0x111111)) for i in range(1, 13)]
+
+    def Colors(self, index: int) -> Any:
+        return self._colors[int(index) - 1]
+
+
+class _FakeThemeFont:
+    """`MajorFont`/`MinorFont` — `.Item(1=Latin/2=EastAsian/3=ComplexScript).Name`."""
+
+    def __init__(self, latin: str) -> None:
+        self._scripts = [
+            SimpleNamespace(Name=latin),
+            SimpleNamespace(Name=""),
+            SimpleNamespace(Name=""),
+        ]
+
+    def Item(self, index: int) -> Any:
+        return self._scripts[int(index) - 1]
+
+
+class _FakeThemeFontScheme:
+    def __init__(self) -> None:
+        self.MajorFont = _FakeThemeFont("Calibri Light")
+        self.MinorFont = _FakeThemeFont("Calibri")
+
+
+class _FakeTheme:
+    def __init__(self) -> None:
+        self.ThemeColorScheme = _FakeThemeColorScheme()
+        self.ThemeFontScheme = _FakeThemeFontScheme()
+
+
+class _FakeTextStyleLevel:
+    def __init__(self) -> None:
+        self.Font = _FakeFont()
+        self.ParagraphFormat = _FakeParagraphFormat()
+
+
+class _FakeTextStyle:
+    """One `TextStyles(t)` — `.Levels(1..5)`, each a Font + ParagraphFormat."""
+
+    def __init__(self) -> None:
+        self._levels = [_FakeTextStyleLevel() for _ in range(5)]
+
+    def Levels(self, index: int) -> _FakeTextStyleLevel:
+        return self._levels[int(index) - 1]
+
+
+class _FakeFillFormat:
+    """`Background.Fill` — solid-fill subset (Type + ForeColor.RGB + Solid())."""
+
+    def __init__(self) -> None:
+        self.Type = 5  # msoFillBackground (inherits) until Solid() is called
+        self.ForeColor = SimpleNamespace(RGB=0)
+
+    def Solid(self) -> None:
+        self.Type = 1  # msoFillSolid
+
+
+class _FakeSlideMaster:
+    """`Presentation.SlideMaster` — layouts + text styles + theme + background."""
+
+    def __init__(self, layout_names: tuple[str, ...]) -> None:
+        self.CustomLayouts = _FakeCustomLayouts(layout_names)
+        # 1=default, 2=title, 3=body (PpTextStyleType).
+        self._text_styles = {1: _FakeTextStyle(), 2: _FakeTextStyle(), 3: _FakeTextStyle()}
+        self.Theme = _FakeTheme()
+        self.Background = SimpleNamespace(Fill=_FakeFillFormat())
+
+    def TextStyles(self, style_type: int) -> _FakeTextStyle:
+        return self._text_styles[int(style_type)]
+
+
 class _FakePresentation:
     def __init__(
         self,
@@ -1229,7 +1312,7 @@ class _FakePresentation:
         self.FullName = full_name
         self.Slides = _FakeSlides(slides)
         self.PageSetup = SimpleNamespace(SlideWidth=slide_width, SlideHeight=slide_height)
-        self.SlideMaster = SimpleNamespace(CustomLayouts=_FakeCustomLayouts(layout_names))
+        self.SlideMaster = _FakeSlideMaster(layout_names)
         self._show_settings = _FakeSlideShowSettings(self)
         self._show_window: _FakeSlideShowWindow | None = None
 
