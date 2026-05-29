@@ -28,6 +28,7 @@ from .._shapes import Shape
 from ..constants import (
     ALIGNMENT_CHOICES,
     AUTOSHAPE_CHOICES,
+    CHART_TYPE_CHOICES,
     IMAGE_FORMAT_CHOICES,
     LIST_TYPE_CHOICES,
     SHAPE_IMAGE_FORMAT_CHOICES,
@@ -152,6 +153,57 @@ def _fmt_table_read(grid: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _fmt_chart_read(info: dict[str, Any]) -> str:
+    head = (
+        f"chart at {info.get('anchor_id')} (slide {info.get('slide')}, "
+        f"type={info.get('chart_type')})"
+    )
+    lines = [head, "  categories: " + ", ".join(str(c) for c in info.get("categories") or [])]
+    for s in info.get("series") or []:
+        vals = ", ".join(str(v) for v in s.get("values") or [])
+        lines.append(f"  {s.get('name')!r}: {vals}")
+    return "\n".join(lines)
+
+
+def _parse_categories(raw: str | None) -> list[str] | None:
+    """Parse --categories: a JSON array, else a comma-separated list."""
+    if raw is None:
+        return None
+    raw = raw.strip()
+    if raw.startswith("["):
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise click.UsageError(f"--categories must be a JSON array or CSV: {e}") from e
+        if not isinstance(parsed, list):
+            raise click.UsageError("--categories JSON must be an array")
+        return [str(c) for c in parsed]
+    return [c.strip() for c in raw.split(",") if c.strip()]
+
+
+def _parse_series(raw: str | None) -> Any:
+    """Parse --series: a JSON object {name:[values]} or array of [name,[values]]."""
+    if raw is None:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise click.UsageError(f"--series must be JSON (object or array): {e}") from e
+    if isinstance(parsed, dict):
+        return parsed
+    if isinstance(parsed, list):
+        out: list[tuple[str, list[float]]] = []
+        for item in parsed:
+            if not (isinstance(item, (list, tuple)) and len(item) == 2):
+                raise click.UsageError("--series array items must be [name, [values]]")
+            name, values = item
+            if not isinstance(values, list):
+                raise click.UsageError("--series values must be a JSON array")
+            out.append((str(name), [float(v) for v in values]))
+        return out
+    raise click.UsageError("--series must be a JSON object or array")
+
+
 def _fmt_selection(info: dict[str, Any]) -> str:
     kind = info.get("type")
     slide = info.get("slide")
@@ -195,6 +247,7 @@ def register(group: click.Group) -> None:
     group.add_command(format_text)
     group.add_command(list_cmd)
     group.add_command(table)
+    group.add_command(chart)
     group.add_command(selection_cmd)
     group.add_command(show)
     group.add_command(go_to)
@@ -526,13 +579,34 @@ def _resolve_shape(deck: Presentation, anchor_id: str) -> Shape:
 @click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
 @click.option(
     "--kind",
-    type=click.Choice(["textbox", "shape", "picture", "table"]),
+    type=click.Choice(["textbox", "shape", "picture", "table", "chart"]),
     required=True,
     help="What to add.",
 )
 @click.option("--text", "text", default=None, help="Initial text (textbox/shape).")
 @click.option("--rows", type=int, default=None, help="Row count (required for --kind table).")
 @click.option("--cols", type=int, default=None, help="Column count (required for --kind table).")
+@click.option(
+    "--chart-type",
+    "chart_type",
+    type=click.Choice(CHART_TYPE_CHOICES),
+    default="column",
+    show_default=True,
+    help="Chart kind (for --kind chart).",
+)
+@click.option(
+    "--categories",
+    "categories",
+    default=None,
+    help="Chart category labels: a JSON array or comma-separated list (--kind chart).",
+)
+@click.option(
+    "--series",
+    "series",
+    default=None,
+    help='Chart series as a JSON object {"name":[values]} or array of [name,[values]] '
+    "(--kind chart).",
+)
 @click.option(
     "--path",
     "path",
@@ -568,6 +642,9 @@ def shape_add(
     cols: int | None,
     path: str | None,
     shape_type: str,
+    chart_type: str,
+    categories: str | None,
+    series: str | None,
     left: float | None,
     top: float | None,
     width: float | None,
@@ -581,6 +658,10 @@ def shape_add(
             raise click.UsageError("shape add --kind picture requires --path")
         if kind == "table" and (rows is None or cols is None):
             raise click.UsageError("shape add --kind table requires --rows and --cols")
+        cats = _parse_categories(categories)
+        ser = _parse_series(series)
+        if (cats is None) != (ser is None):
+            raise click.UsageError("shape add --kind chart needs both --categories and --series")
         with attach() as ppt:
             deck = _pick_deck(ppt, ctx.obj["doc_name"])
             shapes = deck.slides[slide_index].shapes  # exit 2 if slide out of range
@@ -597,6 +678,10 @@ def shape_add(
                     assert rows is not None and cols is not None  # guarded above
                     new = shapes.add_table(
                         rows, cols, left=left, top=top, width=width, height=height
+                    )
+                elif kind == "chart":
+                    new = shapes.add_chart(
+                        chart_type, cats, ser, left=left, top=top, width=width, height=height
                     )
                 else:  # picture
                     assert path is not None  # guarded above
@@ -1065,6 +1150,107 @@ def table_delete_row(ctx: click.Context, slide_index: int, shape_index: int, row
                 as_text=not ctx.obj["as_json"],
                 text=f"deleted row {row} from {t.shape.anchor_id} (now {t.row_count} rows)",
             )
+
+    _run(ctx, go)
+
+
+# ---------------------------------------------------------------------------
+# chart read | set-type | set-data  (a chart is a shape; data is embedded Excel)
+# ---------------------------------------------------------------------------
+
+
+@click.group(name="chart")
+def chart() -> None:
+    """Read + edit charts (a chart is a shape; data lives in an embedded Excel)."""
+
+
+def _resolve_chart(deck: Presentation, slide_index: int, shape_index: int) -> Any:
+    """Resolve the chart on slide S, shape N (z-order). Exit 2 if no such chart."""
+    return deck.slides[slide_index].shapes[shape_index].chart
+
+
+@chart.command(name="read")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--shape", "shape_index", type=int, required=True, help="1-based shape z-order index."
+)
+@click.pass_context
+def chart_read(ctx: click.Context, slide_index: int, shape_index: int) -> None:
+    """Read a chart: type, categories, and series (name + values)."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            info = _resolve_chart(deck, slide_index, shape_index).read()
+            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_chart_read(info))
+
+    _run(ctx, go)
+
+
+@chart.command(name="set-type")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--shape", "shape_index", type=int, required=True, help="1-based shape z-order index."
+)
+@click.option(
+    "--chart-type",
+    "chart_type",
+    type=click.Choice(CHART_TYPE_CHOICES),
+    required=True,
+    help="New chart kind.",
+)
+@click.pass_context
+def chart_set_type(ctx: click.Context, slide_index: int, shape_index: int, chart_type: str) -> None:
+    """Change a chart's kind (one Ctrl-Z)."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            ch = _resolve_chart(deck, slide_index, shape_index)
+            with deck.edit(f"CLI: set chart type shape:{slide_index}:{shape_index}"):
+                ch.set_type(chart_type)
+            emit(
+                {"ok": True, "anchor_id": ch.shape.anchor_id, "chart_type": ch.chart_type},
+                as_text=not ctx.obj["as_json"],
+                text=f"set {ch.shape.anchor_id} to {ch.chart_type}",
+            )
+
+    _run(ctx, go)
+
+
+@chart.command(name="set-data")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--shape", "shape_index", type=int, required=True, help="1-based shape z-order index."
+)
+@click.option(
+    "--categories",
+    "categories",
+    required=True,
+    help="Category labels: a JSON array or comma-separated list.",
+)
+@click.option(
+    "--series",
+    "series",
+    required=True,
+    help='Series as a JSON object {"name":[values]} or array of [name,[values]].',
+)
+@click.pass_context
+def chart_set_data(
+    ctx: click.Context, slide_index: int, shape_index: int, categories: str, series: str
+) -> None:
+    """Replace a chart's data (categories × series; one Ctrl-Z)."""
+    cats = _parse_categories(categories)
+    ser = _parse_series(series)
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            ch = _resolve_chart(deck, slide_index, shape_index)
+            with deck.edit(f"CLI: set chart data shape:{slide_index}:{shape_index}"):
+                ch.set_data(cats or [], ser)
+            info = ch.read()
+            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_chart_read(info))
 
     _run(ctx, go)
 

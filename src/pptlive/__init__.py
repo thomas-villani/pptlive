@@ -24,6 +24,7 @@ from __future__ import annotations
 from . import constants, units
 from ._anchors import Anchor, Notes, Paragraph, ParagraphCollection
 from ._app import PowerPoint, attach, connect
+from ._charts import Chart
 from ._edit import EditScope
 from ._presentation import Presentation, PresentationCollection
 from ._selection import SelectionInfo, SelectionSnapshot
@@ -50,6 +51,7 @@ __all__ = [
     "Anchor",
     "AnchorNotFoundError",
     "Cell",
+    "Chart",
     "ComError",
     "EditScope",
     "LayoutNotFoundError",

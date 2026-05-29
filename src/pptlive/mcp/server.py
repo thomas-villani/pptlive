@@ -17,7 +17,7 @@ Design notes (the things that make this safe and faithful):
   `deck.edit(label)` — preserving the user's viewed slide + Selection and
   fencing the change into a single Ctrl-Z.
 
-* **Curated, not 1:1.** ~14 tools, several of which take a `verb`-style argument
+* **Curated, not 1:1.** ~15 tools, several of which take a `verb`-style argument
   (`op` / `mode`) instead of one tool per CLI subcommand — a smaller surface for
   the agent's tool picker. The full CLI is still there for humans.
 
@@ -321,12 +321,15 @@ def ppt_shape_op(
     op: Literal["add", "move", "resize", "delete", "set_alt", "export"],
     slide: int | None = None,
     anchor_id: str | None = None,
-    kind: Literal["textbox", "shape", "picture", "table"] | None = None,
+    kind: Literal["textbox", "shape", "picture", "table", "chart"] | None = None,
     text: str | None = None,
     shape_type: str = "rectangle",
     path: str | None = None,
     rows: int | None = None,
     cols: int | None = None,
+    chart_type: str = "column",
+    categories: list[str] | None = None,
+    series: dict[str, list[float]] | None = None,
     left: float | None = None,
     top: float | None = None,
     width: float | None = None,
@@ -339,8 +342,10 @@ def ppt_shape_op(
     """Create, place, tag, or render shapes (geometry in points; 1 inch = 72 pt). `op`:
     - "add": add a shape on `slide`. `kind`="textbox" (with `text`), "shape"
       (autoshape geometry via `shape_type`, e.g. "star"/"rectangle", optional
-      `text`), "picture" (embed the image at `path`, optional `alt_text`), or
-      "table" (needs `rows` and `cols`). Optional `left`/`top`/`width`/`height`.
+      `text`), "picture" (embed the image at `path`, optional `alt_text`), "table"
+      (needs `rows` and `cols`), or "chart" (`chart_type` e.g. "column"/"line"/
+      "pie"; optional `categories` + `series`, a {name:[values]} map, to fill its
+      data). Optional `left`/`top`/`width`/`height`.
     - "move": move the shape at `anchor_id` to absolute `left`/`top`.
     - "resize": set the shape at `anchor_id` to `width`/`height`.
     - "delete": delete the shape at `anchor_id`.
@@ -378,6 +383,16 @@ def ppt_shape_op(
                     assert rows is not None and cols is not None
                     new = shapes.add_table(
                         rows, cols, left=left, top=top, width=width, height=height
+                    )
+                elif kind == "chart":
+                    new = shapes.add_chart(
+                        chart_type,
+                        categories,
+                        series,
+                        left=left,
+                        top=top,
+                        width=width,
+                        height=height,
                     )
                 else:  # picture
                     _require(path is not None, "shape_op kind='picture' requires `path`")
@@ -449,6 +464,45 @@ def ppt_table(
         with deck.edit(f"MCP: delete row {row} from table shape:{slide}:{shape}"):
             table.delete_row(row)
         return {"ok": True, "anchor_id": table.shape.anchor_id, "rows": table.row_count}
+
+
+def ppt_chart(
+    op: Literal["read", "set_type", "set_data"],
+    slide: int,
+    shape: int,
+    chart_type: str | None = None,
+    categories: list[str] | None = None,
+    series: dict[str, list[float]] | None = None,
+    doc: str | None = None,
+) -> dict[str, Any]:
+    """Read or edit a chart. A chart is a shape, so address it by `slide` (1-based)
+    and `shape` (1-based z-order index); its data lives in an embedded Excel. `op`:
+    - "read": return the chart kind, categories, and series (name + values).
+    - "set_type": change the chart kind to `chart_type` (e.g. "column"/"line"/
+      "pie"/"bar").
+    - "set_data": replace the data — `categories` (labels) and `series`
+      (a {name: [values]} map; every series must match the category count).
+    Mutating ops are one undo entry and preserve the view."""
+    with _mcp_errors(), attach() as ppt:
+        deck = _pick_deck(ppt, doc)
+        chart = deck.slides[slide].shapes[shape].chart
+        if op == "read":
+            return chart.read()
+        if op == "set_type":
+            _require(chart_type is not None, "chart op='set_type' requires `chart_type`")
+            assert chart_type is not None
+            with deck.edit(f"MCP: set chart type shape:{slide}:{shape}"):
+                chart.set_type(chart_type)
+            return {"ok": True, "anchor_id": chart.shape.anchor_id, "chart_type": chart.chart_type}
+        # set_data
+        _require(
+            categories is not None and series is not None,
+            "chart op='set_data' requires `categories` and `series`",
+        )
+        assert categories is not None and series is not None
+        with deck.edit(f"MCP: set chart data shape:{slide}:{shape}"):
+            chart.set_data(categories, series)
+        return chart.read()
 
 
 # ===========================================================================
@@ -544,6 +598,7 @@ _TOOLS: list[Callable[..., Any]] = [
     ppt_slide_op,
     ppt_shape_op,
     ppt_table,
+    ppt_chart,
     ppt_export,
     ppt_show,
     ppt_navigate,

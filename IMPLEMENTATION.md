@@ -7,10 +7,10 @@ resolved open questions inline (strike them through, link the commit).
 
 **Status legend:** `[ ]` not started · `[~]` in progress · `[x]` shipped.
 
-> **Bootstrap + v0 + v0.1 + v0.2 + v0.3 + v0.4 + v0.5 + v0.6 + v0.7a (pictures:
-> alt text + per-shape export) + the MCP server have
-> landed** (fake-COM unit tests green: `ruff`, `mypy`, `pytest` all pass; 277 tests;
-> v0.7a verified live 2026-05-28 via `scripts/picture_spike.py`).
+> **Bootstrap + v0 + v0.1 + v0.2 + v0.3 + v0.4 + v0.5 + v0.6 + v0.7 (pictures &
+> charts) + the MCP server have
+> landed** (fake-COM unit tests green: `ruff`, `mypy`, `pytest` all pass; 303 tests;
+> v0.7 verified live 2026-05-28 via `scripts/picture_spike.py` + `scripts/chart_spike.py`).
 > The library is usable as an LLM tool two ways now — the JSON **CLI** and an optional
 > **MCP server** (`pptlive[mcp]` → `pptlive-mcp`, ~14 curated tools over stdio for
 > Claude Desktop & other MCP agents; see the *MCP server* section below). It drives
@@ -419,11 +419,12 @@ busy one. Lives in `_show.py` (`SlideShow`), exposed as `Presentation.show`.
   (slide count unchanged; the busy-probe text was restored). Plus the
   editing-during-show finding above.
 
-## v0.7 — pictures & charts
+## v0.7 — pictures & charts — SHIPPED
 
-`add_picture` (embed, never link) already shipped in v0.2; v0.7a adds the two
+`add_picture` (embed, never link) already shipped in v0.2; v0.7a added the two
 picture-polish tracks around it — **alt text as the re-identification handle**
-and **per-shape image extraction** — leaving charts as the next step.
+and **per-shape image extraction** — and v0.7b adds **charts** (`add_chart` +
+the `Chart` wrapper over the embedded-Excel data).
 
 - [x] **Alt text as the LLM re-identification handle (wordlive v0.8 pattern).**
   `Shape.alt_text` (read) + `Shape.set_alt_text` (write) over
@@ -455,9 +456,30 @@ and **per-shape image extraction** — leaving charts as the next step.
   and editing-during-show — and specifically overturns the v0.4-symmetry
   expectation that the slide export's pixel semantics carry to shapes.)
   Fake-COM-tested too (277 tests green: ruff/mypy/pytest).
-- [ ] `add_chart` with an embedded-Excel data spike (wordlive v0.10 reasoning) —
-  the remaining v0.7 track. Needs its own spike (`Chart.ChartData.Workbook` is an
-  embedded Excel; STA-COM-heavy), so it lands separately.
+- [x] **`add_chart` + the `Chart` wrapper (v0.7b; wordlive v0.10 reasoning).**
+  `ShapeCollection.add_chart(chart_type, categories=None, series=None, *,
+  geometry)` over `Shapes.AddChart2`, returning the chart `Shape` (last z-order);
+  `Shape.has_chart` (the gate, like `has_table`) / `Shape.chart`. A chart's data
+  lives in an **embedded Excel workbook**, driven by `Chart` (`_charts.py`):
+  `read()` (chart type + categories + series), `set_type()`, `set_data(categories,
+  series)`. `chart_type` is a friendly name (`XlChartType` + `chart_type_for`/
+  `CHART_TYPE_CHOICES`). CLI `shape add --kind chart` (+ `--chart-type`/
+  `--categories`/`--series`) and the `chart` group (`read`/`set-type`/`set-data`);
+  MCP `ppt_chart` (op `read|set_type|set_data`, the 15th tool) + `kind="chart"` in
+  `ppt_shape_op`.
+- [x] **Chart spike RESOLVED (2026-05-28, `scripts/chart_spike.py`, net-zero) —
+  two non-obvious COM findings.** The exploratory pass found: (1) **`SetSourceData`
+  takes a STRING range** (`"Sheet1!$A$1:$C$4"`), not a `Range` object — the Range
+  form raised `E_FAIL`; (2) **`SetSourceData` dissolves the default Excel Table
+  (ListObject)** — so relying on `ListObject.Resize` breaks the *second* write
+  (`DISP_E_BADINDEX`). The shipping `set_data` therefore uses
+  `ChartData.Activate()` → `UsedRange.ClearContents()` → write corner/series-names/
+  categories/values → `SetSourceData(string)` → `Workbook.Close()`, with **no
+  ListObject** — verified live across first-write, shrink (2×1), and grow (4×3)
+  with no stale data, plus `ChartType` round-trip and a clean workbook close.
+  `AddChart2` reports `Type=chart` here but `HasChart` is the reliable gate (the
+  table lesson). The regression spike now drives the *shipped* wrappers end-to-end
+  (net-zero). Fake-COM-tested too (303 tests green: ruff/mypy/pytest).
 
 ## v0.8+ — defer
 

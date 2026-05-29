@@ -21,6 +21,7 @@ from mcp.server.fastmcp.exceptions import ToolError  # noqa: E402
 
 from pptlive.mcp.server import (  # noqa: E402
     build_server,
+    ppt_chart,
     ppt_export,
     ppt_format,
     ppt_navigate,
@@ -57,6 +58,7 @@ def test_build_server_registers_all_tools() -> None:
         "ppt_slide_op",
         "ppt_shape_op",
         "ppt_table",
+        "ppt_chart",
         "ppt_export",
         "ppt_show",
         "ppt_navigate",
@@ -342,6 +344,62 @@ def test_table_delete_row_requires_row(fake_powerpoint: Any) -> None:
     with pytest.raises(ToolError) as exc:
         ppt_table("delete_row", slide=3, shape=shape_n)
     assert "invalid_args" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# Charts (verb-param op)
+# ---------------------------------------------------------------------------
+
+
+def _add_chart(**kwargs: Any) -> int:
+    added = ppt_shape_op("add", slide=3, kind="chart", **kwargs)
+    return int(added["anchor_id"].split(":")[2])  # shape:3:N -> N
+
+
+def test_shape_op_add_chart_with_data(fake_powerpoint: Any) -> None:
+    out = ppt_shape_op(
+        "add",
+        slide=3,
+        kind="chart",
+        chart_type="line",
+        categories=["Q1", "Q2"],
+        series={"Rev": [10, 20]},
+    )
+    assert out["has_chart"] is True
+
+
+def test_chart_read(fake_powerpoint: Any) -> None:
+    n = _add_chart(chart_type="pie", categories=["A", "B"], series={"S": [1, 2]})
+    info = ppt_chart("read", slide=3, shape=n)
+    assert info["chart_type"] == "pie"
+    assert info["categories"] == ["A", "B"]
+    assert info["series"][0]["values"] == [1.0, 2.0]
+
+
+def test_chart_set_type(fake_powerpoint: Any) -> None:
+    n = _add_chart()
+    out = ppt_chart("set_type", slide=3, shape=n, chart_type="bar")
+    assert out["chart_type"] == "bar_clustered"
+
+
+def test_chart_set_data(fake_powerpoint: Any) -> None:
+    n = _add_chart()
+    info = ppt_chart("set_data", slide=3, shape=n, categories=["X", "Y"], series={"A": [3, 4]})
+    assert info["categories"] == ["X", "Y"]
+    assert info["series"][0]["values"] == [3.0, 4.0]
+
+
+def test_chart_set_type_requires_chart_type(fake_powerpoint: Any) -> None:
+    n = _add_chart()
+    with pytest.raises(ToolError) as exc:
+        ppt_chart("set_type", slide=3, shape=n)
+    assert "invalid_args" in str(exc.value)
+
+
+def test_chart_read_non_chart_is_not_found(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError) as exc:
+        ppt_chart("read", slide=2, shape=3)  # a picture
+    assert "not_found" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------

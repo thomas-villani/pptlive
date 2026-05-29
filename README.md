@@ -69,6 +69,14 @@ with pl.attach() as ppt:
     logo.set_alt_text("Acme logo (top-right)")           # survives z-order drift
     chart_png = deck.slides[4].shapes["Chart 2"].export_image()   # just that shape, native size
 
+    # Charts — a chart is a shape; its data lives in an embedded Excel workbook.
+    with deck.edit("Add a revenue chart"):
+        chart = deck.slides[4].shapes.add_chart(
+            "column", ["Q1", "Q2", "Q3"], {"Revenue": [10, 20, 30], "Profit": [3, 6, 9]}
+        ).chart
+        chart.set_type("line")                           # change the kind
+    data = chart.read()                                  # {chart_type, categories, series:[...]}
+
     # Text structure — paragraphs, formatting, bullets (PowerPoint has no
     # named styles, so "styling" is direct font formatting via format_text).
     with deck.edit("Polish the body copy"):
@@ -163,6 +171,12 @@ pptlive shape delete --anchor-id shape:4:3
 pptlive shape set-alt --anchor-id shape:4:3 --alt-text "Acme logo"      # drift-proof re-id handle
 pptlive shape export  --anchor-id shape:4:3 --out logo.png   # render one shape (native size)
 
+pptlive shape add --slide 4 --kind chart --chart-type column \
+    --categories "Q1,Q2,Q3" --series '{"Revenue":[10,20,30]}'
+pptlive chart read     --slide 4 --shape 5                    # {chart_type, categories, series}
+pptlive chart set-type --slide 4 --shape 5 --chart-type line
+pptlive chart set-data --slide 4 --shape 5 --categories "A,B" --series '{"S":[1,2]}'
+
 pptlive paragraphs --anchor-id ph:4:body         # [{anchor_id (para:S:N:P), text, indent_level, bullet}]
 pptlive insert --anchor-id para:4:2:3 --text "New bullet" [--before|--after]
 pptlive format-paragraph --anchor-id para:4:2:1 --alignment center --indent-level 2
@@ -215,7 +229,7 @@ Edit Config), then restart:
 (If `pptlive-mcp` isn't on the launcher's PATH, use the absolute path to the
 script — or `"command": "uv", "args": ["run", "pptlive-mcp"]` from the project.)
 
-It's a **curated ~14-tool** surface (smaller than the full CLI — several tools
+It's a **curated ~15-tool** surface (smaller than the full CLI — several tools
 take a verb-style `op`/`mode` argument), wrapping the same API, so the politeness
 model and one-Ctrl-Z `edit` fencing carry over and reads never move the view:
 
@@ -230,6 +244,7 @@ model and one-Ctrl-Z `edit` fencing carry over and reads never move the view:
 | `ppt_slide_op` | `add` / `delete` / `duplicate` / `move` / `set_layout` / `layouts` |
 | `ppt_shape_op` | `add` (textbox/shape/picture/table) / `move` / `resize` / `delete` / `set_alt` / `export` |
 | `ppt_table` | `read` / `add_row` / `delete_row` (cells are `cell:S:N:R:C` anchors) |
+| `ppt_chart` | `read` / `set_type` / `set_data` (a chart is a shape; data is embedded Excel) |
 | `ppt_export` | render a slide to a PNG a vision model can read |
 | `ppt_show` | live slide show: `state` / `start` / `end` / `next` / `previous` / `goto` / `black` / `white` / `resume` |
 | `ppt_navigate` | deliberately move the user's view to an anchor |

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -30,6 +30,7 @@ from .constants import (
     MsoTextOrientation,
     MsoTriState,
     autoshape_type_for,
+    chart_type_for,
     is_true,
     placeholder_kind_name,
     placeholder_types_for,
@@ -39,6 +40,7 @@ from .constants import (
 from .exceptions import AnchorNotFoundError, NoTextFrameError
 
 if TYPE_CHECKING:
+    from ._charts import Chart, SeriesInput
     from ._slides import Slide
     from ._tables import Table
 
@@ -52,6 +54,9 @@ _DEFAULT_SHAPE_WIDTH = 144.0  # 2 in
 _DEFAULT_SHAPE_HEIGHT = 144.0  # 2 in
 _DEFAULT_TABLE_WIDTH = 480.0  # ~6.7 in
 _DEFAULT_ROW_HEIGHT = 30.0  # advisory; PowerPoint auto-fits rows to content
+_DEFAULT_CHART_WIDTH = 480.0  # ~6.7 in
+_DEFAULT_CHART_HEIGHT = 300.0  # ~4.2 in
+_CHART_DEFAULT_STYLE = -1  # AddChart2 Style: -1 = the type's default style
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +89,18 @@ def has_table(com_shape: Any) -> bool:
     """
     try:
         return is_true(com_shape.HasTable)
+    except Exception:
+        return False
+
+
+def has_chart(com_shape: Any) -> bool:
+    """True iff the shape holds a chart (`Shape.HasChart == msoTrue`).
+
+    The reliable gate — like a table, a chart that fills a content placeholder can
+    report a placeholder `Shape.Type`, so `Type` can't be trusted.
+    """
+    try:
+        return is_true(com_shape.HasChart)
     except Exception:
         return False
 
@@ -134,6 +151,7 @@ def shape_to_dict(com_shape: Any, slide_index: int, z_index: int) -> dict[str, A
         d["placeholder"] = None
 
     d["has_table"] = has_table(com_shape)
+    d["has_chart"] = has_chart(com_shape)
     if has_text_frame(com_shape):
         d["has_text_frame"] = True
         try:
@@ -250,6 +268,26 @@ class Shape(Anchor):
             if not has_table(self._com_shape()):
                 raise AnchorNotFoundError("table", self.anchor_id)
         return Table(self)
+
+    @property
+    def has_chart(self) -> bool:
+        """Whether this shape holds a chart (`Shape.HasChart`)."""
+        with _com.translate_com_errors():
+            return has_chart(self._com_shape())
+
+    @property
+    def chart(self) -> Chart:
+        """The shape's `Chart` (data lives in an embedded Excel workbook).
+
+        Raises `AnchorNotFoundError` (kind `"chart"`, exit 2) if the shape holds
+        no chart.
+        """
+        from ._charts import Chart
+
+        with _com.translate_com_errors():
+            if not has_chart(self._com_shape()):
+                raise AnchorNotFoundError("chart", self.anchor_id)
+        return Chart(self)
 
     def _text_range(self) -> Any:
         sh = self._com_shape()
@@ -592,6 +630,45 @@ class ShapeCollection:
         with _com.translate_com_errors():
             self._com_collection.AddTable(int(rows), int(columns), left, top, width, height)
             return self._added()
+
+    def add_chart(
+        self,
+        chart_type: str | int = "column",
+        categories: Sequence[str] | None = None,
+        series: SeriesInput | None = None,
+        *,
+        left: float | None = None,
+        top: float | None = None,
+        width: float | None = None,
+        height: float | None = None,
+    ) -> Shape:
+        """Add a chart and return its `Shape` (`Shapes.AddChart2`).
+
+        `chart_type` is a friendly name (`"column"`, `"bar"`, `"line"`, `"pie"`,
+        …; see `constants.CHART_TYPE_CHOICES`) or a raw `XlChartType` int.
+        Geometry is in points; omitted values default to a ~6.7×4.2 in chart near
+        the top-left. Address the chart's data through the returned shape's
+        `.chart` (or `anchor_id`); the shape's `.has_chart` is True.
+
+        If both `categories` and `series` are given, the chart's embedded-Excel
+        data is replaced with them (via `Chart.set_data`); otherwise the chart
+        keeps PowerPoint's default placeholder data. Pass one without the other
+        and it's a `ValueError`. Raises `ValueError` for an unknown `chart_type`
+        (before any COM). Wrap in `deck.edit(...)` for the one-Ctrl-Z fence.
+        """
+        type_int = chart_type_for(chart_type)  # ValueError before any COM
+        if (categories is None) != (series is None):
+            raise ValueError("pass both categories and series, or neither")
+        left = _DEFAULT_LEFT if left is None else float(left)
+        top = _DEFAULT_TOP if top is None else float(top)
+        width = _DEFAULT_CHART_WIDTH if width is None else float(width)
+        height = _DEFAULT_CHART_HEIGHT if height is None else float(height)
+        with _com.translate_com_errors():
+            self._com_collection.AddChart2(_CHART_DEFAULT_STYLE, type_int, left, top, width, height)
+            shape = self._added()
+        if categories is not None and series is not None:
+            shape.chart.set_data(categories, series)
+        return shape
 
     def list(self) -> list[dict[str, Any]]:
         """Every shape as a structured dict, in z-order."""

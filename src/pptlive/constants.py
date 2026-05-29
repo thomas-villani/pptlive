@@ -690,3 +690,112 @@ def shape_image_filter_for(fmt: str) -> tuple[int, str]:
         choices = ", ".join(SHAPE_IMAGE_FORMAT_CHOICES)
         raise ValueError(f"unknown image format {fmt!r}; expected one of: {choices}")
     return found
+
+
+# ---------------------------------------------------------------------------
+# Charts (v0.7): XlChartType (the chart kind passed to Shapes.AddChart2)
+# ---------------------------------------------------------------------------
+
+
+class XlChartType(IntEnum):
+    """`Shapes.AddChart2` / `Chart.ChartType` — the chart kind.
+
+    A small, common subset of Excel's `XlChartType` (the values are shared with
+    PowerPoint's chart object model). Added only as needed (the wordlive rule);
+    reach for the `.com` escape hatch + a raw int for anything exotic. Note the
+    negative members are how Office encodes these specific constants.
+    """
+
+    COLUMN_CLUSTERED = 51
+    COLUMN_STACKED = 52
+    BAR_CLUSTERED = 57
+    BAR_STACKED = 58
+    LINE = 4
+    LINE_MARKERS = 65
+    PIE = 5
+    DOUGHNUT = -4120
+    AREA = 1
+    AREA_STACKED = 76
+    XY_SCATTER = -4169
+    RADAR = -4151
+
+
+# Friendly token -> XlChartType int. Short aliases ("column", "bar", "scatter")
+# map to the clustered/standard variant; explicit names resolve to themselves.
+_CHART_TYPES: dict[str, int] = {
+    "column": int(XlChartType.COLUMN_CLUSTERED),
+    "column_clustered": int(XlChartType.COLUMN_CLUSTERED),
+    "column_stacked": int(XlChartType.COLUMN_STACKED),
+    "bar": int(XlChartType.BAR_CLUSTERED),
+    "bar_clustered": int(XlChartType.BAR_CLUSTERED),
+    "bar_stacked": int(XlChartType.BAR_STACKED),
+    "line": int(XlChartType.LINE),
+    "line_markers": int(XlChartType.LINE_MARKERS),
+    "pie": int(XlChartType.PIE),
+    "doughnut": int(XlChartType.DOUGHNUT),
+    "area": int(XlChartType.AREA),
+    "area_stacked": int(XlChartType.AREA_STACKED),
+    "scatter": int(XlChartType.XY_SCATTER),
+    "xy_scatter": int(XlChartType.XY_SCATTER),
+    "radar": int(XlChartType.RADAR),
+}
+
+# The friendly names offered as a CLI choice (canonical spellings, deduped/ordered).
+CHART_TYPE_CHOICES: tuple[str, ...] = (
+    "column",
+    "column_stacked",
+    "bar",
+    "bar_stacked",
+    "line",
+    "line_markers",
+    "pie",
+    "doughnut",
+    "area",
+    "area_stacked",
+    "scatter",
+    "radar",
+)
+
+# Reverse map (int -> a canonical friendly name) for read-backs.
+_CHART_TYPE_NAMES: dict[int, str] = {
+    int(XlChartType.COLUMN_CLUSTERED): "column_clustered",
+    int(XlChartType.COLUMN_STACKED): "column_stacked",
+    int(XlChartType.BAR_CLUSTERED): "bar_clustered",
+    int(XlChartType.BAR_STACKED): "bar_stacked",
+    int(XlChartType.LINE): "line",
+    int(XlChartType.LINE_MARKERS): "line_markers",
+    int(XlChartType.PIE): "pie",
+    int(XlChartType.DOUGHNUT): "doughnut",
+    int(XlChartType.AREA): "area",
+    int(XlChartType.AREA_STACKED): "area_stacked",
+    int(XlChartType.XY_SCATTER): "xy_scatter",
+    int(XlChartType.RADAR): "radar",
+}
+
+
+def chart_type_for(chart_type: str | int) -> int:
+    """Resolve a friendly chart-type name (or raw int) to its `XlChartType` int.
+
+    Accepts `"column"`/`"bar"`/`"line"`/`"pie"`/… (case- and separator-
+    insensitive: "Line Markers" -> line_markers) or a raw int (passed through, so
+    exotic `XlChartType` values still work). Raises `ValueError` for an unknown
+    name — symmetric with `autoshape_type_for`.
+    """
+    if isinstance(chart_type, bool):  # guard: bool is an int subclass
+        raise ValueError(f"invalid chart type: {chart_type!r}")
+    if isinstance(chart_type, int):
+        return int(chart_type)
+    key = str(chart_type).strip().lower().replace(" ", "_").replace("-", "_")
+    found = _CHART_TYPES.get(key)
+    if found is None:
+        choices = ", ".join(CHART_TYPE_CHOICES)
+        raise ValueError(f"unknown chart type {chart_type!r}; expected one of: {choices}")
+    return found
+
+
+def chart_type_name(value: Any) -> str:
+    """Friendly name for an `XlChartType` int (e.g. 51 -> "column_clustered")."""
+    try:
+        return _CHART_TYPE_NAMES.get(int(value), f"type:{int(value)}")
+    except (TypeError, ValueError):
+        return "unknown"

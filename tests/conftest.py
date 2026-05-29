@@ -29,6 +29,7 @@ _PH_CENTER_TITLE = 3
 _PH_SUBTITLE = 4
 
 # MsoShapeType values used below.
+_MSO_CHART = 3
 _MSO_AUTO_SHAPE = 1
 _MSO_LINE = 9
 _MSO_PICTURE = 13
@@ -297,6 +298,7 @@ class _FakeShape:
         self.AlternativeText = ""
         self._placeholder_type = placeholder_type
         self._table = table
+        self._chart: _FakeChart | None = None
         self._text_frame = _FakeTextFrame(text) if text is not None else None
         self.selected = False
         self.last_export: dict[str, Any] | None = None
@@ -325,6 +327,16 @@ class _FakeShape:
         if self._table is None:
             raise AttributeError("shape has no table")
         return self._table
+
+    @property
+    def HasChart(self) -> int:
+        return _MSO_TRUE if self._chart is not None else _MSO_FALSE
+
+    @property
+    def Chart(self) -> _FakeChart:
+        if self._chart is None:
+            raise AttributeError("shape has no chart")
+        return self._chart
 
     @property
     def PlaceholderFormat(self) -> Any:
@@ -440,6 +452,155 @@ class _FakeTable:
         if row < 1 or row > len(self._cells) or col < 1 or col > self._ncols:
             raise IndexError((row, col))
         return self._cells[row - 1][col - 1]
+
+
+# ---------------------------------------------------------------------------
+# Chart (v0.7): a shape with HasChart; data lives in an embedded Excel workbook
+# ---------------------------------------------------------------------------
+#
+# The fake models the workbook faithfully enough to exercise the real write
+# sequence (UsedRange.ClearContents -> Cells writes -> SetSourceData(string)):
+# the worksheet is a {(row, col): value} dict, SetSourceData records the plotted
+# range as a string, and SeriesCollection parses that range against the cells —
+# exactly how a freshly-read chart recovers its names/categories/values.
+
+
+class _FakeCellRef:
+    """`ws.Cells(r, c)` — a settable `.Value` view over the worksheet dict."""
+
+    def __init__(self, ws: _FakeWorksheet, row: int, col: int) -> None:
+        self._ws = ws
+        self._key = (int(row), int(col))
+
+    @property
+    def Value(self) -> Any:
+        return self._ws._cells.get(self._key)
+
+    @Value.setter
+    def Value(self, v: Any) -> None:
+        self._ws._cells[self._key] = v
+
+
+class _FakeUsedRange:
+    def __init__(self, ws: _FakeWorksheet) -> None:
+        self._ws = ws
+
+    def ClearContents(self) -> None:
+        self._ws._cells.clear()
+
+
+class _FakeWorksheet:
+    def __init__(self) -> None:
+        self._cells: dict[tuple[int, int], Any] = {}
+
+    def Cells(self, row: int, col: int) -> _FakeCellRef:
+        return _FakeCellRef(self, row, col)
+
+    @property
+    def UsedRange(self) -> _FakeUsedRange:
+        return _FakeUsedRange(self)
+
+
+class _FakeExcelApp:
+    def __init__(self) -> None:
+        self.quit_called = False
+
+    def Quit(self) -> None:
+        self.quit_called = True
+
+
+class _FakeWorkbook:
+    def __init__(self, ws: _FakeWorksheet) -> None:
+        self._ws = ws
+        self.Application = _FakeExcelApp()
+        self.closed = False
+
+    def Worksheets(self, index: int) -> _FakeWorksheet:
+        return self._ws
+
+    def Close(self) -> None:
+        self.closed = True
+
+
+class _FakeChartData:
+    def __init__(self, chart: _FakeChart) -> None:
+        self._chart = chart
+
+    def Activate(self) -> None:
+        self._chart._activated = True
+
+    @property
+    def Workbook(self) -> _FakeWorkbook:
+        return self._chart._wb
+
+
+class _FakeSeries:
+    def __init__(self, name: Any, x_values: list[Any], values: list[Any]) -> None:
+        self.Name = name
+        self.XValues = x_values
+        self.Values = values
+
+
+class _FakeSeriesCollection:
+    def __init__(self, series: list[_FakeSeries]) -> None:
+        self._series = series
+
+    @property
+    def Count(self) -> int:
+        return len(self._series)
+
+    def __call__(self, index: int) -> _FakeSeries:
+        return self._series[int(index) - 1]
+
+
+class _FakeChart:
+    """A chart backed by an embedded `_FakeWorkbook`. `SetSourceData(string)`
+    records the plotted range; `SeriesCollection()` reads it from the cells."""
+
+    def __init__(self, chart_type: int) -> None:
+        self.ChartType = int(chart_type)
+        self._ws = _FakeWorksheet()
+        self._wb = _FakeWorkbook(self._ws)
+        self._activated = False
+        # Source range as (nrows, ncols); seed PowerPoint's default placeholder
+        # data: 3 series x 4 categories in $A$1:$D$5.
+        self._seed_default_data()
+        self._nrows, self._ncols = 5, 4
+
+    def _seed_default_data(self) -> None:
+        c = self._ws._cells
+        c[(1, 1)] = " "
+        for col in range(2, 5):
+            c[(1, col)] = f"Series {col - 1}"
+        for row in range(2, 6):
+            c[(row, 1)] = f"Category {row - 1}"
+            for col in range(2, 5):
+                c[(row, col)] = float(row - 1)
+
+    @property
+    def ChartData(self) -> _FakeChartData:
+        return _FakeChartData(self)
+
+    def SetSourceData(self, source: str) -> None:
+        # source like "Sheet1!$A$1:$C$4" -> parse the bottom-right corner.
+        ref = source.split("!", 1)[-1].replace("$", "")
+        _tl, _, br = ref.partition(":")
+        col_letters = "".join(ch for ch in br if ch.isalpha())
+        row_digits = "".join(ch for ch in br if ch.isdigit())
+        ncols = 0
+        for ch in col_letters:
+            ncols = ncols * 26 + (ord(ch.upper()) - 64)
+        self._ncols, self._nrows = ncols, int(row_digits)
+
+    def SeriesCollection(self) -> _FakeSeriesCollection:
+        cells = self._ws._cells
+        cats = [cells.get((r, 1)) for r in range(2, self._nrows + 1)]
+        series = []
+        for col in range(2, self._ncols + 1):
+            name = cells.get((1, col))
+            values = [cells.get((r, col)) for r in range(2, self._nrows + 1)]
+            series.append(_FakeSeries(name, list(cats), values))
+        return _FakeSeriesCollection(series)
 
 
 class _FakeShapeRange:
@@ -566,6 +727,29 @@ class _FakeShapes:
                 height=height,
             )
         )
+
+    def AddChart2(
+        self,
+        style: int,
+        chart_type: int,
+        left: float,
+        top: float,
+        width: float,
+        height: float,
+    ) -> _FakeShape:
+        sid = self._next_id()
+        sh = _FakeShape(
+            name=f"Chart {sid}",
+            shape_id=sid,
+            shape_type=_MSO_CHART,
+            text=None,  # a chart shape has no text frame
+            left=left,
+            top=top,
+            width=width,
+            height=height,
+        )
+        sh._chart = _FakeChart(int(chart_type))
+        return self._adopt(sh)
 
     @property
     def Count(self) -> int:
