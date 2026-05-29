@@ -478,7 +478,7 @@ class _FakeTable:
 
 
 class _FakeCellRef:
-    """`ws.Cells(r, c)` — a settable `.Value` view over the worksheet dict."""
+    """`ws.Cells(r, c)` — a settable `.Value`/`.NumberFormat` view over the ws dict."""
 
     def __init__(self, ws: _FakeWorksheet, row: int, col: int) -> None:
         self._ws = ws
@@ -492,6 +492,14 @@ class _FakeCellRef:
     def Value(self, v: Any) -> None:
         self._ws._cells[self._key] = v
 
+    @property
+    def NumberFormat(self) -> Any:
+        return self._ws._formats.get(self._key, "General")
+
+    @NumberFormat.setter
+    def NumberFormat(self, fmt: Any) -> None:
+        self._ws._formats[self._key] = fmt
+
 
 class _FakeUsedRange:
     def __init__(self, ws: _FakeWorksheet) -> None:
@@ -499,11 +507,13 @@ class _FakeUsedRange:
 
     def ClearContents(self) -> None:
         self._ws._cells.clear()
+        self._ws._formats.clear()
 
 
 class _FakeWorksheet:
     def __init__(self) -> None:
         self._cells: dict[tuple[int, int], Any] = {}
+        self._formats: dict[tuple[int, int], Any] = {}
 
     def Cells(self, row: int, col: int) -> _FakeCellRef:
         return _FakeCellRef(self, row, col)

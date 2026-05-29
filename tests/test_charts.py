@@ -126,6 +126,20 @@ def test_set_data_empty_raises(deck) -> None:  # type: ignore[no-untyped-def]
         ch.set_data([], {"X": []})
 
 
+def test_set_data_formats_category_column_as_text(deck) -> None:  # type: ignore[no-untyped-def]
+    # Numeric-looking category labels must stay text, else Excel coerces "2026" to
+    # a number that reads back as "2026.0". set_data forces the category column
+    # (column A, rows 2..n) to the Text NumberFormat ("@"); value cells stay General.
+    shape = deck.slides[3].shapes.add_chart("column")
+    shape.chart.set_data(["2026", "2027", "2028"], {"Revenue": [1, 2, 3]})
+    ws = shape.com._chart._ws
+    assert ws._formats[(2, 1)] == "@"  # first category cell
+    assert ws._formats[(4, 1)] == "@"  # last category cell
+    assert ws._formats.get((2, 2), "General") != "@"  # a value cell is untouched
+    # And the labels round-trip as the strings we gave (no float coercion).
+    assert shape.chart.read()["categories"] == ["2026", "2027", "2028"]
+
+
 def test_set_data_closes_workbook(deck) -> None:  # type: ignore[no-untyped-def]
     # Politeness/cleanup: the embedded workbook is Close()d after a write.
     shape = deck.slides[3].shapes.add_chart("column")

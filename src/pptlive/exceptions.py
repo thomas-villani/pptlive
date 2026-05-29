@@ -151,15 +151,23 @@ class ComError(PptliveError):
 
 
 # HRESULTs we recognise as "PowerPoint is momentarily unavailable" rather than a
-# real error. Carried over from wordlive verbatim; widen as smoke runs surface
-# the slide-show-running rejection codes.
+# real error. Carried over from wordlive verbatim; widened as smoke runs surface
+# new transient rejection codes.
+#
+# 0x800706B5 (RPC_S_UNKNOWN_IF) is the PowerPoint diff: a chart's embedded-Excel
+# workbook interface is briefly unavailable right after `AddChart2`, and an
+# occasional `ChartData.Activate()` hits it too (observed live 2026-05-29 driving
+# `chart add`/`chart set-data`). It is transient — a short retry clears it — so we
+# treat it as busy and `_com.retry_on_busy` re-attempts the chart-data write.
 _BUSY_HRESULTS: frozenset[int] = frozenset(
     {
         0x80010001,  # RPC_E_CALL_REJECTED — call rejected by callee (modal dialog, busy)
         0x8001010A,  # RPC_E_SERVERCALL_RETRYLATER — server busy, retry later
         0x80010005,  # RPC_E_SERVERCALL_REJECTED — server rejected the call
+        0x800706B5,  # RPC_S_UNKNOWN_IF — embedded-Excel interface not yet ready
         -2147418111,  # signed form of RPC_E_CALL_REJECTED
         -2147417846,  # signed form of RPC_E_SERVERCALL_RETRYLATER
+        -2147023179,  # signed form of RPC_S_UNKNOWN_IF
     }
 )
 

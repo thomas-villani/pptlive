@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
 import pptlive.cli.main as cli_main
+from pptlive import _com
 from pptlive.exceptions import (
     AmbiguousMatchError,
     AnchorNotFoundError,
@@ -49,6 +52,15 @@ def test_unknown_hresult_classifies_as_com_error() -> None:
     assert not isinstance(exc, PowerPointBusyError)
 
 
+def test_rpc_unknown_if_classifies_as_busy() -> None:
+    # 0x800706B5 (RPC_S_UNKNOWN_IF) — the chart embedded-Excel transient. Both the
+    # unsigned and signed forms must be recognised as a retryable busy error.
+    for hresult in (0x800706B5, -2147023179):
+        exc = from_com_error(_com_error(hresult, "The interface is unknown."))
+        assert isinstance(exc, PowerPointBusyError), hex(hresult & 0xFFFFFFFF)
+        assert exc.retryable is True
+
+
 def test_slide_not_found_is_anchor_not_found() -> None:
     err = SlideNotFoundError(9)
     assert isinstance(err, AnchorNotFoundError)
@@ -71,3 +83,42 @@ def test_exit_codes_match_spec() -> None:
     assert cli_main._exit_for(PowerPointBusyError()) == 3
     assert cli_main._exit_for(PowerPointNotRunningError()) == 4
     assert cli_main._exit_for(ComError("boom")) == 1
+
+
+# -- retry_on_busy ----------------------------------------------------------
+
+
+def test_retry_on_busy_succeeds_after_transient(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(_com.time, "sleep", lambda _s: None)  # don't actually wait
+    calls = {"n": 0}
+
+    def flaky() -> str:
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise PowerPointBusyError(hresult=0x800706B5)
+        return "ok"
+
+    assert _com.retry_on_busy(flaky, attempts=4, delay=0) == "ok"
+    assert calls["n"] == 3  # two failures, then success
+
+
+def test_retry_on_busy_reraises_after_exhausting(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(_com.time, "sleep", lambda _s: None)
+    calls = {"n": 0}
+
+    def always_busy() -> None:
+        calls["n"] += 1
+        raise PowerPointBusyError(hresult=0x800706B5)
+
+    with pytest.raises(PowerPointBusyError):
+        _com.retry_on_busy(always_busy, attempts=3, delay=0)
+    assert calls["n"] == 3  # tried exactly `attempts` times
+
+
+def test_retry_on_busy_passes_through_non_busy() -> None:
+    # A real error must surface immediately, not be retried.
+    def boom() -> None:
+        raise ComError("unspecified", hresult=-2147467259)
+
+    with pytest.raises(ComError):
+        _com.retry_on_busy(boom, attempts=5, delay=0)

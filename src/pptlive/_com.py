@@ -12,11 +12,14 @@ invisibly (`Application.Visible = False` raises in most builds), so
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, TypeVar
 
-from .exceptions import PowerPointNotRunningError, from_com_error
+from .exceptions import PowerPointBusyError, PowerPointNotRunningError, from_com_error
+
+_T = TypeVar("_T")
 
 _POWERPOINT_PROG_ID = "PowerPoint.Application"
 
@@ -76,6 +79,34 @@ def launch_powerpoint() -> Any:
         # Some COM stubs may not let us flip Visible immediately; not fatal.
         pass
     return app
+
+
+def retry_on_busy(
+    operation: Callable[[], _T],
+    *,
+    attempts: int = 4,
+    delay: float = 0.15,
+) -> _T:
+    """Call `operation`, retrying on a transient `PowerPointBusyError`.
+
+    PowerPoint occasionally rejects an RPC transiently — a modal settling, or a
+    chart's embedded-Excel workbook not yet ready right after creation
+    (`RPC_S_UNKNOWN_IF` / 0x800706B5). Those map to `PowerPointBusyError`; this
+    re-attempts a few times with a short, growing backoff before giving up. Any
+    other exception (including a non-busy `ComError`) propagates immediately, so
+    real failures still surface fast. `operation` must be idempotent — used for
+    the chart-data write, which is a clean rewrite (ClearContents + SetSourceData).
+    """
+    last: PowerPointBusyError | None = None
+    for attempt in range(attempts):
+        try:
+            return operation()
+        except PowerPointBusyError as exc:
+            last = exc
+            if attempt + 1 < attempts:
+                time.sleep(delay * (attempt + 1))
+    assert last is not None  # only reached after a busy error
+    raise last
 
 
 @contextmanager

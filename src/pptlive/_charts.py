@@ -184,26 +184,38 @@ class Chart:
 
         ncols = 1 + len(norm)
         nrows = 1 + len(cats)
-        with _com.translate_com_errors():
-            chart = self.com
-            cdata = chart.ChartData
-            cdata.Activate()
-            wb = cdata.Workbook
-            try:
-                ws = wb.Worksheets(1)
-                ws.UsedRange.ClearContents()
-                ws.Cells(1, 1).Value = ""  # corner
-                for c, (name, _values) in enumerate(norm, start=2):
-                    ws.Cells(1, c).Value = name
-                for r, cat in enumerate(cats, start=2):
-                    ws.Cells(r, 1).Value = cat
-                for c, (_name, values) in enumerate(norm, start=2):
-                    for r, v in enumerate(values, start=2):
-                        ws.Cells(r, c).Value = v
-                target = f"Sheet1!$A$1:${_col_letter(ncols)}${nrows}"
-                chart.SetSourceData(target)
-            finally:
-                wb.Close()
+
+        def _write() -> None:
+            with _com.translate_com_errors():
+                chart = self.com
+                cdata = chart.ChartData
+                cdata.Activate()
+                wb = cdata.Workbook
+                try:
+                    ws = wb.Worksheets(1)
+                    ws.UsedRange.ClearContents()
+                    ws.Cells(1, 1).Value = ""  # corner
+                    for c, (name, _values) in enumerate(norm, start=2):
+                        ws.Cells(1, c).Value = name
+                    for r, cat in enumerate(cats, start=2):
+                        # Force the category column to Text, else Excel coerces a
+                        # numeric-looking label ("2026") to a number and it reads
+                        # back as "2026.0". Categories are labels, never values.
+                        cell = ws.Cells(r, 1)
+                        cell.NumberFormat = "@"
+                        cell.Value = cat
+                    for c, (_name, values) in enumerate(norm, start=2):
+                        for r, v in enumerate(values, start=2):
+                            ws.Cells(r, c).Value = v
+                    target = f"Sheet1!$A$1:${_col_letter(ncols)}${nrows}"
+                    chart.SetSourceData(target)
+                finally:
+                    wb.Close()
+
+        # The embedded workbook can be momentarily unavailable right after the
+        # chart is created (RPC_S_UNKNOWN_IF); the write is a clean rewrite, so
+        # retrying the whole sequence is safe. See `_com.retry_on_busy`.
+        _com.retry_on_busy(_write)
 
     def __repr__(self) -> str:
         return f"<Chart {self._shape.anchor_id} type={self.chart_type!r}>"

@@ -64,6 +64,18 @@ def test_outline(deck) -> None:  # type: ignore[no-untyped-def]
     assert items[2]["title"] is None
 
 
+def test_outline_tolerates_textless_body_placeholder(deck) -> None:  # type: ignore[no-untyped-def]
+    # A body placeholder filled with a chart/table/picture has no text frame, so
+    # reading its `.text` raises NoTextFrameError. outline() must skip it and keep
+    # going, not crash the whole deck overview (regression: it used to exit 6).
+    body = deck.slides[2].shapes[2].com  # the "Content Placeholder 2" (body)
+    body._text_frame = None  # simulate the placeholder now holding a chart
+    items = deck.outline()
+    assert items[1]["title"] == "Agenda"
+    assert items[1]["bullets"] == []  # no bullets, but no crash either
+    assert items[0]["title"] == "Welcome"  # other slides unaffected
+
+
 def test_page_setup_points(deck) -> None:  # type: ignore[no-untyped-def]
     assert deck.page_setup() == {"width": 960.0, "height": 540.0}
 

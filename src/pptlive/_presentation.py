@@ -23,7 +23,12 @@ from ._show import SlideShow
 from ._slides import Slide, SlideCollection, _paragraphs
 from ._theme import Master, Theme
 from .constants import DEFAULT_LAYOUT_ALIAS, image_filter_for, match_layout_name
-from .exceptions import AnchorNotFoundError, LayoutNotFoundError, PresentationNotFoundError
+from .exceptions import (
+    AnchorNotFoundError,
+    LayoutNotFoundError,
+    NoTextFrameError,
+    PresentationNotFoundError,
+)
 
 if TYPE_CHECKING:
     from ._app import PowerPoint
@@ -180,7 +185,8 @@ class Presentation:
         """The Outline-view analog: `[{slide, title, bullets:[...]}, ...]`.
 
         `bullets` are the non-empty paragraphs of the slide's body placeholder
-        (when it has one); slides without a body just carry their title.
+        (when it has one); slides without a body — or whose body placeholder
+        holds a chart/table/picture rather than text — just carry their title.
         """
         out: list[dict[str, Any]] = []
         for slide in self.slides:
@@ -188,7 +194,9 @@ class Presentation:
             try:
                 body = slide.placeholder("body")
                 bullets = _paragraphs(body.text)
-            except AnchorNotFoundError:
+            except (AnchorNotFoundError, NoTextFrameError):
+                # No body placeholder, or it's been filled with a chart/table/
+                # picture (no text frame): the slide simply contributes no bullets.
                 bullets = []
             out.append({"slide": slide.index, "title": slide.title, "bullets": bullets})
         return out
