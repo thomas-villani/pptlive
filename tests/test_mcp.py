@@ -283,6 +283,34 @@ def test_shape_op_move_requires_anchor(fake_powerpoint: Any) -> None:
     assert "invalid_args" in str(exc.value)
 
 
+def test_shape_op_set_alt(fake_powerpoint: Any) -> None:
+    out = ppt_shape_op("set_alt", anchor_id="shape:2:3", alt_text="Revenue chart")
+    assert out["ok"] is True
+    assert out["alt_text"] == "Revenue chart"
+    assert ppt_slide_read(2)["shapes"][2]["alt_text"] == "Revenue chart"
+
+
+def test_shape_op_set_alt_requires_alt_text(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError) as exc:
+        ppt_shape_op("set_alt", anchor_id="shape:2:3")
+    assert "invalid_args" in str(exc.value)
+
+
+def test_shape_op_add_picture_with_alt(fake_powerpoint: Any, tmp_path: Any) -> None:
+    img = tmp_path / "p.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    out = ppt_shape_op("add", slide=3, kind="picture", path=str(img), alt_text="Logo")
+    assert out["alt_text"] == "Logo"
+
+
+def test_shape_op_export(fake_powerpoint: Any, tmp_path: Any) -> None:
+    out_path = tmp_path / "shape.png"
+    out = ppt_shape_op("export", anchor_id="shape:2:3", out=str(out_path))
+    assert out["ok"] is True
+    assert out["anchor_id"] == "shape:2:3"
+    assert out_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
 # ---------------------------------------------------------------------------
 # Tables (verb-param op) + cell anchors
 # ---------------------------------------------------------------------------

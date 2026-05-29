@@ -18,7 +18,9 @@ semantic kind, the drift-proof form.
 from __future__ import annotations
 
 import os
+import tempfile
 from collections.abc import Iterator
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import _com
@@ -31,6 +33,7 @@ from .constants import (
     is_true,
     placeholder_kind_name,
     placeholder_types_for,
+    shape_image_filter_for,
     shape_type_name,
 )
 from .exceptions import AnchorNotFoundError, NoTextFrameError
@@ -85,6 +88,14 @@ def has_table(com_shape: Any) -> bool:
         return False
 
 
+def _alt_text_of(com_shape: Any) -> str:
+    """The shape's `AlternativeText` (accessibility text), or "" if unreadable."""
+    try:
+        return str(com_shape.AlternativeText or "")
+    except Exception:
+        return ""
+
+
 def _geometry_of(com_shape: Any) -> dict[str, float] | None:
     try:
         return {
@@ -111,6 +122,7 @@ def shape_to_dict(com_shape: Any, slide_index: int, z_index: int) -> dict[str, A
         "name": str(com_shape.Name),
         "id": int(com_shape.Id),
         "type": shape_type_name(com_shape.Type),
+        "alt_text": _alt_text_of(com_shape),
         "geometry": _geometry_of(com_shape),
     }
     if is_placeholder(com_shape):
@@ -202,6 +214,19 @@ class Shape(Anchor):
             return shape_type_name(self._com_shape().Type)
 
     @property
+    def alt_text(self) -> str:
+        """The shape's alternative (accessibility) text — `Shape.AlternativeText`.
+
+        Doubles as a stable, **LLM-readable re-identification handle**: tag a
+        picture/diagram with a descriptive alt text and find it again after
+        z-order drift (it shows up in every shape listing) without relying on the
+        volatile `shape:S:N` index. Empty string when unset. Set it with
+        `set_alt_text`.
+        """
+        with _com.translate_com_errors():
+            return _alt_text_of(self._com_shape())
+
+    @property
     def has_text_frame(self) -> bool:
         with _com.translate_com_errors():
             return has_text_frame(self._com_shape())
@@ -275,6 +300,15 @@ class Shape(Anchor):
             if height is not None:
                 sh.Height = float(height)
 
+    def set_alt_text(self, value: str) -> None:
+        """Set the shape's alternative (accessibility) text (`Shape.AlternativeText`).
+
+        The drift-proof re-identification handle (see `alt_text`). A mutation:
+        wrap in `deck.edit(...)` for view preservation + a one-Ctrl-Z fence.
+        """
+        with _com.translate_com_errors():
+            self._com_shape().AlternativeText = str(value)
+
     def delete(self) -> None:
         """Delete this shape from its slide (`Shape.Delete`).
 
@@ -283,6 +317,52 @@ class Shape(Anchor):
         """
         with _com.translate_com_errors():
             self._com_shape().Delete()
+
+    # -- render (v0.7; a read — no mutation, polite by nature) -----------------
+
+    def export_image(
+        self,
+        path: str | os.PathLike[str] | None = None,
+        *,
+        fmt: str = "png",
+    ) -> Path:
+        """Render *just this shape* to an image file and return its absolute path.
+
+        The per-shape complement to `Slide.export_image` (v0.4): lets a vision
+        model see one picture / chart / diagram in isolation, cropped to the
+        shape's (rendered) bounds. Wraps `Shape.Export(PathName, Filter)` —
+        `Filter` is the `PpShapeFormat` int enum, **not** `Slide.Export`'s string
+        FilterName.
+
+        `fmt` is a friendly token (`png`/`jpg`/`gif`/`bmp`; see
+        `constants.SHAPE_IMAGE_FORMAT_CHOICES` — narrower than the slide set, no
+        TIFF). When `path` is None a temp file is created (export-then-`Read` in
+        one step). A relative `path` is resolved to absolute first (PowerPoint
+        otherwise writes to its own working directory, not the caller's). It's a
+        read — no mutation, and polite (it doesn't move the viewed slide or the
+        Selection).
+
+        The image is the shape's **native pixel size** (the slide's 96-DPI scale,
+        e.g. a 720 pt-wide shape on a 960 pt slide → 960 px). Unlike
+        `Slide.export_image`, there is **no** output-size override: the 2026-05-28
+        live spike found `Shape.Export`'s ScaleWidth/ScaleHeight do *not* map to
+        output pixels the way `Slide.Export`'s do (requesting 400×300 gave
+        399×241 — width roughly tracked, height didn't, aspect wasn't preserved),
+        so pptlive only exposes the reliable native export. Reach for the `.com`
+        escape hatch (`shape.com.Export(path, filter, w, h, mode)`) if you need to
+        experiment with scaling.
+        """
+        filter_int, ext = shape_image_filter_for(fmt)  # ValueError before any COM
+        if path is None:
+            fd, tmp = tempfile.mkstemp(prefix="pptlive_shape_", suffix=f".{ext}")
+            os.close(fd)
+            os.remove(tmp)  # hand PowerPoint a clean path to write
+            abs_path = tmp
+        else:
+            abs_path = os.path.abspath(os.fspath(path))
+        with _com.translate_com_errors():
+            self._com_shape().Export(abs_path, int(filter_int))
+        return Path(abs_path)
 
     def to_dict(self) -> dict[str, Any]:
         with _com.translate_com_errors():
@@ -455,12 +535,15 @@ class ShapeCollection:
         top: float | None = None,
         width: float | None = None,
         height: float | None = None,
+        alt_text: str | None = None,
     ) -> Shape:
         """Embed a picture from a local file and return it (`Shapes.AddPicture`).
 
         The image is **embedded**, never linked (so the deck stays portable).
         `left`/`top` default to the top-left; omitted `width`/`height` keep the
-        image's native size. Raises `FileNotFoundError` if `path` doesn't exist.
+        image's native size. `alt_text`, if given, sets the picture's
+        alternative text — a drift-proof, LLM-readable re-identification handle
+        (see `Shape.alt_text`). Raises `FileNotFoundError` if `path` doesn't exist.
         """
         fs_path = os.fspath(path)
         if not os.path.isfile(fs_path):
@@ -469,7 +552,7 @@ class ShapeCollection:
         left = _DEFAULT_LEFT if left is None else float(left)
         top = _DEFAULT_TOP if top is None else float(top)
         with _com.translate_com_errors():
-            self._com_collection.AddPicture(
+            com_shape = self._com_collection.AddPicture(
                 abs_path,
                 int(MsoTriState.FALSE),  # LinkToFile: no
                 int(MsoTriState.TRUE),  # SaveWithDocument: yes (embed)
@@ -478,6 +561,8 @@ class ShapeCollection:
                 -1.0 if width is None else float(width),  # -1 = native size
                 -1.0 if height is None else float(height),
             )
+            if alt_text is not None:
+                com_shape.AlternativeText = str(alt_text)
             return self._added()
 
     def add_table(

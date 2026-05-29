@@ -318,7 +318,7 @@ def ppt_slide_op(
 
 
 def ppt_shape_op(
-    op: Literal["add", "move", "resize", "delete"],
+    op: Literal["add", "move", "resize", "delete", "set_alt", "export"],
     slide: int | None = None,
     anchor_id: str | None = None,
     kind: Literal["textbox", "shape", "picture", "table"] | None = None,
@@ -331,18 +331,27 @@ def ppt_shape_op(
     top: float | None = None,
     width: float | None = None,
     height: float | None = None,
+    alt_text: str | None = None,
+    out: str | None = None,
+    fmt: Literal["png", "jpg", "gif", "bmp"] = "png",
     doc: str | None = None,
 ) -> dict[str, Any]:
-    """Create or place shapes (geometry in points; 1 inch = 72 pt). `op`:
+    """Create, place, tag, or render shapes (geometry in points; 1 inch = 72 pt). `op`:
     - "add": add a shape on `slide`. `kind`="textbox" (with `text`), "shape"
       (autoshape geometry via `shape_type`, e.g. "star"/"rectangle", optional
-      `text`), "picture" (embed the image at `path`), or "table" (needs `rows`
-      and `cols`). Optional `left`/`top`/`width`/`height`.
+      `text`), "picture" (embed the image at `path`, optional `alt_text`), or
+      "table" (needs `rows` and `cols`). Optional `left`/`top`/`width`/`height`.
     - "move": move the shape at `anchor_id` to absolute `left`/`top`.
     - "resize": set the shape at `anchor_id` to `width`/`height`.
     - "delete": delete the shape at `anchor_id`.
-    One undo entry; preserves the view. Returns the shape's anchor_id, name,
-    type, and geometry."""
+    - "set_alt": set the `alt_text` of the shape at `anchor_id` — a drift-proof,
+      LLM-readable re-identification handle that survives z-order changes.
+    - "export": render *just* the shape at `anchor_id` to an image file (cropped
+      to its bounds, at native pixel size) and return the absolute path — so a
+      vision model can see one picture/diagram in isolation. `out` defaults to a
+      temp file; `fmt` is png/jpg/gif/bmp. Read-only.
+    Mutating ops are one undo entry and preserve the view. Returns the shape's
+    anchor_id (plus name/type/geometry, or the export path)."""
     with _mcp_errors(), attach() as ppt:
         deck = _pick_deck(ppt, doc)
         if op == "add":
@@ -373,7 +382,9 @@ def ppt_shape_op(
                 else:  # picture
                     _require(path is not None, "shape_op kind='picture' requires `path`")
                     assert path is not None
-                    new = shapes.add_picture(path, left=left, top=top, width=width, height=height)
+                    new = shapes.add_picture(
+                        path, left=left, top=top, width=width, height=height, alt_text=alt_text
+                    )
             return {"ok": True, **new.to_dict()}
 
         _require(anchor_id is not None, f"shape_op op={op!r} requires `anchor_id`")
@@ -390,6 +401,15 @@ def ppt_shape_op(
             )
             with deck.edit(f"MCP: resize {anchor_id}"):
                 sh.resize(width=width, height=height)
+        elif op == "set_alt":
+            _require(alt_text is not None, "shape_op op='set_alt' requires `alt_text`")
+            assert alt_text is not None
+            with deck.edit(f"MCP: set alt-text {anchor_id}"):
+                sh.set_alt_text(alt_text)
+            return {"ok": True, "anchor_id": sh.anchor_id, "alt_text": sh.alt_text}
+        elif op == "export":
+            path_out = sh.export_image(out, fmt=fmt)
+            return {"ok": True, "anchor_id": sh.anchor_id, "path": str(path_out), "format": fmt}
         else:  # delete
             info = {"anchor_id": sh.anchor_id, "name": sh.name, "id": sh.shape_id}
             with deck.edit(f"MCP: delete {anchor_id}"):

@@ -294,10 +294,12 @@ class _FakeShape:
         self.Width = width
         self.Height = height
         self.Rotation = rotation
+        self.AlternativeText = ""
         self._placeholder_type = placeholder_type
         self._table = table
         self._text_frame = _FakeTextFrame(text) if text is not None else None
         self.selected = False
+        self.last_export: dict[str, Any] | None = None
         self._collection: _FakeShapes | None = None  # set when adopted by _FakeShapes
 
     def Delete(self) -> None:
@@ -332,6 +334,25 @@ class _FakeShape:
 
     def Select(self, *args: Any, **kwargs: Any) -> None:
         self.selected = True
+
+    def Export(
+        self,
+        PathName: str,
+        Filter: int,
+        ScaleWidth: int | None = None,
+        ScaleHeight: int | None = None,
+    ) -> None:
+        """Render this shape to a stub PNG. `Filter` is a PpShapeFormat int (not a
+        FilterName string). Honors ScaleWidth/Height; else the shape's native
+        pixel size at 96 DPI (so a 100x50 pt shape -> ~133x67 px)."""
+        if ScaleWidth and ScaleHeight:
+            w, h = int(ScaleWidth), int(ScaleHeight)
+        else:
+            w = int(round(float(self.Width) * 96 / 72))
+            h = int(round(float(self.Height) * 96 / 72))
+        self.last_export = {"PathName": PathName, "Filter": int(Filter), "Width": w, "Height": h}
+        with open(PathName, "wb") as fh:
+            fh.write(_minimal_png(w, h))
 
     def _clone(self) -> _FakeShape:
         """A duplicate-slide copy — same name/id/type/geometry/text."""

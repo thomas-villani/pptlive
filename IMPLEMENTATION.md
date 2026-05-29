@@ -7,8 +7,10 @@ resolved open questions inline (strike them through, link the commit).
 
 **Status legend:** `[ ]` not started · `[~]` in progress · `[x]` shipped.
 
-> **Bootstrap + v0 + v0.1 + v0.2 + v0.3 + v0.4 + v0.5 + v0.6 + the MCP server have
-> landed** (fake-COM unit tests green: `ruff`, `mypy`, `pytest` all pass; 257 tests).
+> **Bootstrap + v0 + v0.1 + v0.2 + v0.3 + v0.4 + v0.5 + v0.6 + v0.7a (pictures:
+> alt text + per-shape export) + the MCP server have
+> landed** (fake-COM unit tests green: `ruff`, `mypy`, `pytest` all pass; 277 tests;
+> v0.7a verified live 2026-05-28 via `scripts/picture_spike.py`).
 > The library is usable as an LLM tool two ways now — the JSON **CLI** and an optional
 > **MCP server** (`pptlive[mcp]` → `pptlive-mcp`, ~14 curated tools over stdio for
 > Claude Desktop & other MCP agents; see the *MCP server* section below). It drives
@@ -419,11 +421,43 @@ busy one. Lives in `_show.py` (`SlideShow`), exposed as `Presentation.show`.
 
 ## v0.7 — pictures & charts
 
-- [ ] `add_picture` (embed, never link); alt text as the LLM re-identification
-  handle (wordlive v0.8 pattern).
-- [ ] Image **extraction** for vision models (per-shape `Shape.Export`; wordlive
-  v0.9 pattern — the per-shape complement to v0.4's whole-slide render).
-- [ ] `add_chart` with an embedded-Excel data spike (wordlive v0.10 reasoning).
+`add_picture` (embed, never link) already shipped in v0.2; v0.7a adds the two
+picture-polish tracks around it — **alt text as the re-identification handle**
+and **per-shape image extraction** — leaving charts as the next step.
+
+- [x] **Alt text as the LLM re-identification handle (wordlive v0.8 pattern).**
+  `Shape.alt_text` (read) + `Shape.set_alt_text` (write) over
+  `Shape.AlternativeText`; `add_picture(..., alt_text=)` sets it on create; every
+  shape listing now emits `alt_text`, so an agent can tag a picture/diagram with a
+  description and re-find it after z-order drift without leaning on the volatile
+  `shape:S:N`. CLI `shape set-alt` + `--alt-text` on `shape add`; MCP `ppt_shape_op`
+  ops `set_alt` (+ `alt_text` on `add`).
+- [x] **Image extraction for vision models (per-shape `Shape.Export`; wordlive
+  v0.9 pattern).** `Shape.export_image(path=None, *, fmt="png")` — the per-shape
+  complement to v0.4's whole-slide render, cropped to the shape's rendered bounds
+  at **native pixel size**. Wraps `Shape.Export(PathName, Filter)` where `Filter`
+  is the new `PpShapeFormat` **int** enum (`shape_image_filter_for`), *not*
+  `Slide.Export`'s string FilterName (and the raster set is narrower — no TIFF).
+  Temp-file default + relative→absolute path, like `Slide.export_image`, but
+  **no output-size override** (see the spike finding). CLI `shape export`; MCP
+  `ppt_shape_op` op `export`.
+- [x] **Live spike RESOLVED (2026-05-28, `scripts/picture_spike.py`, net-zero) —
+  spec assumption OVERTURNED.** All three probes ran on a live deck: alt-text
+  round-trip (`""` → set → read-back → in-listing → restored), `add_picture` with
+  `alt_text` (a 2×2 PNG embedded at 1.5 pt, alt text set, then deleted), and
+  per-shape export. **The headline finding:** `Shape.Export`'s ScaleWidth/
+  ScaleHeight do **not** map to output pixels the way `Slide.Export`'s do.
+  Native export is reliable (a 720 pt-wide shape on a 960 pt slide → **960 px**),
+  but requesting 400×300 (raw via `.com`) gave **399×241** — width roughly
+  tracked, height didn't, aspect wasn't preserved. So `export_image` ships
+  **native-only**; a size override would have been a misleading promise. (This is
+  the 4th spec/assumption a spike has corrected — after undo grouping, `Visible`,
+  and editing-during-show — and specifically overturns the v0.4-symmetry
+  expectation that the slide export's pixel semantics carry to shapes.)
+  Fake-COM-tested too (277 tests green: ruff/mypy/pytest).
+- [ ] `add_chart` with an embedded-Excel data spike (wordlive v0.10 reasoning) —
+  the remaining v0.7 track. Needs its own spike (`Chart.ChartData.Workbook` is an
+  embedded Excel; STA-COM-heavy), so it lands separately.
 
 ## v0.8+ — defer
 

@@ -641,3 +641,52 @@ class PpSlideShowRangeType(IntEnum):
     ALL = 1
     SLIDE_RANGE = 2
     NAMED_SLIDE_SHOW = 3
+
+
+# ---------------------------------------------------------------------------
+# Per-shape image export (v0.7): Shape.Export filter formats
+# ---------------------------------------------------------------------------
+
+
+class PpShapeFormat(IntEnum):
+    """`Shape.Export` filter — the per-shape image-format enum.
+
+    Distinct from `Slide.Export`, whose `FilterName` is a *string* ("PNG"): a
+    *shape* export takes this int enum instead. pptlive exposes only the common
+    raster set; the vector types (WMF/EMF) stay reachable via the `.com` escape
+    hatch.
+    """
+
+    GIF = 0
+    JPG = 1
+    PNG = 2
+    BMP = 3
+
+
+# Friendly format token -> (PpShapeFormat int, file extension), in match order.
+_SHAPE_IMAGE_FILTERS: dict[str, tuple[int, str]] = {
+    "png": (int(PpShapeFormat.PNG), "png"),
+    "jpg": (int(PpShapeFormat.JPG), "jpg"),
+    "jpeg": (int(PpShapeFormat.JPG), "jpg"),
+    "gif": (int(PpShapeFormat.GIF), "gif"),
+    "bmp": (int(PpShapeFormat.BMP), "bmp"),
+}
+
+SHAPE_IMAGE_FORMAT_CHOICES: tuple[str, ...] = ("png", "jpg", "gif", "bmp")
+
+
+def shape_image_filter_for(fmt: str) -> tuple[int, str]:
+    """Resolve an image-format token to its `(PpShapeFormat, extension)` for `Shape.Export`.
+
+    Accepts `"png"`/`"jpg"`/`"jpeg"`/`"gif"`/`"bmp"` (case-insensitive, a
+    leading dot tolerated). Raises `ValueError` for an unknown format —
+    symmetric with `image_filter_for` (the `Slide.Export` resolver). Note the
+    raster set is narrower than `Slide.Export`'s (no TIFF — `PpShapeFormat` has
+    no TIFF member).
+    """
+    key = str(fmt).strip().lower().lstrip(".")
+    found = _SHAPE_IMAGE_FILTERS.get(key)
+    if found is None:
+        choices = ", ".join(SHAPE_IMAGE_FORMAT_CHOICES)
+        raise ValueError(f"unknown image format {fmt!r}; expected one of: {choices}")
+    return found

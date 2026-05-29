@@ -60,9 +60,14 @@ with pl.attach() as ppt:
         shapes = deck.slides[4].shapes
         shapes.add_textbox("Revenue up 12%", left=pl.units.inches(1), top=72)
         star = shapes.add_shape("star", left=400, top=120, width=120, height=120)
-        shapes.add_picture("logo.png", left=600, top=40)   # embedded, never linked
+        logo = shapes.add_picture("logo.png", left=600, top=40,   # embedded, never linked
+                                  alt_text="Acme logo")           # a drift-proof re-id handle
         deck.slides[4].shapes["Picture 3"].move(top=140)   # absolute, points
         star.delete()
+
+    # Pictures — alt text doubles as a re-identification handle; export one shape for vision.
+    logo.set_alt_text("Acme logo (top-right)")           # survives z-order drift
+    chart_png = deck.slides[4].shapes["Chart 2"].export_image()   # just that shape, native size
 
     # Text structure — paragraphs, formatting, bullets (PowerPoint has no
     # named styles, so "styling" is direct font formatting via format_text).
@@ -150,11 +155,13 @@ pptlive slide export --slide 2 --out slide2.png [--width 1280] [--format png]  #
 
 pptlive shape add --slide 4 --kind textbox --text "Revenue up 12%" --left 72 --top 72
 pptlive shape add --slide 4 --kind shape --shape-type star --left 400 --top 120 --width 120 --height 120
-pptlive shape add --slide 4 --kind picture --path logo.png --left 600 --top 40
+pptlive shape add --slide 4 --kind picture --path logo.png --left 600 --top 40 --alt-text "Acme logo"
 pptlive shape add --slide 4 --kind table --rows 3 --cols 2 --left 72 --top 120
 pptlive shape move   --anchor-id shape:4:3 --left 100 --top 140
 pptlive shape resize --anchor-id shape:4:3 --width 300 --height 200
 pptlive shape delete --anchor-id shape:4:3
+pptlive shape set-alt --anchor-id shape:4:3 --alt-text "Acme logo"      # drift-proof re-id handle
+pptlive shape export  --anchor-id shape:4:3 --out logo.png   # render one shape (native size)
 
 pptlive paragraphs --anchor-id ph:4:body         # [{anchor_id (para:S:N:P), text, indent_level, bullet}]
 pptlive insert --anchor-id para:4:2:3 --text "New bullet" [--before|--after]
@@ -221,7 +228,7 @@ model and one-Ctrl-Z `edit` fencing carry over and reads never move the view:
 | `ppt_write` | set text, or insert a paragraph (`mode`) |
 | `ppt_format` | font + paragraph + bullets in one call |
 | `ppt_slide_op` | `add` / `delete` / `duplicate` / `move` / `set_layout` / `layouts` |
-| `ppt_shape_op` | `add` (textbox/shape/picture/table) / `move` / `resize` / `delete` |
+| `ppt_shape_op` | `add` (textbox/shape/picture/table) / `move` / `resize` / `delete` / `set_alt` / `export` |
 | `ppt_table` | `read` / `add_row` / `delete_row` (cells are `cell:S:N:R:C` anchors) |
 | `ppt_export` | render a slide to a PNG a vision model can read |
 | `ppt_show` | live slide show: `state` / `start` / `end` / `next` / `previous` / `goto` / `black` / `white` / `resume` |

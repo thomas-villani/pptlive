@@ -10,6 +10,8 @@ group (apply/remove). v0.4 adds `slide export` (render a slide to an image) and
 `here:`). v0.5 adds the `table` group (read/add-row/delete-row) plus `shape add
 --kind table`; cells are `cell:S:N:R:C` anchors. v0.6 adds the `show` group
 (start/end/next/prev/goto/black/white/resume/state) for live slide-show control.
+v0.7 adds `shape export` (render one shape to an image), `shape set-alt`, and
+`--alt-text` on `shape add` (a drift-proof re-identification handle).
 find/replace arrives in a later stage.
 """
 
@@ -28,6 +30,7 @@ from ..constants import (
     AUTOSHAPE_CHOICES,
     IMAGE_FORMAT_CHOICES,
     LIST_TYPE_CHOICES,
+    SHAPE_IMAGE_FORMAT_CHOICES,
 )
 from ..exceptions import AnchorNotFoundError, PowerPointNotRunningError
 from .main import _run, emit
@@ -91,13 +94,14 @@ def _fmt_shapes(shapes: list[dict[str, Any]]) -> str:
     lines = []
     for s in shapes:
         ph = f" ph={s['placeholder']}" if s.get("placeholder") else ""
+        alt = f" alt={s['alt_text']!r}" if s.get("alt_text") else ""
         text = s.get("text")
         snippet = ""
         if text:
             flat = text.replace("\r", " / ").replace("\n", " / ").replace("\v", " ")
             snippet = "  " + (flat if len(flat) <= 60 else flat[:57] + "…")
         lines.append(
-            f"[{s['anchor_id']}] {s.get('name', '')!r} ({s.get('type', '?')}{ph}){snippet}"
+            f"[{s['anchor_id']}] {s.get('name', '')!r} ({s.get('type', '?')}{ph}{alt}){snippet}"
         )
     return "\n".join(lines)
 
@@ -548,6 +552,12 @@ def _resolve_shape(deck: Presentation, anchor_id: str) -> Shape:
 @click.option("--top", type=float, default=None, help="Top edge (points).")
 @click.option("--width", type=float, default=None, help="Width (points).")
 @click.option("--height", type=float, default=None, help="Height (points).")
+@click.option(
+    "--alt-text",
+    "alt_text",
+    default=None,
+    help="Alternative text for a picture (a drift-proof re-identification handle).",
+)
 @click.pass_context
 def shape_add(
     ctx: click.Context,
@@ -562,6 +572,7 @@ def shape_add(
     top: float | None,
     width: float | None,
     height: float | None,
+    alt_text: str | None,
 ) -> None:
     """Add a shape to a slide; print its anchor_id, name, type, and geometry."""
 
@@ -589,7 +600,9 @@ def shape_add(
                     )
                 else:  # picture
                     assert path is not None  # guarded above
-                    new = shapes.add_picture(path, left=left, top=top, width=width, height=height)
+                    new = shapes.add_picture(
+                        path, left=left, top=top, width=width, height=height, alt_text=alt_text
+                    )
             payload = {"ok": True, **new.to_dict()}
             emit(
                 payload,
@@ -677,6 +690,73 @@ def shape_delete(ctx: click.Context, anchor_id: str) -> None:
                 {"ok": True, **info},
                 as_text=not ctx.obj["as_json"],
                 text=f"deleted {info['anchor_id']} ({info['name']!r})",
+            )
+
+    _run(ctx, go)
+
+
+@shape.command(name="export")
+@click.option(
+    "--anchor-id", "anchor_id", required=True, help="Shape to export (shape:S:N or ph:S:KIND)."
+)
+@click.option(
+    "--out",
+    "out",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Output image path (default: a temp file you can then read).",
+)
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(SHAPE_IMAGE_FORMAT_CHOICES),
+    default="png",
+    show_default=True,
+    help="Image format.",
+)
+@click.pass_context
+def shape_export(ctx: click.Context, anchor_id: str, out: str | None, fmt: str) -> None:
+    """Render a single shape to an image file — so a vision model can *see* it.
+
+    The per-shape complement to `slide export`: crops to the shape's bounds at
+    its native pixel size (no size override — `Shape.Export` doesn't honor one
+    reliably). Polite (doesn't move the view). Prints the absolute path.
+    """
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            sh = _resolve_shape(deck, anchor_id)
+            path = sh.export_image(out, fmt=fmt)
+            payload = {"ok": True, "anchor_id": sh.anchor_id, "path": str(path), "format": fmt}
+            emit(
+                payload,
+                as_text=not ctx.obj["as_json"],
+                text=f"exported {sh.anchor_id} -> {path}",
+            )
+
+    _run(ctx, go)
+
+
+@shape.command(name="set-alt")
+@click.option(
+    "--anchor-id", "anchor_id", required=True, help="Shape to tag (shape:S:N or ph:S:KIND)."
+)
+@click.option("--alt-text", "alt_text", required=True, help="Alternative (accessibility) text.")
+@click.pass_context
+def shape_set_alt(ctx: click.Context, anchor_id: str, alt_text: str) -> None:
+    """Set a shape's alternative text — a drift-proof re-identification handle."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            sh = _resolve_shape(deck, anchor_id)
+            with deck.edit(f"CLI: set alt-text {anchor_id}"):
+                sh.set_alt_text(alt_text)
+            emit(
+                {"ok": True, "anchor_id": sh.anchor_id, "alt_text": sh.alt_text},
+                as_text=not ctx.obj["as_json"],
+                text=f"set alt-text on {sh.anchor_id}: {alt_text!r}",
             )
 
     _run(ctx, go)
