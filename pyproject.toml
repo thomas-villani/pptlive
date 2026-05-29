@@ -42,6 +42,7 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "mcp>=1.2",
+    "bump-my-version>=0.28",
 ]
 
 # Documentation site (MkDocs Material + mkdocstrings autodoc). Build with
@@ -99,3 +100,40 @@ warn_unused_ignores = false
 [[tool.mypy.overrides]]
 module = ["pythoncom", "pywintypes", "win32com.*"]
 ignore_missing_imports = true
+
+# Version bumping — `bump-my-version` keeps the version in sync across the root
+# project and the MCPB bundle (its manifest, its pyproject, and the `>=` dep
+# pin), then commits and tags so the `v*` push fires release.yml. release.yml
+# re-checks the bundle pins, so a stale .mcpb can never ship.
+#   uv run bump-my-version bump patch    # 0.1.0 -> 0.1.1  (also: minor / major)
+#   uv run bump-my-version bump --new-version 1.0.0 minor   # explicit target
+[tool.bumpversion]
+current_version = "0.1.0"
+parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
+serialize = ["{major}.{minor}.{patch}"]
+commit = true
+tag = true
+tag_name = "v{new_version}"
+message = "Bump version: {current_version} → {new_version}"
+
+# Root package version.
+[[tool.bumpversion.files]]
+filename = "pyproject.toml"
+search = 'version = "{current_version}"'
+replace = 'version = "{new_version}"'
+
+# MCPB bundle metadata + the `pptlive[mcp]>=` dependency pin.
+[[tool.bumpversion.files]]
+filename = "mcpb/manifest.json"
+search = '"version": "{current_version}"'
+replace = '"version": "{new_version}"'
+
+[[tool.bumpversion.files]]
+filename = "mcpb/pyproject.toml"
+search = 'version = "{current_version}"'
+replace = 'version = "{new_version}"'
+
+[[tool.bumpversion.files]]
+filename = "mcpb/pyproject.toml"
+search = '>={current_version}'
+replace = '>={new_version}'
