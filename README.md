@@ -229,29 +229,26 @@ Edit Config), then restart:
 (If `pptlive-mcp` isn't on the launcher's PATH, use the absolute path to the
 script — or `"command": "uv", "args": ["run", "pptlive-mcp"]` from the project.)
 
-It's a **curated ~15-tool** surface (smaller than the full CLI — several tools
-take a verb-style `op`/`mode` argument), wrapping the same API, so the politeness
-model and one-Ctrl-Z `edit` fencing carry over and reads never move the view:
+It's a compact **five-tool dispatch surface** — each tool takes an `op` argument
+and routes to the right verb, so the agent's tool picker sees five definitions
+instead of fifteen. They wrap the same API, so the politeness model and
+one-Ctrl-Z `edit` fencing carry over and reads never move the view:
 
-| tool | what it does |
-| ---- | ------------ |
-| `ppt_status` / `ppt_slides` / `ppt_outline` | what's open; list slides; the outline |
-| `ppt_slide_read` | every shape on a slide (anchor_id, type, geometry, text, has-table) |
-| `ppt_read` | read any anchor's text (+ a `paragraphs` breakdown) |
-| `ppt_selection` | what the user has selected (→ `here:`) |
-| `ppt_write` | set text, or insert a paragraph (`mode`) |
-| `ppt_format` | font + paragraph + bullets in one call |
-| `ppt_slide_op` | `add` / `delete` / `duplicate` / `move` / `set_layout` / `layouts` |
-| `ppt_shape_op` | `add` (textbox/shape/picture/table) / `move` / `resize` / `delete` / `set_alt` / `export` |
-| `ppt_table` | `read` / `add_row` / `delete_row` (cells are `cell:S:N:R:C` anchors) |
-| `ppt_chart` | `read` / `set_type` / `set_data` (a chart is a shape; data is embedded Excel) |
-| `ppt_export` | render a slide to a PNG a vision model can read |
-| `ppt_show` | live slide show: `state` / `start` / `end` / `next` / `previous` / `goto` / `black` / `white` / `resume` |
-| `ppt_navigate` | deliberately move the user's view to an anchor |
+| tool | `op`s |
+| ---- | ----- |
+| `ppt_read` | `status` · `slides` · `outline` · `slide` · `anchor` · `selection` · `table` · `chart` · `layouts` — every read; never moves the view |
+| `ppt_edit` | `write` · `format` · `slide_add`/`slide_delete`/`slide_duplicate`/`slide_move`/`set_layout` · `shape_add`/`shape_move`/`shape_resize`/`shape_delete`/`set_alt` · `table_add_row`/`table_delete_row` · `chart_set_type`/`chart_set_data` — every mutation; one Ctrl-Z each |
+| `ppt_render` | `slide_image` · `shape_image` (PNGs a vision model can read) · `navigate` (the one deliberate view move) |
+| `ppt_show` | live slide show: `state` · `start` · `end` · `next` · `previous` · `goto` · `black` · `white` · `resume` |
+| `ppt_batch` | run a **list** of the ops above against one connection — all `edit`s fenced into a **single** undo entry (`atomic`), with `stop_on_error` control |
+
+Tables and charts are addressed by their shape's `anchor_id` (a `shape:S:N`);
+cells stay `cell:S:N:R:C` anchors you write to with `ppt_edit op="write"`.
 
 Tool failures surface as MCP errors carrying a category token — `not_found`,
-`ambiguous`, `busy`, `not_running`, `no_text_frame` — the string analog of the
-CLI's exit codes, so an agent can branch on them.
+`ambiguous`, `busy`, `not_running`, `no_text_frame`, `invalid_args` — the string
+analog of the CLI's exit codes, so an agent can branch on them. Inside
+`ppt_batch` the same tokens are reported per-command instead of aborting.
 
 ## Two things to know
 

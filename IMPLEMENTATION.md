@@ -12,8 +12,8 @@ resolved open questions inline (strike them through, link the commit).
 > landed** (fake-COM unit tests green: `ruff`, `mypy`, `pytest` all pass; 303 tests;
 > v0.7 verified live 2026-05-28 via `scripts/picture_spike.py` + `scripts/chart_spike.py`).
 > The library is usable as an LLM tool two ways now — the JSON **CLI** and an optional
-> **MCP server** (`pptlive[mcp]` → `pptlive-mcp`, ~14 curated tools over stdio for
-> Claude Desktop & other MCP agents; see the *MCP server* section below). It drives
+> **MCP server** (`pptlive[mcp]` → `pptlive-mcp`, five `op`-dispatch tools over stdio
+> for Claude Desktop & other MCP agents; see the *MCP server* section below). It drives
 > **live slide-show control** (`deck.show`: `start/end/next/prev/goto/black/white/
 > resume/state` over `SlideShowSettings.Run()` / `SlideShowWindow.View`) — **verified
 > live 2026-05-28** via `scripts/show_spike.py` (net-zero; every wrapper behaved as
@@ -340,24 +340,30 @@ server so Claude Desktop (and any MCP client) can drive the live deck directly.
 Ships as the `pptlive[mcp]` extra (the official `mcp` SDK; folded into `dev` so
 the suite exercises it), with a `pptlive-mcp` console script (`python -m
 pptlive.mcp`) running **FastMCP over stdio**. Lives in `src/pptlive/mcp/`
-(`server.py` + `__main__.py`); `tests/test_mcp.py` (37 tests, `importorskip`'d)
+(`server.py` + `__main__.py`); `tests/test_mcp.py` (62 tests, `importorskip`'d)
 drives the tool functions against the same `fake_powerpoint` deck.
 
-- [x] **Curated tool surface (~14, not 1:1 with the CLI).** Verb-param ops keep
-  the agent's tool picker small: `ppt_status`, `ppt_slides`, `ppt_outline`,
-  `ppt_slide_read`, `ppt_read` (any anchor; folds in notes + a `paragraphs`
-  breakdown), `ppt_selection`, `ppt_write` (`mode=set|insert_after|insert_before`),
-  `ppt_format` (font + paragraph + bullets in one call), `ppt_slide_op`
-  (`add|delete|duplicate|move|set_layout|layouts`), `ppt_shape_op`
-  (`add|move|resize|delete`), `ppt_table` (`read|add_row|delete_row`),
-  `ppt_export`, `ppt_show` (`state|start|end|next|previous|goto|black|white|resume`,
-  v0.6), `ppt_navigate`. Each wraps `with attach()`; mutations go through
-  `deck.edit(label)`, so the politeness model + one-Ctrl-Z fence carry over for
-  free, and reads never move the view.
+- [x] **Five-tool dispatch surface (not 1:1 with the CLI).** Each tool takes an
+  `op` and routes to a verb, so the agent's tool picker sees five definitions
+  instead of fifteen: `ppt_read`
+  (`status|slides|outline|slide|anchor|selection|table|chart|layouts` — every
+  read), `ppt_edit`
+  (`write|format|slide_add|slide_delete|slide_duplicate|slide_move|set_layout|shape_add|shape_move|shape_resize|shape_delete|set_alt|table_add_row|table_delete_row|chart_set_type|chart_set_data`
+  — every mutation), `ppt_render` (`slide_image|shape_image|navigate`), `ppt_show`
+  (`state|start|end|next|previous|goto|black|white|resume`), and `ppt_batch` (a
+  list of the above ops over one connection; `atomic` fences every `edit` into a
+  single undo entry). Each op's logic lives in a `_<tool>_core(handle, op, params)`
+  helper that does no `attach()` of its own — the public tool wraps it in
+  `attach()` (+ an `edit()` fence for `ppt_edit`), and `ppt_batch` reuses the very
+  same cores across one shared `attach()`. Tables/charts are addressed by their
+  shape's `anchor_id` (`shape:S:N`), not separate slide+shape ints. So the
+  politeness model + one-Ctrl-Z fence carry over for free, and reads never move
+  the view.
 - [x] **Errors mirror the CLI exit-code taxonomy.** A `PptliveError` is re-raised
   as an MCP `ToolError` whose message carries a stable category token (`not_found`
-  / `ambiguous` / `busy` / `not_running` / `no_text_frame` / `error`) — the string
-  analog of the CLI's exit codes — so the agent can branch on failure.
+  / `ambiguous` / `busy` / `not_running` / `no_text_frame` / `invalid_args` /
+  `error`) — the string analog of the CLI's exit codes — so the agent can branch
+  on failure. Inside `ppt_batch` the same tokens are reported per-command.
 - [x] **Spike RESOLVED (2026-05-28, `scripts/mcp_spike.py`).** The one genuine new
   risk was COM under the server's event loop: PowerPoint COM is STA-thread-bound.
   Finding: FastMCP calls a **sync** tool function *directly on its event-loop
@@ -408,7 +414,7 @@ busy one. Lives in `_show.py` (`SlideShow`), exposed as `Presentation.show`.
   resulting state JSON; exit codes reuse the mapping (1 = no show running, 2 =
   out-of-range slide).
 - [x] **MCP** `ppt_show` (op = `state|start|end|next|previous|goto|black|white|
-  resume`, optional `slide`) — the 14th curated tool.
+  resume`, optional `slide`).
 - [x] **Live spike RESOLVED (2026-05-28, `scripts/show_spike.py`, net-zero).** On a
   real 4-slide deck: `state()` reported `done`/null before start; `start()` →
   running on slide 1; `next`/`previous`/`goto(last)`/`goto(first)` tracked both
@@ -431,8 +437,8 @@ the `Chart` wrapper over the embedded-Excel data).
   `Shape.AlternativeText`; `add_picture(..., alt_text=)` sets it on create; every
   shape listing now emits `alt_text`, so an agent can tag a picture/diagram with a
   description and re-find it after z-order drift without leaning on the volatile
-  `shape:S:N`. CLI `shape set-alt` + `--alt-text` on `shape add`; MCP `ppt_shape_op`
-  ops `set_alt` (+ `alt_text` on `add`).
+  `shape:S:N`. CLI `shape set-alt` + `--alt-text` on `shape add`; MCP `ppt_edit`
+  op `set_alt` (+ `alt_text` on op `shape_add`).
 - [x] **Image extraction for vision models (per-shape `Shape.Export`; wordlive
   v0.9 pattern).** `Shape.export_image(path=None, *, fmt="png")` — the per-shape
   complement to v0.4's whole-slide render, cropped to the shape's rendered bounds
@@ -441,7 +447,7 @@ the `Chart` wrapper over the embedded-Excel data).
   `Slide.Export`'s string FilterName (and the raster set is narrower — no TIFF).
   Temp-file default + relative→absolute path, like `Slide.export_image`, but
   **no output-size override** (see the spike finding). CLI `shape export`; MCP
-  `ppt_shape_op` op `export`.
+  `ppt_render` op `shape_image`.
 - [x] **Live spike RESOLVED (2026-05-28, `scripts/picture_spike.py`, net-zero) —
   spec assumption OVERTURNED.** All three probes ran on a live deck: alt-text
   round-trip (`""` → set → read-back → in-listing → restored), `add_picture` with
@@ -465,8 +471,8 @@ the `Chart` wrapper over the embedded-Excel data).
   series)`. `chart_type` is a friendly name (`XlChartType` + `chart_type_for`/
   `CHART_TYPE_CHOICES`). CLI `shape add --kind chart` (+ `--chart-type`/
   `--categories`/`--series`) and the `chart` group (`read`/`set-type`/`set-data`);
-  MCP `ppt_chart` (op `read|set_type|set_data`, the 15th tool) + `kind="chart"` in
-  `ppt_shape_op`.
+  MCP `ppt_read` op `chart` + `ppt_edit` ops `chart_set_type`/`chart_set_data` +
+  `kind="chart"` on `ppt_edit` op `shape_add`.
 - [x] **Chart spike RESOLVED (2026-05-28, `scripts/chart_spike.py`, net-zero) —
   two non-obvious COM findings.** The exploratory pass found: (1) **`SetSourceData`
   takes a STRING range** (`"Sheet1!$A$1:$C$4"`), not a `Range` object — the Range
