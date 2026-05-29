@@ -7,7 +7,10 @@ so edit() calls `StartNewUndoEntry()` on entry to fence the block (see EditScope
 
 from __future__ import annotations
 
+import pytest
+
 from pptlive import _selection
+from pptlive.exceptions import PowerPointBusyError
 
 
 def test_snapshot_captures_viewed_slide_and_shape_selection(ppt, fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
@@ -87,3 +90,17 @@ def test_go_to_moves_view_and_selects(deck, fake_powerpoint) -> None:  # type: i
     # The targeted shape got selected.
     target = fake_powerpoint.ActivePresentation.Slides(3).Shapes(1)
     assert target.selected is True
+
+
+def test_go_to_surfaces_busy_from_select(deck, fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    # The goto can land but a transient busy on the shape-select must still
+    # surface (exit 3), not be swallowed into a silent "nothing selected".
+    fake_powerpoint._viewed = 1
+    target = fake_powerpoint.ActivePresentation.Slides(3).Shapes(1)
+
+    def _boom(*_a: object, **_k: object) -> object:
+        raise PowerPointBusyError(hresult=0x80010001)
+
+    target.Select = _boom
+    with pytest.raises(PowerPointBusyError):
+        deck.go_to(deck.anchor_by_id("shape:3:1"))

@@ -156,6 +156,13 @@ class Table:
 
         Each cell carries its `anchor_id` (`cell:S:N:R:C`) so a caller can feed it
         straight back into `write` / `format-text` / `format-paragraph`.
+
+        Merged cells are **not** flagged: PowerPoint's COM `Cell` exposes no
+        merge-state read property (it lives only in the OOXML, off the automation
+        surface), so the grid is reported by its raw row×column geometry. A merged
+        region still occupies every covered coordinate, and writing to a covered
+        cell lands on the merge origin's text — address merged regions by their
+        top-left (origin) cell to avoid surprises.
         """
         rows, cols = self.row_count, self.column_count
         cells = [
@@ -191,12 +198,20 @@ class Table:
     def delete_row(self, index: int) -> None:
         """Delete the 1-based row `index`.
 
-        Raises `AnchorNotFoundError` (kind `"table row"`) if out of range.
+        Raises `AnchorNotFoundError` (kind `"table row"`) if out of range, and
+        `ValueError` if it would empty the table — PowerPoint has no zero-row
+        table, and `Rows(1).Delete()` on a one-row grid corrupts the shape rather
+        than failing cleanly. Delete the whole table shape (`shape:S:N`) instead.
         """
         rows = self.row_count
         if not (1 <= int(index) <= rows):
             raise AnchorNotFoundError(
                 "table row", f"cell:{self._shape.slide.index}:{self._shape.index}:row:{index}"
+            )
+        if rows <= 1:
+            raise ValueError(
+                "cannot delete the last row of a table; delete the table shape "
+                f"({self._shape.anchor_id}) instead"
             )
         with _com.translate_com_errors():
             self._shape.com.Table.Rows(int(index)).Delete()

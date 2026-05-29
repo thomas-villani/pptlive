@@ -27,6 +27,7 @@ from .exceptions import (
     AnchorNotFoundError,
     LayoutNotFoundError,
     NoTextFrameError,
+    PowerPointBusyError,
     PresentationNotFoundError,
 )
 
@@ -147,7 +148,12 @@ class Presentation:
     def _custom_layouts(self) -> list[Any]:
         """The deck's `CustomLayout` COM objects (empty if it exposes none)."""
         try:
-            return list(self._pres.SlideMaster.CustomLayouts)
+            with _com.translate_com_errors():
+                return list(self._pres.SlideMaster.CustomLayouts)
+        except PowerPointBusyError:
+            # Surface a transient busy (exit 3) rather than reporting "no layouts"
+            # and silently falling back to the legacy Slides.Add path.
+            raise
         except Exception:
             return []
 
@@ -337,7 +343,13 @@ class Presentation:
             win.View.GotoSlide(int(slide_index))
             if select and shape is not None:
                 try:
-                    shape.com.Select()
+                    with _com.translate_com_errors():
+                        shape.com.Select()
+                except PowerPointBusyError:
+                    # The goto landed; only the shape-select failed. A busy here
+                    # is still retryable — surface it rather than silently
+                    # leaving nothing selected.
+                    raise
                 except Exception:
                     pass
 

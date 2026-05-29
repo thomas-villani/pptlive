@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from pptlive.exceptions import LayoutNotFoundError, SlideNotFoundError
+from pptlive.exceptions import LayoutNotFoundError, PowerPointBusyError, SlideNotFoundError
 
 # -- add --------------------------------------------------------------------
 
@@ -120,3 +120,16 @@ def test_layouts_lists_names(deck) -> None:  # type: ignore[no-untyped-def]
     names = [r["name"] for r in rows]
     assert "Two Content" in names
     assert len(rows) == 9
+
+
+def test_custom_layouts_surfaces_busy_instead_of_empty(deck) -> None:  # type: ignore[no-untyped-def]
+    # A transient busy reading the master's layouts must surface (exit 3), not be
+    # masked as "no layouts" (which would silently fall back to legacy add).
+    class _Boom:
+        @property
+        def CustomLayouts(self) -> object:
+            raise PowerPointBusyError(hresult=0x80010001)
+
+    deck.com.SlideMaster = _Boom()
+    with pytest.raises(PowerPointBusyError):
+        deck.layouts()

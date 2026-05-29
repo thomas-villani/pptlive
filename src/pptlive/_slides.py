@@ -25,7 +25,12 @@ from . import _com
 from ._anchors import Notes
 from ._shapes import PlaceholderShape, ShapeCollection, is_placeholder
 from .constants import DEFAULT_LEGACY_LAYOUT, image_filter_for, is_true, placeholder_types_for
-from .exceptions import AnchorNotFoundError, LayoutNotFoundError, SlideNotFoundError
+from .exceptions import (
+    AnchorNotFoundError,
+    LayoutNotFoundError,
+    PowerPointBusyError,
+    SlideNotFoundError,
+)
 
 if TYPE_CHECKING:
     from ._presentation import Presentation
@@ -81,11 +86,15 @@ class Slide:
     @property
     def layout_name(self) -> str | None:
         """The slide's custom-layout name (e.g. "Title and Content"), or None."""
-        with _com.translate_com_errors():
-            try:
+        try:
+            with _com.translate_com_errors():
                 return str(self._slide.CustomLayout.Name)
-            except Exception:
-                return None
+        except PowerPointBusyError:
+            # A transient busy must surface (exit 3, retryable), not masquerade
+            # as "this slide has no layout".
+            raise
+        except Exception:
+            return None
 
     def _find_placeholder(self, kind: str) -> tuple[Any, int]:
         """Resolve a placeholder KIND to (COM shape, 1-based z-order index).
@@ -128,8 +137,8 @@ class Slide:
     @property
     def title(self) -> str | None:
         """Text of the slide's title placeholder, or None if it has no title."""
-        with _com.translate_com_errors():
-            try:
+        try:
+            with _com.translate_com_errors():
                 shapes = self._slide.Shapes
                 if not is_true(shapes.HasTitle):
                     return None
@@ -137,13 +146,19 @@ class Slide:
                 if not is_true(title_shape.HasTextFrame):
                     return None
                 return str(title_shape.TextFrame.TextRange.Text or "")
-            except Exception:
-                return None
+        except PowerPointBusyError:
+            # Don't let a momentary busy read back as "no title".
+            raise
+        except Exception:
+            return None
 
     def has_notes(self) -> bool:
         """Whether the slide has non-empty speaker notes."""
         try:
             return bool(self.notes.text.strip())
+        except PowerPointBusyError:
+            # A transient busy is retryable (exit 3); don't bury it as "no notes".
+            raise
         except Exception:
             # A missing notes body (AnchorNotFoundError) or any COM hiccup just
             # means "no notes" for the purpose of a listing.

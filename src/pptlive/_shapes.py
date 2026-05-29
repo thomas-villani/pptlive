@@ -230,12 +230,15 @@ class Shape(Anchor):
 
     @property
     def name(self) -> str:
-        """The shape's `.Name` (e.g. "Title 1") — drift-proof, unique per slide."""
-        try:
-            with _com.translate_com_errors():
-                return str(self._com_shape().Name)
-        except Exception:
-            return self.anchor_id
+        """The shape's `.Name` (e.g. "Title 1") — drift-proof, unique per slide.
+
+        Propagates a missing-shape / busy error like `shape_id` and `shape_type`
+        do — it must never fabricate an `anchor_id`-shaped string, which would
+        collide with the `shape:S:N` anchor format and mislead a caller into
+        treating a failed lookup as a real shape name.
+        """
+        with _com.translate_com_errors():
+            return str(self._com_shape().Name)
 
     @property
     def shape_id(self) -> int:

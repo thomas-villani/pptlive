@@ -38,6 +38,17 @@ def test_shape_index_out_of_range_raises(deck) -> None:  # type: ignore[no-untyp
         deck.slides[2].shapes[99]
 
 
+def test_shape_name_propagates_missing_shape(deck) -> None:  # type: ignore[no-untyped-def]
+    # `.name` must NOT fabricate an anchor_id-shaped string for a vanished shape:
+    # that would collide with the `shape:S:N` format and read as a real name. It
+    # propagates the lookup failure, exactly like `shape_id` / `shape_type`.
+    from pptlive import Shape
+
+    ghost = Shape(deck.slides[2], 99)
+    with pytest.raises(AnchorNotFoundError):
+        _ = ghost.name
+
+
 def test_membership(deck) -> None:  # type: ignore[no-untyped-def]
     shapes = deck.slides[2].shapes
     assert "Title 1" in shapes

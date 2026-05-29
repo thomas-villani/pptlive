@@ -122,6 +122,15 @@ def test_delete_row_out_of_range(deck) -> None:  # type: ignore[no-untyped-def]
         table.delete_row(5)
 
 
+def test_delete_last_row_is_rejected(deck) -> None:  # type: ignore[no-untyped-def]
+    # PowerPoint has no zero-row table; deleting the only row would corrupt the
+    # shape, so a one-row table refuses delete_row with a clear ValueError.
+    table = _add_table(deck, 1, 2).table
+    with pytest.raises(ValueError, match="last row"):
+        table.delete_row(1)
+    assert table.row_count == 1
+
+
 def test_anchor_by_id_resolves_cell(deck) -> None:  # type: ignore[no-untyped-def]
     table = _add_table(deck, 2, 2).table
     with deck.edit("test: fill"):

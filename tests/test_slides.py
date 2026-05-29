@@ -4,7 +4,22 @@ from __future__ import annotations
 
 import pytest
 
-from pptlive.exceptions import SlideNotFoundError
+from pptlive.exceptions import PowerPointBusyError, SlideNotFoundError
+
+
+class _Boom:
+    """Every attribute access (and call) raises a transient busy error.
+
+    Stands in for a COM object PowerPoint momentarily refuses to serve, so a read
+    that touches it has the chance to either re-raise (correct) or swallow the
+    busy as a soft default (the bug these tests guard against).
+    """
+
+    def __getattr__(self, _name: str) -> object:
+        raise PowerPointBusyError(hresult=0x80010001)
+
+    def __call__(self, *_args: object, **_kw: object) -> object:
+        raise PowerPointBusyError(hresult=0x80010001)
 
 
 def test_slides_list_shape(deck) -> None:  # type: ignore[no-untyped-def]
@@ -18,6 +33,27 @@ def test_slides_list_shape(deck) -> None:  # type: ignore[no-untyped-def]
     assert by_index[2]["has_notes"] is False
     assert by_index[2]["shape_count"] == 3
     assert by_index[3]["title"] is None
+
+
+def test_title_surfaces_busy_instead_of_none(deck) -> None:  # type: ignore[no-untyped-def]
+    slide = deck.slides[1]
+    slide.com.Shapes = _Boom()
+    with pytest.raises(PowerPointBusyError):
+        _ = slide.title
+
+
+def test_layout_name_surfaces_busy_instead_of_none(deck) -> None:  # type: ignore[no-untyped-def]
+    slide = deck.slides[1]
+    slide.com.CustomLayout = _Boom()
+    with pytest.raises(PowerPointBusyError):
+        _ = slide.layout_name
+
+
+def test_has_notes_surfaces_busy_instead_of_false(deck) -> None:  # type: ignore[no-untyped-def]
+    slide = deck.slides[1]
+    slide.com.NotesPage = _Boom()
+    with pytest.raises(PowerPointBusyError):
+        slide.has_notes()
 
 
 def test_slide_indexing_is_one_based(deck) -> None:  # type: ignore[no-untyped-def]

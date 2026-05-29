@@ -108,6 +108,12 @@ class AmbiguousMatchError(PptliveError):
 
     Carries the list of matches so callers (notably LLM drivers) can pick an
     `occurrence` index and retry.
+
+    Reserved: nothing in `src/` raises this yet — it belongs to the not-yet-built
+    `find()` / `find_replace()` surface (`_findreplace.py` in `spec.md`). The exit
+    code (5) and the MCP `ambiguous` token are wired through the error maps ahead
+    of that feature so the contract is stable when it lands; until then this is
+    forward-compatibility scaffolding, not a live code path.
     """
 
     def __init__(self, find: str, matches: list[dict[str, Any]]) -> None:
