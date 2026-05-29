@@ -13,9 +13,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
@@ -47,14 +47,14 @@ jobs:
           python -m build
           twine check dist/*
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Build the .mcpb bundle
         # Package the built-in MCP server as a .mcpb for one-click install in
@@ -68,7 +68,7 @@ jobs:
 
       # Kept out of the `dist` artifact on purpose: PyPI rejects non-wheel/sdist
       # files, and the github-release job attaches this separately.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: mcpb
           path: pptlive.mcpb
@@ -83,7 +83,7 @@ jobs:
     permissions:
       id-token: write   # OIDC token for trusted publishing — no API token needed
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
@@ -97,12 +97,12 @@ jobs:
     permissions:
       contents: write   # to create the Release and upload assets
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: mcpb
           path: .
