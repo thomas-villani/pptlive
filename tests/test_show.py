@@ -60,6 +60,20 @@ def test_start_from_out_of_range_slide_raises(deck) -> None:  # type: ignore[no-
     assert deck.show.is_running() is False  # never started
 
 
+def test_start_resets_range_after_a_from_slide_run(deck) -> None:  # type: ignore[no-untyped-def]
+    # Regression: SlideShowSettings persists on the presentation, so a prior
+    # start(from_slide=...) sets a SLIDE_RANGE that a later bare start() must
+    # reset to ALL — otherwise "run the whole deck from the top" silently
+    # replays the stale range.
+    settings = deck.com.SlideShowSettings
+    deck.show.start(from_slide=3)
+    assert settings.RangeType == 2  # ppShowSlideRange
+    deck.show.end()
+    info = deck.show.start()  # whole deck, from the top
+    assert settings.RangeType == 1  # ppShowAll — not the stale slide range
+    assert info["current_slide"] == 1
+
+
 def test_start_idempotent_when_already_running(deck) -> None:  # type: ignore[no-untyped-def]
     deck.show.start()
     deck.show.next()  # now on slide 2

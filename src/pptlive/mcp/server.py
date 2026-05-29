@@ -385,7 +385,7 @@ def _edit_core(deck: Presentation, op: str, p: dict[str, Any]) -> dict[str, Any]
     if op == "master_set_background":
         _require(p.get("color") is not None, "edit op='master_set_background' requires `color`")
         deck.master.set_background(p["color"])
-        return {"ok": True, **deck.master.read().get("background", {})}
+        return {"ok": True, "background": deck.master.read().get("background", {})}
 
     raise ToolError(f"invalid_args: unknown edit op {op!r}")
 
@@ -519,7 +519,7 @@ def ppt_edit(
     size: float | None = None,
     font: str | None = None,
     color: str | None = None,
-    alignment: Literal["left", "center", "right", "justify"] | None = None,
+    alignment: Literal["left", "center", "right", "justify", "distribute"] | None = None,
     space_before: float | None = None,
     space_after: float | None = None,
     line_spacing: float | None = None,

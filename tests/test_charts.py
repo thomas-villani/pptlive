@@ -126,6 +126,18 @@ def test_set_data_empty_raises(deck) -> None:  # type: ignore[no-untyped-def]
         ch.set_data([], {"X": []})
 
 
+def test_set_data_references_worksheet_by_actual_name(deck) -> None:  # type: ignore[no-untyped-def]
+    # Regression: the plotted-range reference must use the embedded sheet's real
+    # `.Name`, not a hardcoded "Sheet1" — that name is localized on non-English
+    # Office ("Feuil1"/"Tabelle1"/"Hoja1"), where "Sheet1!" would point at nothing.
+    shape = deck.slides[3].shapes.add_chart("column")
+    shape.com._chart._ws.Name = "Hoja1"
+    shape.chart.set_data(["A", "B"], {"Only": [7, 8]})
+    assert shape.com._chart._last_source.startswith("'Hoja1'!")
+    # And the write still round-trips against the (renamed) sheet.
+    assert shape.chart.read()["categories"] == ["A", "B"]
+
+
 def test_set_data_formats_category_column_as_text(deck) -> None:  # type: ignore[no-untyped-def]
     # Numeric-looking category labels must stay text, else Excel coerces "2026" to
     # a number that reads back as "2026.0". set_data forces the category column

@@ -514,6 +514,9 @@ class _FakeWorksheet:
     def __init__(self) -> None:
         self._cells: dict[tuple[int, int], Any] = {}
         self._formats: dict[tuple[int, int], Any] = {}
+        # Excel's first sheet is named "Sheet1" only on English Office; the real
+        # code now references it by `.Name`, so the fake carries one too.
+        self.Name = "Sheet1"
 
     def Cells(self, row: int, col: int) -> _FakeCellRef:
         return _FakeCellRef(self, row, col)
@@ -604,7 +607,8 @@ class _FakeChart:
         return _FakeChartData(self)
 
     def SetSourceData(self, source: str) -> None:
-        # source like "Sheet1!$A$1:$C$4" -> parse the bottom-right corner.
+        # source like "'Sheet1'!$A$1:$C$4" -> parse the bottom-right corner.
+        self._last_source = source  # captured so tests can assert the sheet ref
         ref = source.split("!", 1)[-1].replace("$", "")
         _tl, _, br = ref.partition(":")
         col_letters = "".join(ch for ch in br if ch.isalpha())

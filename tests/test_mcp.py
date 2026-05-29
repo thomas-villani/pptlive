@@ -497,7 +497,9 @@ def test_master_format_text_style_requires_an_option(fake_powerpoint: Any) -> No
 def test_master_set_background(fake_powerpoint: Any) -> None:
     out = ppt_edit("master_set_background", color="#202020")
     assert out["ok"] is True
-    assert out["color"] == "#202020"
+    # The result nests the changed resource under "background" (mirroring the
+    # CLI and the read shape), not as bare top-level keys.
+    assert out["background"]["color"] == "#202020"
 
 
 def test_edit_op_enum_includes_theme_master() -> None:

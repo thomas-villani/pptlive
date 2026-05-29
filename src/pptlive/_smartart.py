@@ -184,6 +184,10 @@ class SmartArt:
             # reset to a single empty top-level node
             while int(sa.Nodes.Count) > 1:
                 sa.Nodes.Item(int(sa.Nodes.Count)).Delete()
+            if int(sa.Nodes.Count) == 0:
+                # A blank layout (or one left empty by a prior edit) has no root
+                # to seed from; create one before sizing the top level.
+                sa.Nodes.Add()
             root = sa.Nodes.Item(1)
             while int(root.Nodes.Count):
                 root.Nodes.Item(int(root.Nodes.Count)).Delete()

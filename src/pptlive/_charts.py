@@ -52,6 +52,17 @@ def _col_letter(n: int) -> str:
     return s
 
 
+def _sheet_ref(name: str) -> str:
+    """Quote a worksheet name for an A1-style range reference.
+
+    The first sheet's name is localized (English "Sheet1", but "Feuil1",
+    "Tabelle1", "Hoja1", … on non-English Office), so we must reference it by its
+    actual `.Name` rather than the literal "Sheet1". Quoting and doubling any
+    embedded apostrophe keeps names with spaces or quotes valid.
+    """
+    return "'" + name.replace("'", "''") + "'"
+
+
 def _normalize_series(series: SeriesInput) -> list[tuple[str, list[float]]]:
     """Coerce a SeriesInput into an ordered `list[(name, [float, ...])]`."""
     items: list[tuple[str, Sequence[float]]]
@@ -207,7 +218,7 @@ class Chart:
                     for c, (_name, values) in enumerate(norm, start=2):
                         for r, v in enumerate(values, start=2):
                             ws.Cells(r, c).Value = v
-                    target = f"Sheet1!$A$1:${_col_letter(ncols)}${nrows}"
+                    target = f"{_sheet_ref(ws.Name)}!$A$1:${_col_letter(ncols)}${nrows}"
                     chart.SetSourceData(target)
                 finally:
                     wb.Close()

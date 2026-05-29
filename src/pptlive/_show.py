@@ -124,6 +124,11 @@ class SlideShow:
                 settings.RangeType = int(PpSlideShowRangeType.SLIDE_RANGE)
                 settings.StartingSlide = int(from_slide)
                 settings.EndingSlide = len(self._deck.slides)
+            else:
+                # Reset to whole-deck: SlideShowSettings persists on the
+                # presentation, so a prior `start(from_slide=…)` would otherwise
+                # leave a stale SLIDE_RANGE and silently replay that range.
+                settings.RangeType = int(PpSlideShowRangeType.ALL)
             settings.Run()
         return self.state()
 

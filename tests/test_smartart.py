@@ -128,6 +128,17 @@ def test_set_nodes_clears_tree_skeleton(deck) -> None:  # type: ignore[no-untype
     assert [c["text"] for c in info["nodes"][0]["children"]] == ["Only"]
 
 
+def test_set_nodes_seeds_root_when_diagram_is_empty(deck) -> None:  # type: ignore[no-untyped-def]
+    # Regression: a blank layout (or one left empty by a prior edit) has zero
+    # top-level nodes. set_nodes must seed a root before sizing the list rather
+    # than blowing up on Nodes.Item(1).
+    sa = deck.slides[3].shapes.add_smartart("process").smartart
+    sa.com.Nodes._nodes.clear()
+    assert sa.com.Nodes.Count == 0
+    sa.set_nodes(["Alpha", "Beta"])
+    assert [n["text"] for n in sa.read()["nodes"]] == ["Alpha", "Beta"]
+
+
 def test_set_nodes_empty_raises(deck) -> None:  # type: ignore[no-untyped-def]
     sa = deck.slides[3].shapes.add_smartart("process").smartart
     with pytest.raises(ValueError, match="at least one node"):
