@@ -3,6 +3,8 @@ name = "pptlive"
 version = "0.1.0"
 description = "Drive a running Microsoft PowerPoint instance from Python — xlwings, but for PowerPoint, and LLM-friendly."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Thomas.Villani", email = "thomas.villani@gmail.com" }
 ]
