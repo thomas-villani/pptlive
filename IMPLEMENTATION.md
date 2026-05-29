@@ -8,9 +8,10 @@ resolved open questions inline (strike them through, link the commit).
 **Status legend:** `[ ]` not started · `[~]` in progress · `[x]` shipped.
 
 > **Bootstrap + v0 + v0.1 + v0.2 + v0.3 + v0.4 + v0.5 + v0.6 + v0.7 (pictures &
-> charts) + the MCP server have
-> landed** (fake-COM unit tests green: `ruff`, `mypy`, `pytest` all pass; 303 tests;
-> v0.7 verified live 2026-05-28 via `scripts/picture_spike.py` + `scripts/chart_spike.py`).
+> charts) + v0.8 (SmartArt) + the MCP server have
+> landed** (fake-COM unit tests green: `ruff`, `mypy`, `pytest` all pass; 340 tests;
+> v0.7 verified live 2026-05-28 via `scripts/picture_spike.py` + `scripts/chart_spike.py`;
+> v0.8 verified live 2026-05-28 via `scripts/smartart_spike.py` + a shipped-wrapper run).
 > The library is usable as an LLM tool two ways now — the JSON **CLI** and an optional
 > **MCP server** (`pptlive[mcp]` → `pptlive-mcp`, five `op`-dispatch tools over stdio
 > for Claude Desktop & other MCP agents; see the *MCP server* section below). It drives
@@ -487,11 +488,118 @@ the `Chart` wrapper over the embedded-Excel data).
   table lesson). The regression spike now drives the *shipped* wrappers end-to-end
   (net-zero). Fake-COM-tested too (303 tests green: ruff/mypy/pytest).
 
-## v0.8+ — defer
+## v0.8 — SmartArt — SHIPPED
+
+Never specced (it appears nowhere in the original `spec.md` — genuinely net-new),
+but it fits the established shape-gate + wrapper pattern *exactly* (the
+`_charts.py` / tables mold): a friendly-name-keyed diagram you populate from a
+flat list or a tree and can **read back to reconstruct the data** — the loop the
+user wanted. **Exploratory spike RESOLVED (2026-05-28, `scripts/smartart_spike.py`,
+net-zero)** drove raw COM to design the surface; the findings:
+
+- **Layout identity — map friendly names → stable URN `.Id`.**
+  `Application.SmartArtLayouts` had **159** installed; the collection *index
+  drifts* but each layout's `.Id` is a stable URN
+  (`urn:microsoft.com/office/officeart/2005/8/layout/<seg>`). All 7 core layouts
+  resolve by trailing segment: `list1` (Vertical Box List), `process1` (Basic
+  Process), `cycle1` (Text Cycle), `hierarchy1`, `orgChart1` (Organization Chart),
+  `pyramid1` (Basic Pyramid), `venn1` (Basic Venn). So a `smartart_layout_for`
+  table maps friendly name → URN and resolves live (parallels `chart_type_for` /
+  the layout-name resolver). Start with these 7; widen on demand.
+- **The gate is `Shape.HasSmartArt`** (not `Type`). `AddSmartArt` reports
+  `Type == msoSmartArt (24)` here, but follow the table/chart lesson and gate on
+  `Has*`. A non-SmartArt shape (textbox, `Type 17`) reports `HasSmartArt == False`.
+- **Create:** `Shapes.AddSmartArt(SmartArtLayout, Left, Top, Width, Height)` →
+  the SmartArt `Shape` (geometry in points, like every other `add_*`).
+- **Populate (flat) — solid.** `SmartArt.Nodes`: `.Add()` / `Item(i).Delete()`
+  to size the top-level list to the caller's item count, then
+  `Item(i).TextFrame2.TextRange.Text = …` (note **TextFrame2**, not `TextFrame`).
+  Flat round-trip verified (`['Discover','Design','Build','Ship']`). Default node
+  counts vary per layout (list/process/venn/pyramid = 3, cycle = 5), so the
+  wrapper *must* size to the item list rather than assume.
+- **Populate (tree) — gotchas, resolved.** (a) Tree layouts ship a **pre-built
+  skeleton** (`hierarchy1` defaults to `Nodes.Count==1` but `AllNodes==6`;
+  `orgChart1` → 1/5 — the root already has empty placeholder children), so the
+  wrapper must **clear to one empty root first** (delete top-level extras, then
+  strip the root's descendants). (b) `node.Nodes.Add()` adds a **sibling**, not a
+  child — true nesting needs `node.AddNode(msoSmartArtNodeBelow=5, type)`. With
+  that recipe a clean `CEO → VP Eng → Eng Lead`, `VP Sales` tree built and read
+  back correctly (`nests_correctly: true`). (c) **`SmartArt.Nodes.Add()` is a
+  no-op on a tree layout** (orgChart/hierarchy cap at a single top-level root) but
+  *does* grow flat layouts — so "multiple top-level nodes" is a flat-layout
+  capability; tree layouts take one root + `AddNode` children.
+- **Two things that do NOT round-trip (deferred, not shipped in the first cut):**
+  (1) **node type** — a node created with `type=msoSmartArtNodeAssistant=4` reads
+  back as `Type==1` (default), so assistant nodes are write-only and unverifiable;
+  left out of v1. (2) Size-override on the shape isn't a SmartArt concern (geometry
+  is the normal shape geometry).
+- **Read back / reconstruct:** recurse `SmartArt.Nodes` capturing
+  `TextFrame2.TextRange.Text` + `.Level` + children (and `SmartArt.Layout.Id` →
+  friendly kind), or flat via `.AllNodes`. Round-trips for text + structure.
+
+Build (mirrors v0.7b charts) — all landed; fake-COM unit-tested (340 tests green:
+ruff/mypy/pytest) and **verified live 2026-05-28** (shipped wrappers driven
+end-to-end against a real deck, net-zero: flat process round-trips, orgChart
+builds CEO→VP(level 2)→AE(level 3), the gate/listing report `has_smartart`, and a
+tree layout rejects multiple top-level roots):
+
+- [x] **`_smartart.py` — `SmartArt` wrapper + `smartart_layout_for` URN table.**
+  `Shape.has_smartart` (the gate) / `Shape.smartart`; `SmartArt.read()` (layout +
+  nested `{text, level, children}`), `set_nodes(nodes)` (flat list *or* nested
+  tree — clear-skeleton-then-build, `AddNode(BELOW)` for children, with a
+  kind-based pre-check that rejects multiple roots on tree layouts before any COM).
+- [x] **`ShapeCollection.add_smartart(kind, nodes=None, *, geometry)`** over
+  `Shapes.AddSmartArt`, returning the SmartArt `Shape` (last z-order); `kind` is a
+  friendly name resolved to the live `SmartArtLayout` by URN
+  (`_resolve_smartart_layout`, exit 2 if the layout isn't installed).
+  `shape_to_dict` emits `has_smartart`.
+- [x] **Constants:** `MsoSmartArtNodePosition` enum + `SMARTART_CHOICES` /
+  `SMARTART_TREE_KINDS` / `smartart_layout_for` (friendly → URN segment) +
+  `smartart_layout_name` (URN → friendly, for read-back). (`MsoSmartArtNodeType`
+  deferred with assistant.)
+- [x] **CLI** `shape add --kind smartart` (+ `--smartart-kind` / `--nodes` JSON)
+  and a `smartart` group (`read` / `set-nodes`). Exit codes reuse the mapping
+  (2 = unknown layout / no SmartArt at that shape).
+- [x] **MCP** `ppt_read` op `smartart` + `ppt_edit` op `smartart_set_nodes`
+  (+ `kind="smartart"` on op `shape_add`, with `smartart_kind` / `nodes`).
+- [ ] **Hardening spike — deferred follow-ups** (the v1 surface is verified; these
+  remain): orgChart assistant/branch nodes (the write-only `type` issue), layout
+  availability across Office versions (the 7 are core/stable on this build), and
+  widening past the 7 core layouts on demand.
+
+## v0.9 — master / theme styling (feasibility CONFIRMED; design PENDING)
+
+"Overall / master styles" — the deck-wide counterpart to v0.3's per-run
+`format_text`. **All reachable *and* writable via COM, confirmed live
+(2026-05-28, ad-hoc probe with write+restore round-trips):**
+
+- **Master text styles** (PowerPoint's nearest "named style" analog):
+  `SlideMaster.TextStyles(ppTitleStyle=2 / ppBodyStyle=3 / ppDefaultStyle=1)
+  .Levels(1–5).Font` + `.ParagraphFormat`. Wrote body L1 → Georgia 32 and restored
+  to Calibri 28 cleanly. Editing one re-renders every slide that inherits it.
+- **Theme color scheme:** `SlideMaster.Theme.ThemeColorScheme.Colors(1–12).RGB`
+  (dark1/light1/dark2/light2/accent1–6/hlink/folHlink). Wrote accent1 → red,
+  restored.
+- **Theme font scheme:** `Theme.ThemeFontScheme.MajorFont`/`MinorFont`, accessed
+  by `.Item(1=Latin / 2=EastAsian / 3=ComplexScript)` — **the late-bound `.Latin`
+  accessor raises `AttributeError`; use `.Item(n)`.**
+- **Background:** `SlideMaster.Background.Fill`, per-layout `CustomLayouts(i)
+  .Background`.
+
+Design notes for when it's built: these are **global, anti-polite** authoring ops
+(they restyle the whole deck at once — the opposite of the per-anchor model), so
+they want their own surface (`deck.theme` / `deck.master`), *not* a fold into
+`format_text`. Caveats to resolve in its spike: multi-master decks
+(`Presentation.Designs` — the test deck had 1, but templates often carry several);
+theme-object behavior on legacy `.ppt`; whether master edits revert with one
+Ctrl-Z like content edits.
+
+## v1.0+ — defer
 
 - [ ] Event sinks (`SlideShowNextSlide`, `WindowSelectionChange`); async wrapper.
-- [ ] Transitions & animations; master/layout authoring. (Whole-slide
-  `Slide.Export` was promoted to v0.4.)
+- [ ] Transitions & animations; full layout authoring (add/rename `CustomLayouts`,
+  place placeholders). (Whole-slide `Slide.Export` was promoted to v0.4; master /
+  theme *styling* was promoted to v0.9 above.)
 
 ---
 

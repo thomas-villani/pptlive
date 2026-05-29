@@ -31,6 +31,7 @@ from ._selection import SelectionInfo, SelectionSnapshot
 from ._shapes import PlaceholderShape, Shape, ShapeCollection
 from ._show import SlideShow
 from ._slides import Slide, SlideCollection
+from ._smartart import SmartArt
 from ._tables import Cell, Table
 from .exceptions import (
     AmbiguousMatchError,
@@ -76,6 +77,7 @@ __all__ = [
     "SlideNotFoundError",
     "SlideShow",
     "SlideShowNotRunningError",
+    "SmartArt",
     "Table",
     "attach",
     "connect",

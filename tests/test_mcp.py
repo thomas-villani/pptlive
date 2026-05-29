@@ -391,6 +391,66 @@ def test_chart_read_non_chart_is_not_found(fake_powerpoint: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# SmartArt — addressed by the SmartArt shape's anchor_id (shape:S:N)
+# ---------------------------------------------------------------------------
+
+
+def _add_smartart(**kwargs: Any) -> str:
+    added = ppt_edit("shape_add", slide=3, kind="smartart", **kwargs)
+    return str(added["anchor_id"])
+
+
+def test_shape_add_smartart_with_nodes(fake_powerpoint: Any) -> None:
+    out = ppt_edit(
+        "shape_add",
+        slide=3,
+        kind="smartart",
+        smartart_kind="process",
+        nodes=["Discover", "Design", "Build"],
+    )
+    assert out["has_smartart"] is True
+    assert out["type"] == "smart_art"
+
+
+def test_smartart_read(fake_powerpoint: Any) -> None:
+    aid = _add_smartart(smartart_kind="cycle", nodes=["A", "B", "C"])
+    info = ppt_read("smartart", anchor_id=aid)
+    assert info["layout"] == "cycle"
+    assert [n["text"] for n in info["nodes"]] == ["A", "B", "C"]
+
+
+def test_smartart_set_nodes_tree(fake_powerpoint: Any) -> None:
+    aid = _add_smartart(smartart_kind="orgchart")
+    info = ppt_edit(
+        "smartart_set_nodes",
+        anchor_id=aid,
+        nodes=[{"text": "CEO", "children": ["VP Eng", "VP Sales"]}],
+    )
+    assert info["nodes"][0]["text"] == "CEO"
+    assert [c["text"] for c in info["nodes"][0]["children"]] == ["VP Eng", "VP Sales"]
+
+
+def test_smartart_set_nodes_requires_nodes(fake_powerpoint: Any) -> None:
+    aid = _add_smartart()
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("smartart_set_nodes", anchor_id=aid)
+    assert "invalid_args" in str(exc.value)
+
+
+def test_smartart_read_non_smartart_is_not_found(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError) as exc:
+        ppt_read("smartart", anchor_id="shape:2:3")  # a picture
+    assert "not_found" in str(exc.value)
+
+
+def test_read_op_enum_includes_smartart() -> None:
+    srv = build_server()
+    tools = {t.name: t for t in asyncio.run(srv.list_tools())}
+    assert "smartart" in tools["ppt_read"].inputSchema["properties"]["op"]["enum"]
+    assert "smartart_set_nodes" in tools["ppt_edit"].inputSchema["properties"]["op"]["enum"]
+
+
+# ---------------------------------------------------------------------------
 # Render + navigate (ppt_render op=...)
 # ---------------------------------------------------------------------------
 

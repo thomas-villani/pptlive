@@ -36,6 +36,7 @@ _MSO_PICTURE = 13
 _MSO_PLACEHOLDER = 14
 _MSO_TEXT_BOX = 17
 _MSO_TABLE = 19
+_MSO_SMARTART = 24
 
 # MsoTriState
 _MSO_TRUE = -1
@@ -299,6 +300,7 @@ class _FakeShape:
         self._placeholder_type = placeholder_type
         self._table = table
         self._chart: _FakeChart | None = None
+        self._smartart: _FakeSmartArt | None = None
         self._text_frame = _FakeTextFrame(text) if text is not None else None
         self.selected = False
         self.last_export: dict[str, Any] | None = None
@@ -337,6 +339,16 @@ class _FakeShape:
         if self._chart is None:
             raise AttributeError("shape has no chart")
         return self._chart
+
+    @property
+    def HasSmartArt(self) -> int:
+        return _MSO_TRUE if self._smartart is not None else _MSO_FALSE
+
+    @property
+    def SmartArt(self) -> _FakeSmartArt:
+        if self._smartart is None:
+            raise AttributeError("shape has no smartart")
+        return self._smartart
 
     @property
     def PlaceholderFormat(self) -> Any:
@@ -603,6 +615,129 @@ class _FakeChart:
         return _FakeSeriesCollection(series)
 
 
+# ---------------------------------------------------------------------------
+# SmartArt (v0.8): a shape with HasSmartArt; content is a tree of nodes whose
+# text lives on TextFrame2. The fake mirrors the live findings the wrapper relies
+# on: node `Type` is always default (assistant doesn't round-trip),
+# `SmartArtNode.AddNode(BELOW)` adds a child while `Nodes.Add()` adds a top-level
+# sibling, and tree layouts (hierarchy/orgChart) seed a skeleton (1 root + empty
+# children) that set_nodes must clear.
+# ---------------------------------------------------------------------------
+
+_SMARTART_CATALOG: tuple[tuple[str, str], ...] = (
+    ("Vertical Box List", "urn:microsoft.com/office/officeart/2005/8/layout/list1"),
+    ("Basic Process", "urn:microsoft.com/office/officeart/2005/8/layout/process1"),
+    ("Text Cycle", "urn:microsoft.com/office/officeart/2005/8/layout/cycle1"),
+    ("Hierarchy", "urn:microsoft.com/office/officeart/2005/8/layout/hierarchy1"),
+    ("Organization Chart", "urn:microsoft.com/office/officeart/2005/8/layout/orgChart1"),
+    ("Basic Pyramid", "urn:microsoft.com/office/officeart/2005/8/layout/pyramid1"),
+    ("Basic Venn", "urn:microsoft.com/office/officeart/2005/8/layout/venn1"),
+)
+
+
+class _FakeSmartArtLayouts:
+    """`Application.SmartArtLayouts` — the installed catalog, keyed by stable URN."""
+
+    def __init__(self) -> None:
+        self._items = [SimpleNamespace(Name=name, Id=urn) for name, urn in _SMARTART_CATALOG]
+
+    @property
+    def Count(self) -> int:
+        return len(self._items)
+
+    def Item(self, index: int) -> Any:
+        return self._items[int(index) - 1]
+
+
+class _FakeSmartArtNode:
+    def __init__(self, level: int, parent_list: _FakeSmartArtNodes) -> None:
+        self._level = int(level)
+        self._parent_list = parent_list
+        self.TextFrame2 = SimpleNamespace(TextRange=SimpleNamespace(Text=""))
+        self._children = _FakeSmartArtNodes(level=self._level + 1)
+
+    @property
+    def Level(self) -> int:
+        return self._level
+
+    @property
+    def Type(self) -> int:
+        return 1  # always msoSmartArtNodeTypeDefault — assistant doesn't round-trip
+
+    @property
+    def Nodes(self) -> _FakeSmartArtNodes:
+        return self._children
+
+    def AddNode(self, position: int = 5, node_type: int = 1) -> _FakeSmartArtNode:
+        """Add a *child* (position is BELOW=5 in practice) and return it."""
+        return self._children._append()
+
+    def Delete(self) -> None:
+        self._parent_list._remove(self)
+
+
+class _FakeSmartArtNodes:
+    def __init__(self, level: int) -> None:
+        self._level = int(level)
+        self._nodes: list[_FakeSmartArtNode] = []
+
+    def _append(self) -> _FakeSmartArtNode:
+        node = _FakeSmartArtNode(self._level, self)
+        self._nodes.append(node)
+        return node
+
+    def _remove(self, node: _FakeSmartArtNode) -> None:
+        self._nodes.remove(node)
+
+    @property
+    def Count(self) -> int:
+        return len(self._nodes)
+
+    def Item(self, index: int) -> _FakeSmartArtNode:
+        return self._nodes[int(index) - 1]
+
+    def Add(self) -> _FakeSmartArtNode:
+        """Add a top-level sibling. (The fake always grows; tree-layout caps are a
+        live-COM behavior the wrapper guards against via its kind pre-check.)"""
+        return self._append()
+
+
+class _FakeSmartArt:
+    """A SmartArt diagram backed by a node tree; `Layout.Id` is the stable URN."""
+
+    def __init__(self, layout_id: str) -> None:
+        self.Layout = SimpleNamespace(Id=str(layout_id))
+        self._nodes = _FakeSmartArtNodes(level=1)
+        self._seed_default()
+
+    def _seed_default(self) -> None:
+        seg = self.Layout.Id.rsplit("/", 1)[-1]
+        if seg in ("hierarchy1", "orgChart1"):  # tree: 1 root + 2 empty children
+            root = self._nodes._append()
+            root.AddNode()
+            root.AddNode()
+        else:  # flat: 3 empty top-level nodes
+            for _ in range(3):
+                self._nodes._append()
+
+    @property
+    def Nodes(self) -> _FakeSmartArtNodes:
+        return self._nodes
+
+    @property
+    def AllNodes(self) -> Any:
+        flat: list[_FakeSmartArtNode] = []
+
+        def walk(coll: _FakeSmartArtNodes) -> None:
+            for i in range(1, coll.Count + 1):
+                node = coll.Item(i)
+                flat.append(node)
+                walk(node.Nodes)
+
+        walk(self._nodes)
+        return SimpleNamespace(Count=len(flat), Item=lambda i: flat[int(i) - 1])
+
+
 class _FakeShapeRange:
     def __init__(self, app: _FakeApplication, shapes: list[_FakeShape]) -> None:
         self._app = app
@@ -750,6 +885,27 @@ class _FakeShapes:
         )
         sh._chart = _FakeChart(int(chart_type))
         return self._adopt(sh)
+
+    def AddSmartArt(
+        self, layout: Any, left: float, top: float, width: float, height: float
+    ) -> _FakeShape:
+        sid = self._next_id()
+        sh = _FakeShape(
+            name=f"Diagram {sid}",
+            shape_id=sid,
+            shape_type=_MSO_SMARTART,
+            text=None,  # a SmartArt shape has no text frame
+            left=left,
+            top=top,
+            width=width,
+            height=height,
+        )
+        sh._smartart = _FakeSmartArt(layout.Id)
+        return self._adopt(sh)
+
+    @property
+    def Application(self) -> _FakeApplication | None:
+        return self._app
 
     @property
     def Count(self) -> int:
@@ -1230,6 +1386,10 @@ class _FakeApplication:
     @property
     def ActiveWindow(self) -> _FakeWindow:
         return self._window
+
+    @property
+    def SmartArtLayouts(self) -> _FakeSmartArtLayouts:
+        return _FakeSmartArtLayouts()
 
 
 # ---------------------------------------------------------------------------

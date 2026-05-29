@@ -32,6 +32,7 @@ from ..constants import (
     IMAGE_FORMAT_CHOICES,
     LIST_TYPE_CHOICES,
     SHAPE_IMAGE_FORMAT_CHOICES,
+    SMARTART_CHOICES,
 )
 from ..exceptions import AnchorNotFoundError, PowerPointNotRunningError
 from .main import _run, emit
@@ -204,6 +205,40 @@ def _parse_series(raw: str | None) -> Any:
     raise click.UsageError("--series must be a JSON object or array")
 
 
+def _parse_nodes(raw: str | None) -> Any:
+    """Parse --nodes: a JSON array of strings and/or {text, children} objects.
+
+    `["A", "B"]` (flat) or `[{"text": "CEO", "children": ["VP Eng"]}]` (tree). The
+    structure is validated by `SmartArt.set_nodes`; here we only require a JSON
+    array.
+    """
+    if raw is None:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise click.UsageError(f"--nodes must be a JSON array: {e}") from e
+    if not isinstance(parsed, list):
+        raise click.UsageError("--nodes must be a JSON array of strings and/or objects")
+    return parsed
+
+
+def _fmt_smartart_read(info: dict[str, Any]) -> str:
+    head = (
+        f"smartart at {info.get('anchor_id')} (slide {info.get('slide')}, "
+        f"layout={info.get('layout')}, {info.get('node_count')} nodes)"
+    )
+    lines = [head]
+
+    def walk(nodes: list[dict[str, Any]], depth: int) -> None:
+        for n in nodes:
+            lines.append("  " * (depth + 1) + f"- {n.get('text')!r}")
+            walk(n.get("children") or [], depth + 1)
+
+    walk(info.get("nodes") or [], 0)
+    return "\n".join(lines)
+
+
 def _fmt_selection(info: dict[str, Any]) -> str:
     kind = info.get("type")
     slide = info.get("slide")
@@ -248,6 +283,7 @@ def register(group: click.Group) -> None:
     group.add_command(list_cmd)
     group.add_command(table)
     group.add_command(chart)
+    group.add_command(smartart)
     group.add_command(selection_cmd)
     group.add_command(show)
     group.add_command(go_to)
@@ -579,7 +615,7 @@ def _resolve_shape(deck: Presentation, anchor_id: str) -> Shape:
 @click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
 @click.option(
     "--kind",
-    type=click.Choice(["textbox", "shape", "picture", "table", "chart"]),
+    type=click.Choice(["textbox", "shape", "picture", "table", "chart", "smartart"]),
     required=True,
     help="What to add.",
 )
@@ -606,6 +642,21 @@ def _resolve_shape(deck: Presentation, anchor_id: str) -> Shape:
     default=None,
     help='Chart series as a JSON object {"name":[values]} or array of [name,[values]] '
     "(--kind chart).",
+)
+@click.option(
+    "--smartart-kind",
+    "smartart_kind",
+    type=click.Choice(SMARTART_CHOICES),
+    default="process",
+    show_default=True,
+    help="SmartArt layout (for --kind smartart).",
+)
+@click.option(
+    "--nodes",
+    "nodes",
+    default=None,
+    help="SmartArt nodes: a JSON array of strings and/or {text, children} objects "
+    "(--kind smartart).",
 )
 @click.option(
     "--path",
@@ -645,6 +696,8 @@ def shape_add(
     chart_type: str,
     categories: str | None,
     series: str | None,
+    smartart_kind: str,
+    nodes: str | None,
     left: float | None,
     top: float | None,
     width: float | None,
@@ -662,6 +715,7 @@ def shape_add(
         ser = _parse_series(series)
         if (cats is None) != (ser is None):
             raise click.UsageError("shape add --kind chart needs both --categories and --series")
+        sa_nodes = _parse_nodes(nodes)
         with attach() as ppt:
             deck = _pick_deck(ppt, ctx.obj["doc_name"])
             shapes = deck.slides[slide_index].shapes  # exit 2 if slide out of range
@@ -682,6 +736,10 @@ def shape_add(
                 elif kind == "chart":
                     new = shapes.add_chart(
                         chart_type, cats, ser, left=left, top=top, width=width, height=height
+                    )
+                elif kind == "smartart":
+                    new = shapes.add_smartart(
+                        smartart_kind, sa_nodes, left=left, top=top, width=width, height=height
                     )
                 else:  # picture
                     assert path is not None  # guarded above
@@ -1251,6 +1309,67 @@ def chart_set_data(
                 ch.set_data(cats or [], ser)
             info = ch.read()
             emit(info, as_text=not ctx.obj["as_json"], text=_fmt_chart_read(info))
+
+    _run(ctx, go)
+
+
+# ---------------------------------------------------------------------------
+# smartart read | set-nodes  (a SmartArt diagram is a shape; content is a tree)
+# ---------------------------------------------------------------------------
+
+
+@click.group(name="smartart")
+def smartart() -> None:
+    """Read + edit SmartArt diagrams (a diagram is a shape; content is a node tree)."""
+
+
+def _resolve_smartart(deck: Presentation, slide_index: int, shape_index: int) -> Any:
+    """Resolve the SmartArt on slide S, shape N (z-order). Exit 2 if none there."""
+    return deck.slides[slide_index].shapes[shape_index].smartart
+
+
+@smartart.command(name="read")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--shape", "shape_index", type=int, required=True, help="1-based shape z-order index."
+)
+@click.pass_context
+def smartart_read(ctx: click.Context, slide_index: int, shape_index: int) -> None:
+    """Read a SmartArt diagram: layout + the nested node tree (text + level)."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            info = _resolve_smartart(deck, slide_index, shape_index).read()
+            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_smartart_read(info))
+
+    _run(ctx, go)
+
+
+@smartart.command(name="set-nodes")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--shape", "shape_index", type=int, required=True, help="1-based shape z-order index."
+)
+@click.option(
+    "--nodes",
+    "nodes",
+    required=True,
+    help="A JSON array of strings and/or {text, children} objects (flat or nested).",
+)
+@click.pass_context
+def smartart_set_nodes(ctx: click.Context, slide_index: int, shape_index: int, nodes: str) -> None:
+    """Replace a SmartArt diagram's nodes (flat list or nested tree; one Ctrl-Z)."""
+    parsed = _parse_nodes(nodes)
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            sa = _resolve_smartart(deck, slide_index, shape_index)
+            with deck.edit(f"CLI: set smartart nodes shape:{slide_index}:{shape_index}"):
+                sa.set_nodes(parsed or [])
+            info = sa.read()
+            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_smartart_read(info))
 
     _run(ctx, go)
 

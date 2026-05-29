@@ -799,3 +799,97 @@ def chart_type_name(value: Any) -> str:
         return _CHART_TYPE_NAMES.get(int(value), f"type:{int(value)}")
     except (TypeError, ValueError):
         return "unknown"
+
+
+# --- SmartArt (v0.8) -------------------------------------------------------
+#
+# A SmartArt diagram is added from a `SmartArtLayout` pulled from
+# `Application.SmartArtLayouts`. The collection *index* drifts between installs,
+# but each layout's `.Id` is a stable URN (".../officeart/2005/8/layout/<seg>"),
+# so we key friendly names to the trailing URN segment and resolve the live
+# layout object by matching `Id.endswith("/" + seg)` (verified in
+# scripts/smartart_spike.py: 159 layouts installed, all 7 cores resolved).
+
+
+class MsoSmartArtNodePosition(IntEnum):
+    """`SmartArtNode.AddNode(Position, Type)` — where to add a node.
+
+    The one that matters is `BELOW` (add a *child*): plain
+    `SmartArtNodes.Add()` adds a *sibling*, so child nesting must go through
+    `AddNode(BELOW, ...)` (verified live).
+    """
+
+    DEFAULT = 1
+    AFTER = 2
+    BEFORE = 3
+    ABOVE = 4
+    BELOW = 5
+
+
+# Friendly name -> the trailing segment of the layout's URN `.Id`. The 7 core
+# layouts; widen on demand (the wordlive "add only as needed" rule).
+_SMARTART_LAYOUTS: dict[str, str] = {
+    "list": "list1",
+    "process": "process1",
+    "cycle": "cycle1",
+    "hierarchy": "hierarchy1",
+    "orgchart": "orgChart1",
+    "org_chart": "orgChart1",
+    "pyramid": "pyramid1",
+    "venn": "venn1",
+}
+
+# The friendly names offered as a CLI choice (canonical spellings, ordered).
+SMARTART_CHOICES: tuple[str, ...] = (
+    "list",
+    "process",
+    "cycle",
+    "hierarchy",
+    "orgchart",
+    "pyramid",
+    "venn",
+)
+
+# Reverse map (URN segment -> a canonical friendly name) for read-backs.
+_SMARTART_NAMES: dict[str, str] = {
+    "list1": "list",
+    "process1": "process",
+    "cycle1": "cycle",
+    "hierarchy1": "hierarchy",
+    "orgChart1": "orgchart",
+    "pyramid1": "pyramid",
+    "venn1": "venn",
+}
+
+# The layouts whose nodes form a tree (one root + children) rather than a flat
+# list — `Nodes.Add()` is a no-op at their top level, so set_nodes builds them
+# as a single root with `AddNode` children (verified live).
+SMARTART_TREE_KINDS: frozenset[str] = frozenset({"hierarchy", "orgchart"})
+
+
+def smartart_layout_for(kind: str) -> str:
+    """Resolve a friendly SmartArt name to its layout URN segment.
+
+    Accepts `"process"`/`"cycle"`/`"orgchart"`/… (case- and separator-
+    insensitive). Raises `ValueError` for an unknown name (before any COM) —
+    symmetric with `chart_type_for`. Unlike charts there is no raw-int form: a
+    layout is a COM object, not an int, so the wrapper resolves the segment
+    against `Application.SmartArtLayouts` live.
+    """
+    key = str(kind).strip().lower().replace(" ", "_").replace("-", "_")
+    seg = _SMARTART_LAYOUTS.get(key)
+    if seg is None:
+        choices = ", ".join(SMARTART_CHOICES)
+        raise ValueError(f"unknown SmartArt layout {kind!r}; expected one of: {choices}")
+    return seg
+
+
+def smartart_layout_name(urn: Any) -> str:
+    """Friendly name for a SmartArt layout `.Id` URN (e.g. ".../process1" -> "process").
+
+    Falls back to the trailing URN segment (then the raw value) when the layout
+    isn't one of the known cores, so a read-back never raises.
+    """
+    text = str(urn or "")
+    seg = text.rsplit("/", 1)[-1] if text else text
+    return _SMARTART_NAMES.get(seg, seg or "unknown")

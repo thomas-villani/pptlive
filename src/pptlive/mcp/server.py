@@ -159,6 +159,8 @@ def _read_core(ppt: Any, op: str, p: dict[str, Any]) -> dict[str, Any]:
         return _resolve_shape(deck, p.get("anchor_id")).table.read()
     if op == "chart":
         return _resolve_shape(deck, p.get("anchor_id")).chart.read()
+    if op == "smartart":
+        return _resolve_shape(deck, p.get("anchor_id")).smartart.read()
     raise ToolError(f"invalid_args: unknown read op {op!r}")
 
 
@@ -261,6 +263,10 @@ def _edit_core(deck: Presentation, op: str, p: dict[str, Any]) -> dict[str, Any]
                 p.get("series"),
                 **geom,
             )
+        elif kind == "smartart":
+            created = shapes.add_smartart(
+                p.get("smartart_kind") or "process", p.get("nodes"), **geom
+            )
         elif kind == "picture":
             _require(p.get("path") is not None, "edit shape_add kind='picture' requires `path`")
             created = shapes.add_picture(p["path"], alt_text=p.get("alt_text"), **geom)
@@ -317,6 +323,13 @@ def _edit_core(deck: Presentation, op: str, p: dict[str, Any]) -> dict[str, Any]
         )
         chart.set_data(p["categories"], p["series"])
         return chart.read()
+
+    # -- SmartArt (addressed by the SmartArt shape's anchor_id) ------------
+    if op == "smartart_set_nodes":
+        sa = _resolve_shape(deck, p.get("anchor_id")).smartart
+        _require(p.get("nodes") is not None, "edit op='smartart_set_nodes' requires `nodes`")
+        sa.set_nodes(p["nodes"])
+        return sa.read()
 
     raise ToolError(f"invalid_args: unknown edit op {op!r}")
 
@@ -376,7 +389,16 @@ def _show_core(deck: Presentation, op: str, p: dict[str, Any]) -> dict[str, Any]
 
 def ppt_read(
     op: Literal[
-        "status", "slides", "outline", "slide", "anchor", "selection", "table", "chart", "layouts"
+        "status",
+        "slides",
+        "outline",
+        "slide",
+        "anchor",
+        "selection",
+        "table",
+        "chart",
+        "smartart",
+        "layouts",
     ],
     anchor_id: str | None = None,
     slide: int | None = None,
@@ -394,8 +416,8 @@ def ppt_read(
       `cell:S:N:R:C` (table cell), `notes:S`, or `here:` (the user's selection).
       Returns text plus, for multi-paragraph anchors, a `paragraphs` breakdown.
     - "selection": what the user currently has selected, resolved to anchors.
-    - "table" / "chart": the grid / chart data of the table-or-chart shape at
-      `anchor_id` (a `shape:S:N`).
+    - "table" / "chart" / "smartart": the grid / chart data / node tree of the
+      table-, chart-, or SmartArt shape at `anchor_id` (a `shape:S:N`).
     - "layouts": the layout names that `ppt_edit` slide_add/set_layout accept.
 
     `doc` targets a presentation by name (default: the active one)."""
@@ -421,6 +443,7 @@ def ppt_edit(
         "table_delete_row",
         "chart_set_type",
         "chart_set_data",
+        "smartart_set_nodes",
     ],
     anchor_id: str | None = None,
     text: str | None = None,
@@ -442,7 +465,7 @@ def ppt_edit(
     to: int | None = None,
     layout: str | None = None,
     index: int | None = None,
-    kind: Literal["textbox", "shape", "picture", "table", "chart"] | None = None,
+    kind: Literal["textbox", "shape", "picture", "table", "chart", "smartart"] | None = None,
     shape_type: str = "rectangle",
     path: str | None = None,
     rows: int | None = None,
@@ -450,6 +473,8 @@ def ppt_edit(
     chart_type: str | None = None,
     categories: list[str] | None = None,
     series: dict[str, list[float]] | None = None,
+    smartart_kind: str | None = None,
+    nodes: list[Any] | None = None,
     left: float | None = None,
     top: float | None = None,
     width: float | None = None,
@@ -480,16 +505,19 @@ def ppt_edit(
     Shapes (create on `slide`; move/resize/delete/tag by `anchor_id`):
     - "shape_add": add `kind`="textbox" (with `text`), "shape" (autoshape via
       `shape_type`, e.g. "star", optional `text`), "picture" (`path`, optional
-      `alt_text`), "table" (`rows`+`cols`), or "chart" (`chart_type`, optional
-      `categories`+`series`). Optional `left`/`top`/`width`/`height`.
+      `alt_text`), "table" (`rows`+`cols`), "chart" (`chart_type`, optional
+      `categories`+`series`), or "smartart" (`smartart_kind` e.g. "process"/
+      "cycle"/"orgchart", optional `nodes`). Optional `left`/`top`/`width`/`height`.
     - "shape_move": move to absolute `left`/`top`. "shape_resize": set `width`/`height`.
     - "shape_delete": delete it. "set_alt": set `alt_text` (a drift-proof handle).
 
-    Tables & charts (target the table/chart shape by its `anchor_id`, a shape:S:N):
+    Tables, charts & SmartArt (target the shape by its `anchor_id`, a shape:S:N):
     - "table_add_row": append a row, optionally filled from `values`.
     - "table_delete_row": delete 1-based `row`.
     - "chart_set_type": change chart kind to `chart_type` (e.g. "line"/"pie"/"bar").
     - "chart_set_data": replace `categories` + `series` (a {name:[values]} map).
+    - "smartart_set_nodes": replace the diagram's `nodes` — a list of strings
+      (flat) and/or {text, children} objects (nested; tree layouts take one root).
 
     To edit a table cell's text, write to its `cell:S:N:R:C` anchor with op="write".
     `doc` targets a presentation by name (default: the active one)."""
@@ -522,6 +550,8 @@ def ppt_edit(
         "chart_type": chart_type,
         "categories": categories,
         "series": series,
+        "smartart_kind": smartart_kind,
+        "nodes": nodes,
         "left": left,
         "top": top,
         "width": width,

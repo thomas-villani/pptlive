@@ -36,12 +36,14 @@ from .constants import (
     placeholder_types_for,
     shape_image_filter_for,
     shape_type_name,
+    smartart_layout_for,
 )
 from .exceptions import AnchorNotFoundError, NoTextFrameError
 
 if TYPE_CHECKING:
     from ._charts import Chart, SeriesInput
     from ._slides import Slide
+    from ._smartart import NodeInput, SmartArt
     from ._tables import Table
 
 # Default geometry (points) for added shapes when the caller names none. A wide,
@@ -57,6 +59,8 @@ _DEFAULT_ROW_HEIGHT = 30.0  # advisory; PowerPoint auto-fits rows to content
 _DEFAULT_CHART_WIDTH = 480.0  # ~6.7 in
 _DEFAULT_CHART_HEIGHT = 300.0  # ~4.2 in
 _CHART_DEFAULT_STYLE = -1  # AddChart2 Style: -1 = the type's default style
+_DEFAULT_SMARTART_WIDTH = 480.0  # ~6.7 in
+_DEFAULT_SMARTART_HEIGHT = 300.0  # ~4.2 in
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +105,19 @@ def has_chart(com_shape: Any) -> bool:
     """
     try:
         return is_true(com_shape.HasChart)
+    except Exception:
+        return False
+
+
+def has_smartart(com_shape: Any) -> bool:
+    """True iff the shape holds a SmartArt diagram (`Shape.HasSmartArt == msoTrue`).
+
+    The reliable gate — like a table/chart, `Shape.Type` reports msoSmartArt here
+    but can't be trusted in general, so gate on `Has*` (verified live in
+    `scripts/smartart_spike.py`).
+    """
+    try:
+        return is_true(com_shape.HasSmartArt)
     except Exception:
         return False
 
@@ -152,6 +169,7 @@ def shape_to_dict(com_shape: Any, slide_index: int, z_index: int) -> dict[str, A
 
     d["has_table"] = has_table(com_shape)
     d["has_chart"] = has_chart(com_shape)
+    d["has_smartart"] = has_smartart(com_shape)
     if has_text_frame(com_shape):
         d["has_text_frame"] = True
         try:
@@ -288,6 +306,26 @@ class Shape(Anchor):
             if not has_chart(self._com_shape()):
                 raise AnchorNotFoundError("chart", self.anchor_id)
         return Chart(self)
+
+    @property
+    def has_smartart(self) -> bool:
+        """Whether this shape holds a SmartArt diagram (`Shape.HasSmartArt`)."""
+        with _com.translate_com_errors():
+            return has_smartart(self._com_shape())
+
+    @property
+    def smartart(self) -> SmartArt:
+        """The shape's `SmartArt` diagram (its node tree).
+
+        Raises `AnchorNotFoundError` (kind `"smartart"`, exit 2) if the shape
+        holds no SmartArt.
+        """
+        from ._smartart import SmartArt
+
+        with _com.translate_com_errors():
+            if not has_smartart(self._com_shape()):
+                raise AnchorNotFoundError("smartart", self.anchor_id)
+        return SmartArt(self)
 
     def _text_range(self) -> Any:
         sh = self._com_shape()
@@ -668,6 +706,61 @@ class ShapeCollection:
             shape = self._added()
         if categories is not None and series is not None:
             shape.chart.set_data(categories, series)
+        return shape
+
+    def _resolve_smartart_layout(self, kind: str) -> Any:
+        """The live `SmartArtLayout` COM object for a friendly `kind`.
+
+        Resolves the friendly name -> URN segment (`smartart_layout_for`, raising
+        `ValueError` before COM), then matches it against the running app's
+        `SmartArtLayouts` by stable URN `.Id` (the collection index drifts).
+        Raises `AnchorNotFoundError` (kind "smartart_layout") if the layout isn't
+        installed in this PowerPoint build.
+        """
+        seg = smartart_layout_for(kind)  # ValueError before any COM
+        layouts = self._com_collection.Application.SmartArtLayouts
+        suffix = "/" + seg
+        for i in range(1, int(layouts.Count) + 1):
+            layout = layouts.Item(i)
+            if str(layout.Id).endswith(suffix):
+                return layout
+        raise AnchorNotFoundError("smartart_layout", kind)
+
+    def add_smartart(
+        self,
+        kind: str,
+        nodes: Sequence[NodeInput] | None = None,
+        *,
+        left: float | None = None,
+        top: float | None = None,
+        width: float | None = None,
+        height: float | None = None,
+    ) -> Shape:
+        """Add a SmartArt diagram and return its `Shape` (`Shapes.AddSmartArt`).
+
+        `kind` is a friendly layout name (`"process"`, `"cycle"`, `"orgchart"`,
+        …; see `constants.SMARTART_CHOICES`). Geometry is in points; omitted values
+        default to a ~6.7×4.2 in diagram near the top-left. Address the diagram's
+        nodes through the returned shape's `.smartart` (or `anchor_id`); the
+        shape's `.has_smartart` is True.
+
+        If `nodes` is given, the diagram's nodes are replaced with it (via
+        `SmartArt.set_nodes`) — a list of strings (flat) and/or `{text, children}`
+        mappings (nested); otherwise the layout keeps its default placeholder
+        nodes. Raises `ValueError` for an unknown `kind` (before any COM) and
+        `AnchorNotFoundError` if the layout isn't installed. Wrap in
+        `deck.edit(...)` for the one-Ctrl-Z fence.
+        """
+        left = _DEFAULT_LEFT if left is None else float(left)
+        top = _DEFAULT_TOP if top is None else float(top)
+        width = _DEFAULT_SMARTART_WIDTH if width is None else float(width)
+        height = _DEFAULT_SMARTART_HEIGHT if height is None else float(height)
+        with _com.translate_com_errors():
+            layout = self._resolve_smartart_layout(kind)
+            self._com_collection.AddSmartArt(layout, left, top, width, height)
+            shape = self._added()
+        if nodes is not None:
+            shape.smartart.set_nodes(nodes)
         return shape
 
     def list(self) -> list[dict[str, Any]]:
