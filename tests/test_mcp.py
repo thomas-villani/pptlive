@@ -15,6 +15,7 @@ The surface is five dispatch tools — `ppt_read` / `ppt_edit` / `ppt_render` /
 from __future__ import annotations
 
 import asyncio
+import base64
 from typing import Any
 
 import pytest
@@ -22,6 +23,7 @@ import pytest
 pytest.importorskip("mcp")
 
 from mcp.server.fastmcp.exceptions import ToolError  # noqa: E402
+from mcp.types import CallToolResult, ImageContent  # noqa: E402
 
 from pptlive.mcp.server import (  # noqa: E402
     build_server,
@@ -306,7 +308,8 @@ def test_shape_add_picture_with_alt(fake_powerpoint: Any, tmp_path: Any) -> None
 
 def test_shape_image_export(fake_powerpoint: Any, tmp_path: Any) -> None:
     out_path = tmp_path / "shape.png"
-    out = ppt_render("shape_image", anchor_id="shape:2:3", out=str(out_path))
+    # embed=False keeps the plain structured dict (path only).
+    out = ppt_render("shape_image", anchor_id="shape:2:3", out=str(out_path), embed=False)
     assert out["ok"] is True
     assert out["anchor_id"] == "shape:2:3"
     assert out_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
@@ -534,10 +537,72 @@ def test_edit_op_enum_includes_theme_master() -> None:
 
 def test_slide_image_export(fake_powerpoint: Any, tmp_path: Any) -> None:
     out_path = tmp_path / "slide2.png"
-    out = ppt_render("slide_image", slide=2, out=str(out_path))
+    out = ppt_render("slide_image", slide=2, out=str(out_path), embed=False)
     assert out["ok"] is True
     assert out["format"] == "png"
     assert out_path.exists()
+
+
+def _png_dims(data: bytes) -> tuple[int, int]:
+    """Recover (width, height) from the stub PNG's IHDR the fake writes."""
+    return (
+        int.from_bytes(data[16:20], "big"),
+        int.from_bytes(data[20:24], "big"),
+    )
+
+
+def test_slide_image_embeds_inline_and_keeps_path(fake_powerpoint: Any, tmp_path: Any) -> None:
+    out_path = tmp_path / "slide2.png"
+    # Default embed=True returns BOTH the inline image and the structured path.
+    res = ppt_render("slide_image", slide=2, out=str(out_path))
+    assert isinstance(res, CallToolResult)
+    # structuredContent carries the path so a co-located filesystem tool still works.
+    assert res.structuredContent is not None
+    assert res.structuredContent["ok"] is True
+    assert res.structuredContent["path"] == str(out_path)
+    # the inline block is a real base64 image a vision model can see.
+    images = [c for c in res.content if isinstance(c, ImageContent)]
+    assert len(images) == 1
+    assert images[0].mimeType == "image/png"
+    decoded = base64.b64decode(images[0].data)
+    assert decoded == out_path.read_bytes()
+    assert decoded.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_slide_image_embed_defaults_to_legible_width(fake_powerpoint: Any) -> None:
+    # With no width/height and embed on, the render is capped to ~1024 px wide
+    # so the inline block stays cheap — the fake echoes the requested size.
+    res = ppt_render("slide_image", slide=2)
+    assert isinstance(res, CallToolResult)
+    image = next(c for c in res.content if isinstance(c, ImageContent))
+    width, _height = _png_dims(base64.b64decode(image.data))
+    assert width == 1024
+
+
+def test_shape_image_embeds_with_correct_mime(fake_powerpoint: Any) -> None:
+    res = ppt_render("shape_image", anchor_id="shape:2:3", fmt="jpg")
+    assert isinstance(res, CallToolResult)
+    image = next(c for c in res.content if isinstance(c, ImageContent))
+    assert image.mimeType == "image/jpeg"
+
+
+def test_slide_image_embed_survives_server_call_tool(fake_powerpoint: Any) -> None:
+    # The real MCP path: FastMCP validates a tool's result against the output
+    # schema it infers from `-> dict`. Returning a CallToolResult must pass that
+    # gate (structuredContent is the dict; the image rides as a content block).
+    srv = build_server()
+    res = asyncio.run(srv.call_tool("ppt_render", {"op": "slide_image", "slide": 2}))
+    assert isinstance(res, CallToolResult)
+    assert res.structuredContent is not None
+    assert res.structuredContent["ok"] is True and res.structuredContent["path"]
+    assert any(isinstance(c, ImageContent) for c in res.content)
+
+
+def test_navigate_never_embeds(fake_powerpoint: Any) -> None:
+    # navigate produces no image, so it stays a plain dict even with embed on.
+    out = ppt_render("navigate", anchor_id="shape:2:1")
+    assert not isinstance(out, CallToolResult)
+    assert out["ok"] is True
 
 
 def test_navigate_moves_the_view(fake_powerpoint: Any) -> None:
@@ -647,6 +712,33 @@ def test_batch_mixed_read_and_edit(fake_powerpoint: Any) -> None:
     )
     assert out["ok"] is True
     assert out["results"][1]["result"]["text"] == "Hi"
+
+
+def test_batch_embeds_render_image_with_summary(fake_powerpoint: Any) -> None:
+    # Build then look in one round trip: the edit summary rides as structured
+    # content while the rendered slide comes back as an inline image block.
+    res = ppt_batch(
+        [
+            {"op": "write", "anchor_id": "ph:2:title", "text": "Q3"},
+            {"tool": "render", "op": "slide_image", "slide": 2},
+        ]
+    )
+    assert isinstance(res, CallToolResult)
+    assert res.structuredContent is not None
+    assert res.structuredContent["ok"] is True
+    assert res.structuredContent["count"] == 2
+    images = [c for c in res.content if isinstance(c, ImageContent)]
+    assert len(images) == 1
+    assert base64.b64decode(images[0].data).startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_batch_render_embed_false_is_plain_dict(fake_powerpoint: Any) -> None:
+    out = ppt_batch(
+        [{"tool": "render", "op": "slide_image", "slide": 2}],
+        embed=False,
+    )
+    assert not isinstance(out, CallToolResult)
+    assert out["ok"] is True
 
 
 def test_batch_stops_on_first_error(fake_powerpoint: Any) -> None:
