@@ -44,6 +44,15 @@ dev = [
     "mcp>=1.2",
 ]
 
+# Documentation site (MkDocs Material + mkdocstrings autodoc). Build with
+# `uv run --extra docs mkdocs serve` (live preview) or `mkdocs build`.
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.26",
+    "mkdocs-include-markdown-plugin>=6.2",
+]
+
 [project.scripts]
 pptlive = "pptlive.cli.main:main"
 pptlive-mcp = "pptlive.mcp.__main__:main"

@@ -1,0 +1,10 @@
+/* Tighten mkdocstrings signature blocks so long generic types wrap nicely. */
+.doc-signature {
+    white-space: pre-wrap;
+}
+
+/* Soften the divider above each auto-generated symbol heading. */
+.doc-heading {
+    border-top: 1px solid var(--md-default-fg-color--lightest);
+    padding-top: 0.6rem;
+}

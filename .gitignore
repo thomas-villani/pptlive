@@ -9,5 +9,8 @@ wheels/
 # Virtual environments
 .venv
 
+# MkDocs build output
+site/
+
 # Spike harness scratch state (scripts/undo_test.py)
 scripts/.undo_test_state.json
