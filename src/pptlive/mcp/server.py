@@ -4,13 +4,19 @@ Design notes (the things that make this safe and faithful):
 
 * **Threading.** FastMCP calls a *sync* tool function directly on its asyncio
   event-loop thread (no thread-pool offload — verified against the SDK and in
-  `scripts/mcp_spike.py`). So each tool's `attach()` does its whole
-  `CoInitialize -> work -> CoUninitialize` cycle on one consistent thread per
-  call — the same shape as a one-shot CLI invocation, just repeated in a
-  long-lived process. That is STA-safe. The only cost is that a COM call briefly
-  blocks the loop, which is fine for a single user driving PowerPoint serially.
-  Tools are therefore deliberately **sync**, and never cache a COM object across
-  calls (each tool re-`attach()`es).
+  `scripts/mcp_spike.py`). So every tool's `attach()` runs on one consistent
+  thread, and the COM apartment is initialised **once** for that thread and kept
+  open for the life of the process (see `_com.com_apartment`). The original
+  design re-`CoUninitialize`d after each call, on the assumption that a balanced
+  per-call cycle was STA-safe — but that was wrong: repeated `CoUninitialize` on
+  the long-lived event-loop thread dropped PowerPoint's automation connection
+  (snapping its view back to slide 1) and eventually segfaulted (diagnosed
+  2026-05-29). With the apartment held open, each tool still re-`attach()`es
+  (cheap `GetActiveObject`, so we never cache a COM proxy across calls and stay
+  robust to the user closing/reopening a deck) but COM itself is never torn down
+  mid-session. The only cost is that a COM call briefly blocks the loop, which is
+  fine for a single user driving PowerPoint serially. Tools are therefore
+  deliberately **sync**.
 
 * **Politeness + atomic undo come for free.** Tools wrap the same public API the
   CLI does, so reads don't move the view and every mutation goes through
