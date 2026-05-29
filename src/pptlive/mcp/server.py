@@ -39,12 +39,16 @@ Design notes (the things that make this safe and faithful):
 
 from __future__ import annotations
 
+import base64
+import json
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
+from pathlib import Path
 from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
+from mcp.types import CallToolResult, ImageContent, TextContent
 
 from .. import attach
 from .._guide import skill_body
@@ -117,6 +121,66 @@ def _resolve_shape(deck: Presentation, anchor_id: str | None) -> Shape:
     if not isinstance(anchor, Shape):
         raise AnchorNotFoundError("shape", anchor_id)
     return anchor
+
+
+# ---------------------------------------------------------------------------
+# Returning rendered images *through* the MCP call (not just a filesystem path).
+#
+# A render writes a PNG to the Windows box, but a hosted/remote client (e.g.
+# claude.ai talking to a local bundle) runs the model in a separate sandbox and
+# can't open that path. The fix is the MCP image content block: we base64 the
+# bytes back inline so a vision model sees the slide regardless of where the
+# file lives. We return *both* — the image block AND the structured `path` —
+# because a co-located filesystem tool (a local coding agent) still wants the
+# path; never depend on the path alone.
+#
+# Caveat worth stating plainly: an image block is only as good as the host. A
+# good host turns it into a native image (cost ~= w*h/750 tokens); a poor one
+# inlines the base64 as text (tens of thousands of tokens). So we render small
+# by default (`_EMBED_DEFAULT_WIDTH`) — legible for text-heavy slides without
+# letting a whole deck blow out the context window. Pass `width`/`height` to
+# override, or `embed=False` to get the path only.
+# ---------------------------------------------------------------------------
+
+#: Default long-edge pixels for an embedded slide image when the caller gives no
+#: size — ~1024 px stays legible while keeping the encoded block cheap.
+_EMBED_DEFAULT_WIDTH = 1024
+
+_MIME_BY_FMT = {
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "gif": "image/gif",
+    "bmp": "image/bmp",
+    "tiff": "image/tiff",
+}
+
+
+def _image_block(path: str, fmt: str) -> ImageContent:
+    """Read a just-rendered image file and wrap its bytes as MCP ImageContent."""
+    data = base64.b64encode(Path(path).read_bytes()).decode("ascii")
+    mime = _MIME_BY_FMT.get(fmt.lower(), "application/octet-stream")
+    return ImageContent(type="image", data=data, mimeType=mime)
+
+
+def _render_reply(results: list[dict[str, Any]], structured: dict[str, Any]) -> Any:
+    """Build the tool reply for render output that may carry images.
+
+    `results` is the list of per-op result dicts that *might* hold a `path` +
+    `format` (slide_image / shape_image); `structured` is the dict to surface as
+    the call's structuredContent (the single op's result, or the batch summary).
+    Returns a `CallToolResult` (image block(s) + JSON text + structured content)
+    when any image is present, else just `structured` for FastMCP to serialize.
+    """
+    blocks = [
+        _image_block(r["path"], r.get("format", "png"))
+        for r in results
+        if isinstance(r, dict) and r.get("path")
+    ]
+    if not blocks:
+        return structured
+    text = TextContent(type="text", text=json.dumps(structured, indent=2, default=str))
+    return CallToolResult(content=[text, *blocks], structuredContent=structured)
 
 
 # ===========================================================================
@@ -664,23 +728,33 @@ def ppt_render(
     height: int | None = None,
     fmt: Literal["png", "jpg", "jpeg", "gif", "bmp"] = "png",
     select: bool = True,
+    embed: bool = True,
     doc: str | None = None,
-) -> dict[str, Any]:
+) -> Any:
     """Render to an image, or move the user's view. `op`:
-    - "slide_image": render slide `slide` (1-based) to an image file; return its
-      absolute path — so a vision model can *see* the slide it just built
-      (render -> look -> iterate). Renders the current unsaved state; polite (does
-      not move the view). `out` defaults to a temp file; pass `width`/`height`
-      (pixels; one is enough — the other follows the aspect ratio).
+    - "slide_image": render slide `slide` (1-based) to an image and return it BOTH
+      as an inline image the vision model can *see* (render -> look -> iterate) AND
+      as an absolute file `path` in the structured result — so it works whether you
+      run co-located with the file or in a remote sandbox that can't open the path.
+      Renders the current unsaved state; polite (does not move the view). `out`
+      defaults to a temp file; pass `width`/`height` (pixels; one is enough — the
+      other follows the aspect ratio). Default render is ~1024 px on the long edge
+      to keep the inline image cheap; override with `width`/`height`.
     - "shape_image": render *just* the shape at `anchor_id` (cropped to its bounds,
       native pixel size) — so a vision model can see one picture/diagram alone.
-      Polite. `out` defaults to a temp file.
+      Same dual return (inline image + `path`). Polite. `out` defaults to a temp file.
     - "navigate": move the user's view to `anchor_id`'s slide — a deliberate,
       opt-in view move (every other tool leaves the view alone). With `select=True`
       (default), also selects the target shape. Use only when asked to be taken
       somewhere.
 
+    `embed` (default True) returns the rendered image inline so a remote model can
+    see it; set False for the path only (smaller reply when a local tool reads the
+    file). Note: whether the inline image reaches the model depends on the MCP host
+    — most desktop hosts forward it as a native image, but some only pass the path.
     `fmt` is the image format. `doc` targets a presentation by name."""
+    if op == "slide_image" and embed and width is None and height is None:
+        width = _EMBED_DEFAULT_WIDTH
     params = {
         "slide": slide,
         "anchor_id": anchor_id,
@@ -692,7 +766,10 @@ def ppt_render(
         "doc": doc,
     }
     with _mcp_errors(), attach() as ppt:
-        return _render_core(ppt, op, params)
+        result = _render_core(ppt, op, params)
+        if embed and op in ("slide_image", "shape_image"):
+            return _render_reply([result], result)
+        return result
 
 
 def ppt_show(
@@ -722,7 +799,8 @@ def ppt_batch(
     doc: str | None = None,
     atomic: bool = True,
     stop_on_error: bool = True,
-) -> dict[str, Any]:
+    embed: bool = True,
+) -> Any:
     """Run a list of ops against one PowerPoint connection — the way to build or
     restructure a slide without a round-trip per change. Each command is a dict:
 
@@ -740,10 +818,17 @@ def ppt_batch(
     `stop_on_error` (default True): stop at the first failing command. With False,
     every command runs and failures are reported in place.
 
+    `embed` (default True): any `render` slide_image/shape_image commands also
+    return their rendered image inline (in addition to the `path` in the structured
+    result), so "build a slide, then look at it" works in one round trip even from a
+    remote sandbox. Set False for paths only. Inline slide images default to
+    ~1024 px on the long edge; a render command's own `width`/`height` overrides that.
+
     Returns `{"ok": <all succeeded>, "atomic", "count", "results": [...]}` where each
     result is `{"index", "tool", "op", "ok", "result"}` on success or
     `{..., "ok": false, "error": <category>, "message"}` on failure (same category
-    tokens as the other tools' ToolErrors)."""
+    tokens as the other tools' ToolErrors). When `embed` surfaces images, the reply
+    carries those image blocks alongside this summary as its structured content."""
     _require(
         isinstance(commands, list) and len(commands) > 0,
         "ppt_batch requires a non-empty `commands` list",
@@ -763,6 +848,14 @@ def ppt_batch(
                 op = cmd.get("op")
                 p = {k: v for k, v in cmd.items() if k not in ("tool", "op")}
                 p["doc"] = doc
+                if (
+                    embed
+                    and tool == "render"
+                    and op == "slide_image"
+                    and p.get("width") is None
+                    and p.get("height") is None
+                ):
+                    p["width"] = _EMBED_DEFAULT_WIDTH
                 entry: dict[str, Any] = {"index": i, "tool": tool, "op": op}
                 try:
                     _require(op is not None, f"command #{i} is missing `op`")
@@ -790,12 +883,20 @@ def ppt_batch(
                         break
                     continue
                 results.append(entry)
-        return {
+        summary = {
             "ok": all(r["ok"] for r in results),
             "atomic": atomic,
             "count": len(results),
             "results": results,
         }
+        if not embed:
+            return summary
+        rendered = [
+            r["result"]
+            for r in results
+            if r["ok"] and r["tool"] == "render" and isinstance(r.get("result"), dict)
+        ]
+        return _render_reply(rendered, summary)
 
 
 # ---------------------------------------------------------------------------
