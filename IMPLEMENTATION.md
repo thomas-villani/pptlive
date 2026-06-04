@@ -372,13 +372,17 @@ drives the tool functions against the same `fake_powerpoint` deck.
   thread* (no thread-pool offload — confirmed in the SDK's
   `func_metadata.call_fn_with_arg_validation`, and empirically: `loop_thread ==
   tool_thread == MainThread` driving the real `call_tool` path). So each tool's
-  `attach()` runs its whole `CoInitialize → work → CoUninitialize` cycle on one
-  consistent thread per call — the same shape as a one-shot CLI invocation, just
-  repeated in a long-lived process. **That is STA-safe**, so tools are deliberately
-  sync and never cache a COM object across calls; the only cost is that a COM call
-  briefly blocks the loop, fine for a single user driving PowerPoint serially. The
-  full stdio path was also exercised end-to-end (a `stdio_client` spawned
-  `pptlive-mcp`, initialized, and listed all 13 tools).
+  `attach()` runs on one consistent thread. The original design re-`CoUninitialize`d
+  per call on the assumption that the balanced cycle was STA-safe — **which proved
+  wrong** (diagnosed 2026-05-29): repeated `CoUninitialize` on the long-lived
+  event-loop thread dropped PowerPoint's automation connection (snapping its view
+  to slide 1 — the "jumps back to the title slide" report) and eventually
+  segfaulted. Fix: `com_apartment()` now initialises COM **once per thread and
+  never uninitialises** (the OS reclaims it at process exit). Tools still
+  re-`attach()` per call (cheap `GetActiveObject`, no cached proxy) but the
+  apartment stays open for the session. The full stdio path was also exercised
+  end-to-end (a `stdio_client` spawned `pptlive-mcp`, initialized, and listed all
+  13 tools).
 
 ## v0.6 — live slide show control (the most literally "live" surface) — SHIPPED (fake-COM; live spike pending)
 

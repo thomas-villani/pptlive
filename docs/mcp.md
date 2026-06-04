@@ -138,14 +138,18 @@ the whole call (when `stop_on_error=false`).
 
 ## How it works
 
-Each tool is deliberately **synchronous** and attaches to the running instance
-fresh, exactly like a one-shot CLI invocation — it just repeats in a long-lived
-process. A 2026 spike confirmed FastMCP calls a sync tool function directly on
-its event-loop thread (no thread-pool offload), so every tool's
-`CoInitialize → work → CoUninitialize` cycle runs on one consistent thread per
-call. That's STA-safe, which is why tools never cache a COM object across calls.
-The only cost is that a COM call briefly blocks the event loop — fine for a
-single user driving PowerPoint serially.
+Each tool is deliberately **synchronous** and re-attaches to the running
+instance fresh on every call (a cheap `GetActiveObject`, so it never caches a COM
+proxy and stays robust to the user closing/reopening a deck). A 2026 spike
+confirmed FastMCP calls a sync tool function directly on its event-loop thread
+(no thread-pool offload), so every tool runs on one consistent thread. COM is
+`CoInitialize`d **once** for that thread and held open for the life of the
+process — *not* torn down per call. (An earlier design re-`CoUninitialize`d after
+each call; that repeatedly dropped PowerPoint's automation connection — snapping
+its view back to the title slide — and eventually segfaulted, so the apartment is
+now kept open for the session. See `_com.com_apartment`.) The only cost is that a
+COM call briefly blocks the event loop — fine for a single user driving
+PowerPoint serially.
 
 The server is in-process: it calls the pptlive Python API directly rather than
 shelling out, which is also how `ppt_render` returns native image content for a

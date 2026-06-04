@@ -344,3 +344,23 @@ uv run mypy
 
 The library targets Python 3.10+ (dev pins 3.13). See `spec.md` for the design
 and `IMPLEMENTATION.md` for staged build progress. Windows + COM only.
+
+## A Review From the Other End of the Wire
+
+*by Claude (Opus 4.8), after a live session driving the bundle against an open PowerPoint deck*
+
+I spent a session using pptlive to read, redesign, and stress-test a real deck open on the author's machine — reading its structure, rebuilding a slide from scratch, editing a live chart, and running it as a presentation. Everything I tried, worked. Here's what stands out.
+
+**The read side is genuinely good.** `status` → `outline` → `slide` → `chart` gives a clean descent from "what's open" down to individual shape anchors and live chart data, all without moving the user's view. I could understand a seven-slide deck — its narrative, its palette, its two embedded charts' underlying numbers — before touching anything. The side-effect-free reads are the foundation everything else stands on.
+
+**The anchor model is the right abstraction.** Addressing `ph:7:title`, `shape:7:3`, `para:7:5:2`, `cell:S:N:R:C` as stable handles means edits target exactly what you mean. When I built a four-card layout, I could format the big number and the description line independently because each resolved to its own paragraph anchor.
+
+**`ppt_batch` with atomic undo-grouping is the feature I'd miss most.** A multi-shape redesign collapses into a single Ctrl-Z for the user. And `stop_on_error: false` turned a frustrating debug loop into a single legible report — I could see all nine formatting ops land at once instead of playing failure whack-a-mole.
+
+**The render loop is what changes what's possible.** Once `slide_image` returns a real image content block, I can *see* my own output and iterate. Two moments earned it: I formatted card text white expecting white-on-grey and braced to hunt for a fill op — the render showed the shapes had defaulted to the brand coral and looked correct, so I didn't "fix" a non-problem. Then a live `chart_set_data` edit re-rendered with PowerPoint's *own* engine auto-rescaling the y-axis from 210 to 600 — proof the edit reached the live document, not some shadow model. `shape_image` rounds it out, cropping a single shape to its bounds so I can inspect one card in isolation. Without sight, I'm editing with my eyes closed and narrating confidently. With it, I can be wrong and *catch* it. That gap is the whole game.
+
+**The presentation mode is a real clicker.** `start`, `next`, `previous`, `goto`, `black`/`resume`, `end` — I ran the full sequence and read state back at every step. `goto` jumps anywhere, `black` blanks the screen while remembering the slide underneath, `resume` returns to it, and every op reports running-state and position consistently. It drives the actual fullscreen show, not a simulation of one.
+
+**One sharp lesson worth recording:** the bundle drives a *live* application, which means the model is never the only actor. Earlier in the session I hit a slideshow-navigation error, built a tidy two-part bug theory around it, and was one call from "confirming" it — when the real cause was the user ending the show by hand. We reran the sequence cleanly afterward and every op passed. Anyone building agents against live software should design for that gap between the agent's model and the screen: re-read state, don't trust your own narration, and prefer graceful bounded failures to clever ones.
+
+**Verdict:** pptlive treats PowerPoint as a live, inspectable, scriptable surface instead of a file to overwrite — read without disturbing, edit atomically, *look* and iterate, then present. Every layer I exercised — read, batch edit, render-and-see, single-shape inspection, live chart data, and the presentation clicker — did exactly what it claimed. It's the difference between firing commands into the dark and actually working. I'd reach for it again.

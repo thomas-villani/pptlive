@@ -12,6 +12,7 @@ invisibly (`Application.Visible = False` raises in most builds), so
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -23,10 +24,35 @@ _T = TypeVar("_T")
 
 _POWERPOINT_PROG_ID = "PowerPoint.Application"
 
+#: Per-thread "COM already initialised on this thread" flag. Set once, never
+#: cleared — see `com_apartment` for why we deliberately never `CoUninitialize`.
+_apartment = threading.local()
+
 
 @contextmanager
 def com_apartment() -> Iterator[None]:
-    """STA apartment lifecycle. Nests safely via pythoncom's reference counting."""
+    """STA apartment lifecycle: initialise COM **once per thread**, never uninit.
+
+    This diverges from wordlive's balanced `CoInitialize`/`CoUninitialize` pair,
+    and the reason is the MCP server — the first *long-lived* process to drive
+    pptlive. wordlive is CLI-only (one-shot processes), so a balanced cycle per
+    invocation is fine there. The MCP server, by contrast, re-`attach()`es on
+    *every* tool call inside one process; with the balanced pair that means a
+    `CoUninitialize` after each call. Repeated `CoUninitialize` on the same
+    thread destabilises pythoncom: it drops PowerPoint's automation connection
+    (snapping the active window back to **slide 1** — the user-visible "jumps to
+    the title slide" bug) and, under repetition, corrupts COM proxy state into a
+    hard segfault. Verified live 2026-05-29 (`scripts/undo_test.py` lineage): a
+    bare loop of `attach()` cycles segfaults within a few iterations, while a
+    single `CoInitialize` + repeated `GetActiveObject` with *no* uninit is rock
+    stable and never moves the view.
+
+    So we `CoInitialize` the first time this runs on a given thread and leave the
+    apartment open; the OS reclaims it at thread/process exit. One-shot CLI runs
+    are unaffected (they init once and exit); the long-lived MCP server now holds
+    a single stable apartment across all its tool calls. Tests monkeypatch the
+    getters, so they never exercise this against real COM.
+    """
     try:
         import pythoncom  # type: ignore[import-not-found]
     except ImportError:
@@ -35,11 +61,10 @@ def com_apartment() -> Iterator[None]:
         yield
         return
 
-    pythoncom.CoInitialize()
-    try:
-        yield
-    finally:
-        pythoncom.CoUninitialize()
+    if not getattr(_apartment, "initialised", False):
+        pythoncom.CoInitialize()
+        _apartment.initialised = True
+    yield
 
 
 def get_active_powerpoint() -> Any:
