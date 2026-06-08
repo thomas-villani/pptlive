@@ -42,7 +42,7 @@ from ..constants import (
     THEME_FONT_SCRIPT_CHOICES,
     THEME_FONT_SLOTS,
 )
-from ..exceptions import AnchorNotFoundError, PowerPointNotRunningError
+from ..exceptions import AmbiguousMatchError, AnchorNotFoundError, PowerPointNotRunningError
 from .main import _run, emit
 
 
@@ -96,6 +96,21 @@ def _fmt_outline(items: list[dict[str, Any]]) -> str:
         for bullet in it.get("bullets") or []:
             lines.append(f"      • {bullet}")
     return "\n".join(lines)
+
+
+def _fmt_find(matches: list[dict[str, Any]]) -> str:
+    if not matches:
+        return "(no matches)"
+    lines = []
+    for m in matches:
+        loc = f"{m['anchor_id']} @{m['start']}+{m['length']}"
+        lines.append(f"{loc:<28}  {m.get('context', m['text'])}")
+    return "\n".join(lines)
+
+
+def _fmt_replace_summary(replacements: list[dict[str, Any]]) -> str:
+    n = len(replacements)
+    return f"replaced {n} occurrence{'s' if n != 1 else ''}"
 
 
 def _fmt_shapes(shapes: list[dict[str, Any]]) -> str:
@@ -314,6 +329,7 @@ def register(group: click.Group) -> None:
     group.add_command(shape)
     group.add_command(read)
     group.add_command(write)
+    group.add_command(find)
     group.add_command(replace)
     group.add_command(paragraphs_cmd)
     group.add_command(insert)
@@ -1716,23 +1732,126 @@ def write(ctx: click.Context, anchor_id: str, text: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# replace --anchor-id ID --text "..."
+# find --text "..." [--in SCOPE]
+# ---------------------------------------------------------------------------
+
+
+@click.command(name="find")
+@click.option(
+    "--text", "text", required=True, help="Text to locate (smart-quote / whitespace fuzzy)."
+)
+@click.option(
+    "--in",
+    "in_",
+    default=None,
+    help="Scope: slide:S, shape:S:N, ph:S:KIND, cell:S:N:R:C, or notes:S (default: whole deck).",
+)
+@click.pass_context
+def find(ctx: click.Context, text: str, in_: str | None) -> None:
+    """Locate every fuzzy occurrence of TEXT (read-only; preserves the view).
+
+    Emits a JSON array of `{anchor_id, start, length, text, context}` hits in
+    document order — an empty array (exit 0) when nothing matches.
+    """
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            matches = deck.find(text, scope=in_)
+            emit(matches, as_text=not ctx.obj["as_json"], text=_fmt_find(matches))
+
+    _run(ctx, go)
+
+
+# ---------------------------------------------------------------------------
+# replace
+#   --anchor-id ID --text "..."                                (anchor mode)
+#   --find OLD --text NEW [--in SCOPE] [--all|--occurrence N]  (fuzzy mode)
 # ---------------------------------------------------------------------------
 
 
 @click.command(name="replace")
 @click.option(
-    "--anchor-id", "anchor_id", required=True, help="Text anchor whose contents to replace."
+    "--anchor-id", "anchor_id", default=None, help="Replace the entire text at this anchor."
+)
+@click.option(
+    "--find", "find_text", default=None, help="Fuzzy text to locate (alternative to --anchor-id)."
 )
 @click.option("--text", "text", required=True, help="Replacement text (embed \\n for paragraphs).")
+@click.option(
+    "--in", "in_", default=None, help="In fuzzy mode, scope the search (slide:S / an anchor id)."
+)
+@click.option(
+    "--all", "replace_all", is_flag=True, default=False, help="In fuzzy mode, replace every match."
+)
+@click.option(
+    "--occurrence",
+    "occurrence",
+    type=int,
+    default=None,
+    help="In fuzzy mode, replace only the Nth match (1-based, document order).",
+)
 @click.pass_context
-def replace(ctx: click.Context, anchor_id: str, text: str) -> None:
-    """Replace the entire text of a text anchor.
+def replace(
+    ctx: click.Context,
+    anchor_id: str | None,
+    find_text: str | None,
+    text: str,
+    in_: str | None,
+    replace_all: bool,
+    occurrence: int | None,
+) -> None:
+    """Replace text — either at an anchor (entire text) or via fuzzy find.
 
-    In v0 this is the anchor-addressed form (identical effect to `write`). Fuzzy
-    `replace --find OLD --text NEW` arrives with the find/replace stage.
+    `replace --anchor-id ID --text NEW` overwrites the whole anchor (same effect
+    as `write`). `replace --find OLD --text NEW [--in SCOPE] [--all|--occurrence
+    N]` fuzzy-locates OLD across the deck and rewrites just the matched spans.
+    Either form preserves the viewed slide and collapses to one Ctrl-Z.
     """
-    _set_text(ctx, anchor_id, text, f"CLI: replace {anchor_id}")
+    if (anchor_id is None) == (find_text is None):
+        raise click.UsageError("provide exactly one of --anchor-id or --find")
+    if anchor_id is not None and (in_ or replace_all or occurrence is not None):
+        raise click.UsageError("--in / --all / --occurrence are only valid with --find")
+    if replace_all and occurrence is not None:
+        raise click.UsageError("--all and --occurrence are mutually exclusive")
+
+    if anchor_id is not None:
+        _set_text(ctx, anchor_id, text, f"CLI: replace {anchor_id}")
+        return
+
+    assert find_text is not None  # guaranteed by the validation above
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            try:
+                with deck.edit(f"CLI: find/replace {find_text!r}"):
+                    applied = deck.find_replace(
+                        find_text,
+                        text,
+                        scope=in_,
+                        all=replace_all,
+                        occurrence=occurrence,
+                    )
+            except AmbiguousMatchError as exc:
+                emit(
+                    {
+                        "ok": False,
+                        "error": "ambiguous_match",
+                        "find": exc.find,
+                        "matches": exc.matches,
+                    },
+                    as_text=not ctx.obj["as_json"],
+                    text=f"{len(exc.matches)} matches — use --all or --occurrence N",
+                )
+                raise
+            emit(
+                {"ok": True, "count": len(applied), "replacements": applied},
+                as_text=not ctx.obj["as_json"],
+                text=_fmt_replace_summary(applied),
+            )
+
+    _run(ctx, go)
 
 
 # ---------------------------------------------------------------------------

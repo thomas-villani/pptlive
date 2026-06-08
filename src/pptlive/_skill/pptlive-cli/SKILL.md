@@ -50,10 +50,12 @@ toward `ph:S:KIND` and `.Name` as the drift-proof forms.
 - `pptlive table read --slide 4 --shape 5` · `pptlive chart read --slide 4 --shape 5` · `pptlive smartart read --slide 3 --shape 2`.
 - `pptlive theme read` · `pptlive master read` — deck-wide palette/fonts and master text styles.
 - `pptlive selection` — what the user has selected (resolves to `here:`).
+- `pptlive find --text "Q3 revenue" [--in slide:3|shape:3:2|notes:3]` — fuzzy, smart-quote/whitespace-tolerant search across the deck (shapes, table cells, notes). Emits `[{anchor_id, start, length, text, context}]` in document order; empty array (exit 0) on no match.
 
 ## Writing — each command is one atomic undo
 - `pptlive write --anchor-id ph:2:body --text "Intro\nDemo\nQ&A"` — set a text anchor (newlines = paragraphs).
-- `pptlive replace --anchor-id shape:3:1 --text "New text"` — overwrite.
+- `pptlive replace --anchor-id shape:3:1 --text "New text"` — overwrite a whole anchor.
+- `pptlive replace --find "old" --text "new" [--in slide:3] [--all|--occurrence N]` — fuzzy find/replace; rewrites just the matched span (keeps run formatting). One match auto-applies; several without `--all`/`--occurrence` is exit 5 (ambiguous, lists the matches); zero is exit 2.
 - `pptlive insert --anchor-id para:4:2:3 --text "New bullet" [--before|--after]` — new paragraph relative to an anchor.
 - `pptlive format-paragraph --anchor-id para:4:2:1 --alignment center --indent-level 2`.
 - `pptlive format-text --anchor-id ph:4:title --bold --size 40 --color "#2E74B5"`.

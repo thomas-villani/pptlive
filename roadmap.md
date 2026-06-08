@@ -47,7 +47,14 @@ The only **specced-but-unbuilt** module from `spec.md`. wordlive has `find()` /
 (`para:S:N:P` + in-shape offset, per spec) but no implementation. This is the
 last thing keeping pptlive from full wordlive surface parity.
 
-- [ ] **`_findreplace.py` — `Presentation.find()` / `find_replace()`.** PowerPoint
+- [x] **`_findreplace.py` — `Presentation.find()` / `find_replace()` — BUILT
+  (2026-06-07).** Shipped across library + CLI (`find`, `replace --find`) + MCP
+  (`ppt_read` op `find`, `ppt_edit` op `find_replace`); see `IMPLEMENTATION.md`
+  §v1.0. The build ports wordlive's **fuzzy Python core** verbatim and writes
+  replacements through `TextRange.Characters` — this both adds the smart-quote /
+  whitespace tolerance native `.Find` lacks *and* sidesteps the native-`.Replace`
+  first-only + offset-drift traps the spike below flagged (matches are computed
+  once up front, not via a re-scanning loop). PowerPoint
   has **no document-wide character stream** (the whole reason the anchor model is
   hierarchical), so search is a *traversal*: iterate `Slides × Shapes`, descend
   into `TextFrame.TextRange`, table cells (`Cell.Shape.TextFrame`), and notes.

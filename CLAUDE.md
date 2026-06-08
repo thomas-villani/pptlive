@@ -56,6 +56,7 @@ src/pptlive/
   _charts.py         Chart       (a chart is a shape; data via embedded Excel)         [v0.7]
   _smartart.py       SmartArt    (a diagram is a shape; node tree read/set_nodes)      [v0.8]
   _theme.py          Theme + Master  (deck-wide palette/fonts/text-styles/background)  [v0.9]
+  _findreplace.py    fuzzy match core (find_matches/normalize); find()/find_replace() on Presentation [v1.0]
   _selection.py      viewed-slide + Selection snapshot/restore
   _edit.py           EditScope — view/Selection preservation + atomic undo via StartNewUndoEntry (see below)
   _show.py           SlideShow control (deck.show)
@@ -68,7 +69,10 @@ mcpb/                one-click `.mcpb` bundle (manifest.json, pyproject.toml, sr
 tests/conftest.py    fake_powerpoint fixture (MagicMock COM), no_powerpoint, real_powerpoint
 ```
 
-Not yet built (still in `spec.md`): `_findreplace.py` (`find()` / `find_replace()`).
+`find()` / `find_replace()` (`_findreplace.py`) shipped in v1.0 — fuzzy traversal
+search across shapes / table cells / notes; library + CLI (`find`, `replace
+--find`) + MCP (`ppt_read` find, `ppt_edit` find_replace). Still in `spec.md` but
+unbuilt: the standalone CLI `exec` batch verb (MCP `ppt_batch` covers batch).
 Agent skills shipped as **two** guides (`pptlive-cli` + `pptlive-python`), not
 wordlive's single one — `llm-help [--python]` dumps one, `install-skill` writes
 them to `.agents/skills/`, and `install-mcp` / the `mcpb/` bundle wire up MCP.

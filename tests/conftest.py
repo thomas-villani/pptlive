@@ -257,6 +257,47 @@ class _FakeTextRange:
         if not self._frame._paras:
             self._frame._paras = [_FakePara("")]
 
+    def Characters(self, start: int = 1, length: int = -1) -> _FakeCharRange:
+        """`TextRange.Characters(Start, Length)` — a 1-based char sub-range view
+        (relative to this range), the handle find/replace writes a span through."""
+        return _FakeCharRange(self, int(start), int(length))
+
+
+class _FakeCharRange:
+    """A view over `Characters(start, length)` of a parent `_FakeTextRange`.
+
+    1-based `start`, relative to the parent range; setting `.Text` char-splices
+    the underlying frame (exactly as PowerPoint's char-addressed TextRange does),
+    so only the matched span changes and the rest of the frame is untouched."""
+
+    def __init__(self, parent: _FakeTextRange, start: int, length: int) -> None:
+        self._parent = parent
+        self._start = int(start)
+        self._length = int(length)
+
+    def _bounds(self) -> tuple[int, int]:
+        ptext = self._parent.Text
+        s = max(1, self._start) - 1
+        e = len(ptext) if self._length == -1 else min(len(ptext), s + self._length)
+        return s, max(s, e)
+
+    @property
+    def Text(self) -> str:
+        s, e = self._bounds()
+        return self._parent.Text[s:e]
+
+    @Text.setter
+    def Text(self, value: str) -> None:
+        s, e = self._bounds()
+        base = self._parent._char_start()
+        full = self._parent._full_text()
+        self._parent._frame._set_full_text(full[: base + s] + str(value) + full[base + e :])
+
+    @property
+    def Count(self) -> int:
+        s, e = self._bounds()
+        return e - s
+
 
 class _FakeTextFrame:
     def __init__(self, text: str = "") -> None:

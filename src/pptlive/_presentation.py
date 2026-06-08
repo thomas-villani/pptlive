@@ -14,22 +14,35 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import _com
+from . import _com, _findreplace
 from ._anchors import Anchor
 from ._edit import EditScope
 from ._selection import SelectionInfo, read_selection
-from ._shapes import Shape
+from ._shapes import Shape, has_table, has_text_frame
 from ._show import SlideShow
 from ._slides import Slide, SlideCollection, _paragraphs
 from ._theme import Master, Theme
 from .constants import DEFAULT_LAYOUT_ALIAS, image_filter_for, match_layout_name
 from .exceptions import (
+    AmbiguousMatchError,
     AnchorNotFoundError,
     LayoutNotFoundError,
     NoTextFrameError,
     PowerPointBusyError,
     PresentationNotFoundError,
 )
+
+#: Chars of context shown on each side of a `find` match in its `context` snippet.
+_CONTEXT_PAD = 30
+
+
+def _match_context(text: str, start: int, end: int) -> str:
+    """A short, single-line snippet of `text` around the half-open span [start, end)."""
+    lo = max(0, start - _CONTEXT_PAD)
+    hi = min(len(text), end + _CONTEXT_PAD)
+    snippet = text[lo:hi].replace("\r", " ").replace("\v", " ").replace("\n", " ")
+    return ("…" if lo > 0 else "") + snippet + ("…" if hi < len(text) else "")
+
 
 if TYPE_CHECKING:
     from ._app import PowerPoint
@@ -296,6 +309,190 @@ class Presentation:
             raise AnchorNotFoundError("selection", anchor_id)
 
         raise AnchorNotFoundError("anchor", anchor_id)
+
+    # -- find / replace (v1.0) -------------------------------------------------
+    #
+    # PowerPoint has no deck-wide character stream, so search is a *traversal*:
+    # slides × shapes → each text frame, table cells, and speaker notes. A search
+    # *unit* is one text frame addressed by a resolvable anchor (`shape:S:N`,
+    # `cell:S:N:R:C`, `notes:S`); offsets are 0-based char positions within that
+    # frame's text. Matching reuses wordlive's fuzzy core (`_findreplace`);
+    # replacement writes back through `TextRange.Characters` so only the matched
+    # span changes and the rest of the frame keeps its run formatting.
+
+    def _units_for_shape(self, shape: Shape) -> list[tuple[str, Any]]:
+        """The (anchor_id, COM `TextRange`) search units a shape contributes.
+
+        A text-framed shape contributes its frame (`shape:S:N`); a table shape
+        contributes one unit per cell (`cell:S:N:R:C`). A shape may be both
+        (rare) or neither (a picture / line — no text, no units).
+        """
+        units: list[tuple[str, Any]] = []
+        sh = shape.com  # raw COM Shape, resolved live
+        if has_text_frame(sh):
+            units.append((shape.anchor_id, sh.TextFrame.TextRange))
+        if has_table(sh):
+            table = sh.Table
+            nrows, ncols = int(table.Rows.Count), int(table.Columns.Count)
+            s, n = shape.slide.index, shape.index
+            for r in range(1, nrows + 1):
+                for c in range(1, ncols + 1):
+                    cell_tr = table.Cell(r, c).Shape.TextFrame.TextRange
+                    units.append((f"cell:{s}:{n}:{r}:{c}", cell_tr))
+        return units
+
+    def _units_for_anchor(self, anchor: Anchor) -> list[tuple[str, Any]]:
+        """Search units for a single anchor scope (a shape expands to its frames)."""
+        if isinstance(anchor, Shape):
+            return self._units_for_shape(anchor)
+        return [(anchor.anchor_id, anchor._text_range())]
+
+    def _units_for_slides(self, slides: list[Slide]) -> list[tuple[str, Any]]:
+        units: list[tuple[str, Any]] = []
+        for slide in slides:
+            for shape in slide.shapes:
+                units.extend(self._units_for_shape(shape))
+            # Speaker notes — a text frame the traversal must visit. Slides with
+            # no notes-body placeholder simply contribute no notes unit.
+            try:
+                notes_tr = slide.notes._text_range()
+            except AnchorNotFoundError:
+                notes_tr = None
+            if notes_tr is not None:
+                units.append((slide.notes.anchor_id, notes_tr))
+        return units
+
+    def _search_units(self, scope: str | Slide | Anchor | None) -> list[tuple[str, Any]]:
+        """Resolve a find/replace `scope` to its list of (anchor_id, `TextRange`)."""
+        with _com.translate_com_errors():
+            if scope is None:
+                return self._units_for_slides(list(self.slides))
+            if isinstance(scope, Slide):
+                return self._units_for_slides([scope])
+            if isinstance(scope, Anchor):
+                return self._units_for_anchor(scope)
+            if isinstance(scope, str):
+                if scope.split(":", 1)[0] == "slide":
+                    parts = scope.split(":")
+                    try:
+                        s = int(parts[1])
+                    except (IndexError, ValueError) as e:
+                        raise AnchorNotFoundError("slide", scope) from e
+                    return self._units_for_slides([self.slides[s]])
+                return self._units_for_anchor(self.anchor_by_id(scope))
+        raise TypeError(
+            f"scope must be an anchor id, Slide, Anchor, or None, got {type(scope).__name__}"
+        )
+
+    def find(self, text: str, *, scope: str | Slide | Anchor | None = None) -> list[dict[str, Any]]:
+        """Locate every fuzzy occurrence of `text` across the deck (or `scope`).
+
+        Search is a traversal of slides × shapes → text frames, table cells, and
+        speaker notes (there is no deck-wide character stream). Matching is
+        whitespace- and Unicode-normalized (NFKC, smart quotes, dashes, NBSP), so
+        text an LLM re-typed off a slide still matches the original glyphs.
+
+        Returns `{anchor_id, start, length, text, context}` per hit, in document
+        order: `anchor_id` is a resolvable text anchor (`shape:S:N`,
+        `cell:S:N:R:C`, or `notes:S`), `start` is the 0-based char offset of the
+        match within that anchor's text, `text` is the actual original substring,
+        and `context` is a short surrounding snippet. The offsets are live — use
+        them before further edits shift the text.
+
+        A read — polite (no view move). `scope` restricts the search: a `slide:S`
+        string (or a `Slide`) limits it to one slide; any text-anchor id (or an
+        `Anchor`) limits it to that shape / cell / notes frame; `None` (default)
+        searches the whole deck.
+        """
+        units = self._search_units(scope)
+        results: list[dict[str, Any]] = []
+        with _com.translate_com_errors():
+            for anchor_id, tr in units:
+                haystack = str(tr.Text or "")
+                for m in _findreplace.find_matches(haystack, text):
+                    results.append(
+                        {
+                            "anchor_id": anchor_id,
+                            "start": m.start,
+                            "length": m.end - m.start,
+                            "text": m.text,
+                            "context": _match_context(haystack, m.start, m.end),
+                        }
+                    )
+        return results
+
+    def find_replace(
+        self,
+        find: str,
+        replace: str,
+        *,
+        scope: str | Slide | Anchor | None = None,
+        all: bool = False,
+        occurrence: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fuzzy plain-text replace across the deck (or `scope`). See `find`.
+
+        Args:
+            find: the text to look for (fuzzy-matched, same semantics as `find`).
+            replace: the replacement text.
+            scope: restrict the search — a `slide:S` / anchor-id string, a `Slide`
+                or `Anchor`, or `None` for the whole deck.
+            all: replace every match.
+            occurrence: 1-based index — replace only the Nth match (document order).
+
+        Raises:
+            AnchorNotFoundError: zero matches (`kind='find'`, exit 2), or an
+                out-of-range `occurrence`.
+            AmbiguousMatchError: more than one match and neither `all` nor
+                `occurrence` was given (exit 5).
+
+        Returns the replacements applied, each `{anchor_id, start, length, text}`
+        in their pre-replacement coordinates. Only the matched span is rewritten
+        (via `TextRange.Characters`), so the rest of each frame keeps its run
+        formatting. Wrap the call in `deck.edit(...)` for view preservation and a
+        one-Ctrl-Z fence.
+        """
+        units = self._search_units(scope)
+        # (anchor_id, COM TextRange, start, end, original_text) in document order.
+        matches: list[tuple[str, Any, int, int, str]] = []
+        with _com.translate_com_errors():
+            for anchor_id, tr in units:
+                haystack = str(tr.Text or "")
+                for m in _findreplace.find_matches(haystack, find):
+                    matches.append((anchor_id, tr, m.start, m.end, m.text))
+
+        if not matches:
+            raise AnchorNotFoundError("find", find)
+
+        if occurrence is not None:
+            if occurrence < 1 or occurrence > len(matches):
+                raise AnchorNotFoundError("find", f"{find} (occurrence {occurrence})")
+            to_apply = [matches[occurrence - 1]]
+        elif all:
+            to_apply = list(matches)
+        elif len(matches) == 1:
+            to_apply = matches
+        else:
+            raise AmbiguousMatchError(
+                find,
+                [
+                    {"anchor_id": a, "start": s, "length": e - s, "text": t}
+                    for (a, _tr, s, e, t) in matches
+                ],
+            )
+
+        # Apply in reverse document order so an earlier match's offsets stay valid
+        # after a later match in the *same* frame is rewritten to a different
+        # length (matches in different frames are independent).
+        applied: list[dict[str, Any]] = []
+        with _com.translate_com_errors():
+            for anchor_id, tr, start, end, text in reversed(to_apply):
+                tr.Characters(start + 1, end - start).Text = replace
+                applied.append(
+                    {"anchor_id": anchor_id, "start": start, "length": end - start, "text": text}
+                )
+        applied.reverse()  # report in document order
+        return applied
 
     @contextmanager
     def edit(self, label: str) -> Iterator[EditScope]:
