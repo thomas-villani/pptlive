@@ -626,6 +626,51 @@ view doesn't move, so restore is a no-op). Lives in `_theme.py` (`Theme` +
 (gradient/picture); the East-Asian/Complex-Script theme fonts beyond the `--script`
 opt-in; legacy `.ppt` theme-object behavior.
 
+## v1.0 — find / replace — SHIPPED
+
+Closes the last wordlive surface-parity gap (the one specced-but-unbuilt module).
+PowerPoint has no deck-wide character stream, so `find` is a **traversal** of
+slides × shapes → each text frame, table cells, and speaker notes; there is no
+`range:` anchor. Each hit is reported against a resolvable text anchor
+(`shape:S:N`, `cell:S:N:R:C`, `notes:S`) with a 0-based in-frame offset.
+
+- [x] **`_findreplace.py`** — wordlive's pure fuzzy-matching core ported **almost
+  verbatim** (`_normalize` / NFKC + smart-quote/dash/NBSP folds + whitespace
+  collapse, `find_matches`, `normalized_equal`, `Match`). OS-independent and
+  unit-tested against the fake. Fold-table keys are written as `\u`/`\x` escapes
+  so the exotic code points survive a source round-trip.
+- [x] **`Presentation.find(text, *, scope=None)`** → `[{anchor_id, start, length,
+  text, context}]` in document order; `Presentation.find_replace(find, replace, *,
+  scope=None, all=False, occurrence=None)` → applied list. `scope` accepts a
+  `slide:S`/anchor-id string, a `Slide`, an `Anchor`, or `None` (whole deck).
+  Matching is **case-sensitive** (NFKC doesn't lowercase), like wordlive.
+- [x] **Replacement writes through `TextRange.Characters(start+1, length)`** — only
+  the matched span changes, so the rest of the frame keeps its run formatting
+  (the PowerPoint analog of wordlive's `Range(start,end).Text=`). Matches in one
+  frame are applied in **reverse** offset order so earlier offsets stay valid.
+  Because matches are computed once up front from the original text (not via a
+  loop over native `.Replace`), the **offset-drift hazard the spike flagged**
+  (a replacement that re-contains the search text) cannot occur.
+- [x] **Errors:** zero matches → `AnchorNotFoundError("find", …)` (exit 2);
+  multi-match without `all`/`occurrence` → `AmbiguousMatchError` (exit 5, carries
+  the matches). `find` itself never raises on zero — it returns `[]`.
+- [x] **CLI:** `find --text … [--in SCOPE]` (emits the match array; empty array /
+  exit 0 on no match) and `replace --find OLD --text NEW [--in SCOPE]
+  [--all|--occurrence N]` (the existing `replace --anchor-id` whole-anchor form is
+  unchanged; the two modes are mutually exclusive).
+- [x] **MCP:** `ppt_read` op `find` (+ `text`/`scope` args); `ppt_edit` op
+  `find_replace` (+ `find`/`scope`/`replace_all`/`occurrence` args). Both flow
+  through `ppt_batch` via the shared `_read_core`/`_edit_core`.
+- [x] **Spike RESOLVED (2026-06-07, `scripts/findreplace_spike.py`, net-zero)** —
+  pinned the COM behaviours the design rests on (empty-match `None` sentinel,
+  1-based `TextRange` offsets, `.Replace` is first-only, the drift hazard, and
+  notes/cell reach). The Python-side matching sidesteps native `.Replace` entirely
+  and adds the fuzzy matching native Find lacks. See `roadmap.md` §v1.0.
+
+**Deferred:** a within-shape `range:S:N:START-END` anchor (until a real
+mid-paragraph workflow needs it); the CLI `exec` batch verb (MCP `ppt_batch`
+already covers batch; the standalone CLI `exec` stays on the roadmap).
+
 ## v1.0+ — defer
 
 - [ ] Event sinks (`SlideShowNextSlide`, `WindowSelectionChange`); async wrapper.

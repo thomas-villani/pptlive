@@ -200,6 +200,48 @@ def test_format_applies_and_removes_list(fake_powerpoint: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# find / find_replace (ppt_read op=find, ppt_edit op=find_replace)
+# ---------------------------------------------------------------------------
+
+
+def test_find_returns_hits_with_resolvable_anchors(fake_powerpoint: Any) -> None:
+    out = ppt_read("find", text="Welcome")
+    assert out["count"] == 1
+    assert out["matches"][0]["anchor_id"] == "shape:1:1"
+
+
+def test_find_requires_text(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError) as exc:
+        ppt_read("find")
+    assert "invalid_args" in str(exc.value)
+
+
+def test_find_replace_single_applies(fake_powerpoint: Any) -> None:
+    out = ppt_edit("find_replace", find="Welcome", text="Hello")
+    assert out["ok"] is True and out["count"] == 1
+    assert ppt_read("anchor", anchor_id="shape:1:1")["text"] == "Hello"
+    assert fake_powerpoint._undo_entries == 1  # one undo fence
+
+
+def test_find_replace_all(fake_powerpoint: Any) -> None:
+    out = ppt_edit("find_replace", find="de", text="XX", replace_all=True)
+    assert out["count"] == 2
+    assert ppt_read("anchor", anchor_id="shape:1:2")["text"] == "A XXmo XXck"
+
+
+def test_find_replace_ambiguous_raises(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("find_replace", find="de", text="X")
+    assert "ambiguous" in str(exc.value)
+
+
+def test_find_replace_zero_matches_raises_not_found(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("find_replace", find="nonexistent-zzz", text="X")
+    assert "not_found" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
 # Slide lifecycle (ppt_edit op=slide_*)
 # ---------------------------------------------------------------------------
 

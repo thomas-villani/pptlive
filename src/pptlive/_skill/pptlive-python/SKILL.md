@@ -47,6 +47,26 @@ with deck.edit("Revise the agenda slide"):
     deck.anchor_by_id("ph:2:body").set_text("Intro\nDemo\nQ&A")   # newlines = paragraphs
 ```
 
+## Find / replace — fuzzy, deck-wide
+
+There is no deck-wide character stream, so search is a traversal of every text
+frame (shapes, table cells, speaker notes). Matching is smart-quote / dash /
+whitespace tolerant, so text you re-typed off a slide still matches the original
+glyphs. `find` is a read; `find_replace` rewrites only the matched span (run
+formatting survives) and belongs in a `deck.edit(...)` block.
+
+```python
+hits = deck.find("Q3 revenue")            # [{anchor_id, start, length, text, context}], doc order
+hits = deck.find("Demo", scope="slide:2") # scope: "slide:S", any anchor id, a Slide, or an Anchor
+
+with deck.edit("Rename the product"):
+    deck.find_replace("Acme", "Globex", all=True)          # every occurrence
+    deck.find_replace("teh", "the", occurrence=2)          # only the 2nd match
+```
+
+Zero matches raises `AnchorNotFoundError` (exit 2); several matches without
+`all`/`occurrence` raises `AmbiguousMatchError` (exit 5, carrying the matches).
+
 ## Anchors
 
 Addressing is **hierarchical** (slide → shape → text), slide-index first — no

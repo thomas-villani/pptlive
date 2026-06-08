@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Fuzzy find / replace across the deck — the last wordlive surface-parity gap.**
+  `find` and `find_replace` are now live on the library (`Presentation.find` /
+  `find_replace`), the CLI (`find`, `replace --find`), and MCP (`ppt_read` op
+  `find`, `ppt_edit` op `find_replace`; both also work inside `ppt_batch`).
+  PowerPoint has no deck-wide character stream, so search is a **traversal** of
+  every text frame — shapes, table cells, and speaker notes — and each hit is
+  reported against a resolvable text anchor (`shape:S:N`, `cell:S:N:R:C`,
+  `notes:S`) with a 0-based in-frame offset, plus a context snippet. `scope` (CLI
+  `--in`) restricts the search to a `slide:S` or any text anchor.
+  - Matching reuses wordlive's fuzzy core (NFKC + smart-quote / dash / NBSP folds
+    + whitespace collapse), so text an LLM re-typed off a slide still matches the
+    original glyphs; it is case-sensitive, like wordlive.
+  - Replacement writes through `TextRange.Characters`, so only the matched span
+    changes and the rest of the frame keeps its run formatting. Matches are
+    computed once up front (not via a re-scanning native `.Replace` loop), which
+    sidesteps both the first-only and the offset-drift hazards a replacement that
+    re-contains the search text would otherwise trigger.
+  - One match auto-applies; several without `--all` / `--occurrence` raise
+    `AmbiguousMatchError` (exit 5, listing the matches); zero matches raise
+    `AnchorNotFoundError` (exit 2). `find` itself never raises on zero — it
+    returns an empty list. The pre-existing `replace --anchor-id` whole-anchor
+    form is unchanged.
+  - Grounded by a live, net-zero COM spike (`scripts/findreplace_spike.py`).
+
 ## [0.1.3] — 2026-06-04
 
 ### Fixed

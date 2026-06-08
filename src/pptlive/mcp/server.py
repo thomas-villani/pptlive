@@ -211,6 +211,10 @@ def _read_core(ppt: Any, op: str, p: dict[str, Any]) -> dict[str, Any]:
         return {"layouts": deck.layouts()}
     if op == "selection":
         return deck.selection().to_dict()
+    if op == "find":
+        _require(p.get("text") is not None, "read op='find' requires `text`")
+        matches = deck.find(p["text"], scope=p.get("scope"))
+        return {"count": len(matches), "matches": matches}
     if op == "slide":
         _require(p.get("slide") is not None, "read op='slide' requires `slide`")
         return deck.slides[p["slide"]].read()
@@ -256,6 +260,21 @@ def _edit_core(deck: Presentation, op: str, p: dict[str, Any]) -> dict[str, Any]
         else:
             raise ToolError(f"invalid_args: unknown write mode {mode!r}")
         return {"ok": True, "anchor_id": anchor.anchor_id, "kind": anchor.kind, "mode": mode}
+
+    if op == "find_replace":
+        _require(p.get("find") is not None, "edit op='find_replace' requires `find`")
+        _require(
+            p.get("text") is not None,
+            "edit op='find_replace' requires `text` (the replacement)",
+        )
+        applied = deck.find_replace(
+            p["find"],
+            p["text"],
+            scope=p.get("scope"),
+            all=bool(p.get("replace_all")),
+            occurrence=p.get("occurrence"),
+        )
+        return {"ok": True, "count": len(applied), "replacements": applied}
 
     if op == "format":
         _require(p.get("anchor_id") is not None, "edit op='format' requires `anchor_id`")
@@ -522,6 +541,7 @@ def ppt_read(
         "slide",
         "anchor",
         "selection",
+        "find",
         "table",
         "chart",
         "smartart",
@@ -531,6 +551,8 @@ def ppt_read(
     ],
     anchor_id: str | None = None,
     slide: int | None = None,
+    text: str | None = None,
+    scope: str | None = None,
     doc: str | None = None,
 ) -> dict[str, Any]:
     """Read the deck — always side-effect-free, never moves the user's view. `op`:
@@ -545,6 +567,11 @@ def ppt_read(
       `cell:S:N:R:C` (table cell), `notes:S`, or `here:` (the user's selection).
       Returns text plus, for multi-paragraph anchors, a `paragraphs` breakdown.
     - "selection": what the user currently has selected, resolved to anchors.
+    - "find": every fuzzy occurrence of `text` (smart-quote / whitespace tolerant)
+      across the deck — each hit a `{anchor_id, start, length, text, context}`,
+      where `anchor_id` is a resolvable text anchor and `start` is the 0-based char
+      offset within it. Optional `scope` restricts the search to a `slide:S` or any
+      text anchor id. Pair with `ppt_edit` op="find_replace" to act on the hits.
     - "table" / "chart" / "smartart": the grid / chart data / node tree of the
       table-, chart-, or SmartArt shape at `anchor_id` (a `shape:S:N`).
     - "theme": the deck-wide palette (12 slots, e.g. accent1) + heading/body fonts.
@@ -553,12 +580,17 @@ def ppt_read(
 
     `doc` targets a presentation by name (default: the active one)."""
     with _mcp_errors(), attach() as ppt:
-        return _read_core(ppt, op, {"anchor_id": anchor_id, "slide": slide, "doc": doc})
+        return _read_core(
+            ppt,
+            op,
+            {"anchor_id": anchor_id, "slide": slide, "text": text, "scope": scope, "doc": doc},
+        )
 
 
 def ppt_edit(
     op: Literal[
         "write",
+        "find_replace",
         "format",
         "slide_add",
         "slide_delete",
@@ -584,6 +616,10 @@ def ppt_edit(
     anchor_id: str | None = None,
     text: str | None = None,
     mode: Literal["set", "insert_after", "insert_before"] = "set",
+    find: str | None = None,
+    scope: str | None = None,
+    replace_all: bool = False,
+    occurrence: int | None = None,
     bold: bool | None = None,
     italic: bool | None = None,
     underline: bool | None = None,
@@ -632,6 +668,12 @@ def ppt_edit(
     Text & formatting (target a text anchor via `anchor_id`):
     - "write": write `text`. mode="set" replaces the whole anchor (embed `\\n` for
       multiple paragraphs); "insert_after"/"insert_before" add a paragraph instead.
+    - "find_replace": fuzzy-locate `find` across the deck and rewrite the matched
+      spans with `text` (only the span changes, so run formatting is preserved).
+      Scope with `scope` (a `slide:S` / anchor id). One match auto-applies; for
+      several pass `replace_all=true` or `occurrence` (1-based) — otherwise it
+      errors `ambiguous`. Zero matches errors `not_found`. Use op="find" first to
+      preview the hits.
     - "format": font (`bold`/`italic`/`underline`/`size`/`font`/`color`), paragraph
       (`alignment`/`space_before`/`space_after`/`line_spacing` in points/`indent_level`
       1-5), and/or list (`list_type` "bulleted"/"numbered", or "none" to strip;
@@ -678,6 +720,10 @@ def ppt_edit(
         "anchor_id": anchor_id,
         "text": text,
         "mode": mode,
+        "find": find,
+        "scope": scope,
+        "replace_all": replace_all,
+        "occurrence": occurrence,
         "bold": bold,
         "italic": italic,
         "underline": underline,
