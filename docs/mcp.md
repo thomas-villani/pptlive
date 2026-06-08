@@ -73,8 +73,8 @@ fifteen. They wrap the same Python API, so the politeness model and one-Ctrl-Z
 
 | Tool | `op`s |
 | ---- | ----- |
-| `ppt_read` | `status` · `slides` · `outline` · `slide` · `anchor` · `selection` · `table` · `chart` · `smartart` · `theme` · `master` · `layouts` — every read; never moves the view |
-| `ppt_edit` | `write` · `format` · `slide_add` / `slide_delete` / `slide_duplicate` / `slide_move` / `set_layout` · `shape_add` / `shape_move` / `shape_resize` / `shape_delete` / `set_alt` · `table_add_row` / `table_delete_row` · `chart_set_type` / `chart_set_data` · `smartart_set_nodes` · `theme_set_color` / `theme_set_font` · `master_format_text_style` / `master_format_paragraph_style` / `master_set_background` — every mutation; one Ctrl-Z each |
+| `ppt_read` | `status` · `slides` · `outline` · `slide` · `anchor` · `find` · `selection` · `table` · `chart` · `smartart` · `theme` · `master` · `layouts` — every read; never moves the view |
+| `ppt_edit` | `write` · `find_replace` · `format` · `slide_add` / `slide_delete` / `slide_duplicate` / `slide_move` / `set_layout` · `shape_add` / `shape_move` / `shape_resize` / `shape_delete` / `set_alt` · `table_add_row` / `table_delete_row` · `chart_set_type` / `chart_set_data` · `smartart_set_nodes` · `theme_set_color` / `theme_set_font` · `master_format_text_style` / `master_format_paragraph_style` / `master_set_background` — every mutation; one Ctrl-Z each |
 | `ppt_render` | `slide_image` · `shape_image` (PNGs a vision model can read) · `navigate` (the one deliberate view move) |
 | `ppt_show` | live slide show: `state` · `start` · `end` · `next` · `previous` · `goto` · `black` · `white` · `resume` |
 | `ppt_batch` | run a **list** of the ops above against one connection — `edit`s fenced into a **single** undo entry (`atomic`), with `stop_on_error` control |

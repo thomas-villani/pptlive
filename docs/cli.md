@@ -141,6 +141,29 @@ pptlive read notes --slide 2                   # == --anchor-id notes:2
 Exits `2` if the anchor doesn't resolve, `6` if it names a shape with no text
 frame.
 
+## `find --text "…"`
+
+Fuzzy, deck-wide search. PowerPoint has no document-wide character stream, so
+this **traverses** every text frame — shapes, table cells, and speaker notes —
+and reports each hit against a resolvable anchor (`shape:S:N`, `cell:S:N:R:C`,
+`notes:S`) with a 0-based in-frame offset and a context snippet, in document
+order. Matching is smart-quote / dash / whitespace tolerant (and
+case-sensitive), so text an LLM re-typed off a slide still matches the original
+glyphs. `--in` scopes the search to a `slide:S` or any text anchor.
+
+```bash
+pptlive find --text "Q3 revenue"
+pptlive find --text "Demo" --in slide:2          # one slide
+pptlive find --text "Metric" --in shape:4:5      # one shape / table / notes anchor
+```
+
+```json
+[{"anchor_id": "notes:1", "start": 12, "length": 10, "text": "Q3 revenue",
+  "context": "…recap of Q3 revenue versus plan…"}]
+```
+
+Never raises on a miss — zero matches is an **empty array** and exit `0`.
+
 ## `write --anchor-id ID --text "…"`
 
 Set the entire text of a text anchor. Preserves the viewed slide; one Ctrl-Z.
@@ -156,11 +179,27 @@ pptlive write --anchor-id cell:4:5:1:1 --text "Metric"   # a cell is a text anch
 {"ok": true, "anchor_id": "ph:2:title", "kind": "placeholder"}
 ```
 
-## `replace --anchor-id ID --text "…"`
+## `replace` — whole anchor *or* fuzzy span
 
-Replace a text anchor's contents. In the current release this is identical in
-effect to `write` (the anchor-addressed form); fuzzy `replace --find OLD --text
-NEW` arrives with the find/replace stage.
+Two modes, mutually exclusive:
+
+- `replace --anchor-id ID --text "…"` overwrites a text anchor's whole contents
+  — identical in effect to `write`.
+- `replace --find OLD --text NEW` runs the same fuzzy traversal as `find` and
+  rewrites just the **matched span**, so the rest of the frame keeps its run
+  formatting. Scope it with `--in slide:S` (or any anchor). Matches are computed
+  once up front and applied in reverse offset order, so a replacement that
+  re-contains the search text is safe.
+
+```bash
+pptlive replace --anchor-id shape:3:1 --text "New text"     # whole anchor
+pptlive replace --find "Acme" --text "Globex" --all         # every occurrence
+pptlive replace --find "teh" --text "the" --occurrence 2     # only the 2nd hit
+```
+
+One match auto-applies. Several matches without `--all` or `--occurrence` is
+exit `5` (ambiguous — the matches are listed so you can disambiguate); zero
+matches is exit `2`.
 
 ---
 

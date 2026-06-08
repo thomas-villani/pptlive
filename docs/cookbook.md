@@ -390,3 +390,34 @@ with pl.attach() as ppt:
 pptlive --doc "Q3 Review.pptx" slides
 pptlive --doc "Q3 Review.pptx" write --anchor-id ph:1:title --text "Q3 Review"
 ```
+
+## 14. Find and replace across the deck
+
+There's no deck-wide character stream, so `find` traverses every text frame —
+shapes, table cells, and speaker notes — and reports each hit against a
+resolvable anchor. Matching is smart-quote / dash / whitespace tolerant, so
+text re-typed off a slide still matches. `find_replace` rewrites just the
+matched span (run formatting survives) and belongs in an `edit()` block.
+
+```python
+with pl.attach() as ppt:
+    deck = ppt.presentations.active
+
+    hits = deck.find("Acme")                     # [{anchor_id, start, length, text, context}]
+    print(f"{len(hits)} mentions of Acme")
+
+    with deck.edit("Rebrand Acme → Globex"):
+        deck.find_replace("Acme", "Globex", all=True)        # every occurrence
+        deck.find_replace("teh", "the", occurrence=2)        # only the 2nd hit, deck-wide
+        deck.find_replace("Q3 plan", "Q3 forecast", scope="slide:2")   # scoped
+```
+
+One match auto-applies; several without `all` / `occurrence` raise
+`AmbiguousMatchError` (the candidates ride along); zero matches raise
+`AnchorNotFoundError`. `find` itself never raises — a miss is an empty list.
+
+```bash
+pptlive find --text "Acme"
+pptlive replace --find "Acme" --text "Globex" --all
+pptlive replace --find "Q3 plan" --text "Q3 forecast" --in slide:2
+```
