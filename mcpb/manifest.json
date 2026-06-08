@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "pptlive",
   "display_name": "pptlive",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "description": "Read and edit the Microsoft PowerPoint deck you have open right now, live, directly inside Claude.",
   "long_description": "pptlive's built-in MCP server, packaged for one-click install. Drives a running Microsoft PowerPoint instance over COM (Windows only): read slides, shapes, tables, charts, SmartArt, and theme/master styling; make polite edits (text, formatting, layouts, shapes, pictures, deck-wide styling) that preserve the user's viewed slide and selection and collapse into a single Ctrl-Z; render slides or shapes to images a vision model can see; and drive a live slide show. Five compact dispatch tools (ppt_read / ppt_edit / ppt_render / ppt_show / ppt_batch) addressed by hierarchical anchors.",
   "author": {
