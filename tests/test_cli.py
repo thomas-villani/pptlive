@@ -256,6 +256,59 @@ def test_shape_add_fences_one_undo_entry(fake_powerpoint) -> None:  # type: igno
     assert fake_powerpoint._undo_entries == 1
 
 
+def test_shape_add_with_fill(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main,
+        ["shape", "add", "--slide", "3", "--kind", "shape", "--fill", "#FF0000", "--line", "none"],
+    )
+    assert result.exit_code == 0
+    payload = _json(result)
+    assert payload["fill"] == {"color": "#FF0000", "visible": True}
+    assert payload["line"]["visible"] is False
+
+
+def test_shape_fill_command(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main,
+        ["shape", "fill", "--anchor-id", "shape:2:1", "--fill", "#102030", "--line-width", "3"],
+    )
+    assert result.exit_code == 0
+    payload = _json(result)
+    assert payload["fill"] == {"color": "#102030", "visible": True}
+    assert payload["line"]["weight"] == 3.0
+
+
+def test_shape_fill_requires_an_option_exit_2(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["shape", "fill", "--anchor-id", "shape:2:1"])
+    assert result.exit_code == 2  # click UsageError
+
+
+def test_shape_order_send_to_back(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main, ["shape", "order", "--anchor-id", "shape:2:3", "--to", "back"]
+    )
+    assert result.exit_code == 0
+    payload = _json(result)
+    assert payload["index"] == 1
+    assert fake_powerpoint.ActivePresentation.Slides(2).Shapes(1).Name == "Picture 3"
+
+
+def test_shape_order_bad_choice_exit_2(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main, ["shape", "order", "--anchor-id", "shape:2:1", "--to", "sideways"]
+    )
+    assert result.exit_code == 2  # click rejects the invalid --to choice
+
+
+def test_shapeid_anchor_via_cli(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    # shapeid:2:3 is Content Placeholder 2 (has a text frame); the read resolves it.
+    result = CliRunner().invoke(main, ["read", "anchor", "--anchor-id", "shapeid:2:3"])
+    assert result.exit_code == 0
+    payload = _json(result)
+    assert payload["anchor_id"] == "shapeid:2:3"
+    assert payload["text"] == "Intro\rDemo\rQ&A"
+
+
 def test_paragraphs_list(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     result = CliRunner().invoke(main, ["paragraphs", "--anchor-id", "shape:2:2"])
     assert result.exit_code == 0

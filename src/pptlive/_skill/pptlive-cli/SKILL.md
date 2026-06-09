@@ -32,6 +32,7 @@ is no deck-wide `range:`. Pass an anchor as `--anchor-id`:
 | anchor_id      | resolves to |
 | -------------- | ----------- |
 | `shape:S:N`    | Nth shape (1-based z-order) on slide S — the canonical handle |
+| `shapeid:S:ID` | shape with stable `Shape.Id` ID on slide S — the **delete-proof** handle (the `id` in any shape listing) |
 | `ph:S:KIND`    | placeholder of semantic KIND (`title`/`ctrtitle`/`subtitle`/`body`/`footer`/`date`/`slidenum`) — **prefer this** |
 | `para:S:N:P`   | paragraph P (1-based) of shape N on slide S |
 | `cell:S:N:R:C` | cell (row R, col C) of the table in shape N on slide S — a cell takes every text/format verb |
@@ -43,10 +44,11 @@ is no deck-wide `range:`. Pass an anchor as `--anchor-id`:
 **Comparison** layout has *two*, so `ph:S:body` is ambiguous and exits 5 listing
 the candidate `shape:S:N` anchors — target each column by `shape:S:N` / `.Name`.
 
-z-order **drifts** as shapes are added/removed, so `shape:S:N` is resolved live
-and never cached; every shape listing also emits `name` (`Shape.Name`) and `id`
-(`Shape.Id`, stable across reorder) so you can re-identify after drift. Steer
-toward `ph:S:KIND` and `.Name` as the drift-proof forms.
+z-order **drifts** as shapes are added, removed, *or restacked* (`shape order`),
+so `shape:S:N` is resolved live and never cached; every shape listing also emits
+`name` (`Shape.Name`) and `id` (`Shape.Id`, stable across reorder *and* delete) so
+you can re-identify after drift. Steer toward `ph:S:KIND`, `.Name`, and
+`shapeid:S:ID` (delete-proof) as the drift-proof forms.
 
 ## Reading
 - `pptlive read anchor --anchor-id ph:2:title` — read any text anchor (`ph:`/`shape:`/`para:`/`cell:`/`notes:`/`here:`).
@@ -75,11 +77,14 @@ toward `ph:S:KIND` and `.Name` as the drift-proof forms.
 
 ## Shapes
 - `pptlive shape add --slide 4 --kind textbox --text "Revenue up 12%" --left 72 --top 72` (points throughout; 1 in = 72 pt).
-- `pptlive shape add --slide 4 --kind shape --shape-type star --left 400 --top 120 --width 120 --height 120`.
+- `pptlive shape add --slide 4 --kind shape --shape-type star --left 400 --top 120 --width 120 --height 120 --fill "#1E74B5" --line none` (textbox/shape take `--fill`/`--line` = `#RRGGBB` or `none`, `--line-width` pts).
 - `pptlive shape add --slide 4 --kind picture --path logo.png --left 600 --top 40 --alt-text "Acme logo"` (embedded, never linked).
 - `pptlive shape move --anchor-id shape:4:3 --left 100 --top 140` · `pptlive shape resize --anchor-id shape:4:3 --width 300 --height 200` · `pptlive shape delete --anchor-id shape:4:3`.
+- `pptlive shape fill --anchor-id shape:4:3 --fill "#102030" --line none` — shape fill/border (NOT font color; that's `format-text`).
+- `pptlive shape order --anchor-id shape:4:3 --to back` — restack (`front`/`back`/`forward`/`backward`); send a new background panel behind existing content.
 - `pptlive shape set-alt --anchor-id shape:4:3 --alt-text "Acme logo"` — alt text doubles as a drift-proof re-id handle.
 - `pptlive shape export --anchor-id shape:4:3 --out logo.png` — render one shape (native size).
+- Every shape read carries `fill`/`line` (`{color, visible[, weight]}`); a theme/automatic color is `color: null`. Delete/restack shifts `shape:S:N` — address by `shapeid:S:ID` to survive it.
 
 ## Tables, charts, SmartArt
 - Tables: `pptlive shape add --slide 4 --kind table --rows 3 --cols 2 --left 72 --top 120`; `pptlive table add-row --slide 4 --shape 5 --values '["Revenue","$4.2M"]'`; `pptlive table delete-row --slide 4 --shape 5 --row 2`; write cells with `pptlive write --anchor-id cell:4:5:1:1 --text "Metric"`.

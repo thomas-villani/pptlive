@@ -20,6 +20,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Shape fill & border color** (PPTLIVE-007). `Shape.set_fill(fill=/line=/line_width=)`
+  sets a shape's solid fill and/or border (a `#RRGGBB` color, an `(r, g, b)` tuple,
+  a raw RGB int, or `"none"` for transparent fill / no border) — the spatial
+  complement to `format_text`'s *font* color. `fill=`/`line=`/`line_width=` also ride
+  on `add_shape`/`add_textbox`. Exposed as MCP `ppt_edit` op `format`
+  (`fill_color`/`line_color`/`line_width`) and `shape_add`, and CLI `shape fill` +
+  `shape add --fill/--line/--line-width`. Every shape read now reports `fill` and
+  `line` (`{color, visible[, weight]}`), with the same theme-sentinel guard as font
+  color (`color_hex_or_none` → `null`, never a wrong `#000000`).
+- **Shape z-order control** (PPTLIVE-008). `Shape.reorder("front"|"back"|"forward"|
+  "backward")` restacks a shape via `Shape.ZOrder` and returns its new 1-based
+  position — so a freshly added background panel can slide *behind* existing content
+  (previously every new shape landed on top, forcing a destructive delete-and-rebuild).
+  MCP `ppt_edit` op `shape_order` (`order=`); CLI `shape order --to`.
+- **`shapeid:S:ID` — a delete-proof shape anchor** (PPTLIVE-010). `slide.shapes.by_id(ID)`
+  / `anchor_by_id("shapeid:S:ID")` resolves a shape by its stable `Shape.Id` (the `id`
+  already in every shape listing). Unlike `shape:S:N` — a z-order index that shifts
+  down when a lower shape is deleted or restacked — a `shapeid` keeps pointing at the
+  same shape across structural edits. Resolves live, so it also survives reorder.
 - **Placeholder ambiguity guard** (PPTLIVE-004). On Two Content / Comparison
   layouts (two generic `object` content placeholders), `ph:S:body` used to silently
   resolve to the *first* one. It now raises `AmbiguousMatchError` (exit 5 / MCP
@@ -66,6 +85,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   alias (CLAUDE.md anchor table + both SKILL guides), and the chart series ordering
   rule (insertion order; bar charts render bottom-to-top by Excel convention — not
   a reorder).
+- Documented shape fill/border, z-order, and the `shapeid:S:ID` handle across the
+  docs site (`concepts.md`, `cli.md`), both SKILL guides, and CLAUDE.md. Noted the
+  one styling gap **not** yet closed: SmartArt-node and chart-internal **text color**
+  remain unaddressable (PPTLIVE-009) — recolor needs rebuilding those composites from
+  primitives for now.
 
 > **Note on the recurring "view jumps to slide 1" report:** the fix that landed in
 > 0.1.3 (COM apartment held open) is intact, and the current source preserves the

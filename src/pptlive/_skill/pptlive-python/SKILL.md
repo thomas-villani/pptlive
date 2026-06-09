@@ -75,6 +75,7 @@ deck-wide `range:`.
 | anchor_id      | resolves to |
 | -------------- | ----------- |
 | `shape:S:N`    | Nth shape (1-based z-order) on slide S — the canonical handle |
+| `shapeid:S:ID` | shape with stable `Shape.Id` ID on slide S — the **delete-proof** handle (`slide.shapes.by_id(ID)`) |
 | `ph:S:KIND`    | placeholder of semantic KIND (`title`/`ctrtitle`/`subtitle`/`body`/`footer`/`date`/`slidenum`) — **prefer this** |
 | `para:S:N:P`   | paragraph P (1-based) of shape N on slide S |
 | `cell:S:N:R:C` | cell (row R, col C) of the table in shape N on slide S — a `Cell` *is* an anchor |
@@ -87,9 +88,11 @@ deck-wide `range:`.
 ambiguous and raises an error listing the candidate `shape:S:N` anchors — address
 each column by its `shape:S:N` (or `.Name`) instead.
 
-z-order **drifts** as shapes are added/removed, so `shape:S:N` resolves live and
-is never cached; listings emit `name` (`Shape.Name`) and `id` (`Shape.Id`, stable
-across reorder) for re-identification. Prefer `ph:S:KIND` and `.Name`.
+z-order **drifts** as shapes are added, removed, *or restacked* (`reorder`), so
+`shape:S:N` resolves live and is never cached; listings emit `name` (`Shape.Name`)
+and `id` (`Shape.Id`, stable across reorder *and* delete) for re-identification.
+Prefer `ph:S:KIND`, `.Name`, and `shapeid:S:ID` — the last keeps pointing at the
+same shape across a delete/restack that would renumber `shape:S:N`.
 
 ## Slides, shapes, geometry (points throughout — `pl.units` for inches/cm)
 
@@ -102,9 +105,13 @@ with deck.edit("Build the results slide"):
 
     shapes = deck.slides[4].shapes
     shapes.add_textbox("Revenue up 12%", left=pl.units.inches(1), top=72)
-    star = shapes.add_shape("star", left=400, top=120, width=120, height=120)
+    star = shapes.add_shape("star", left=400, top=120, width=120, height=120, fill="#1E74B5")
     logo = shapes.add_picture("logo.png", left=600, top=40, alt_text="Acme logo")
     deck.slides[4].shapes["Picture 3"].move(top=140)  # by name; absolute, points
+
+    panel = shapes.add_shape("rectangle", left=60, top=60, width=840, height=400)
+    panel.set_fill(fill="#102030", line="none")       # fill/border — NOT font color; "none" = transparent
+    panel.reorder("back")                             # tuck the panel behind existing content
     star.delete()
 
 logo.set_alt_text("Acme logo (top-right)")            # alt text = drift-proof re-id handle

@@ -280,10 +280,12 @@ def _edit_core(deck: Presentation, op: str, p: dict[str, Any]) -> dict[str, Any]
         _require(p.get("anchor_id") is not None, "edit op='format' requires `anchor_id`")
         font_opts = ("bold", "italic", "underline", "size", "font", "color")
         para_opts = ("alignment", "space_before", "space_after", "line_spacing", "indent_level")
+        fill_opts = ("fill_color", "line_color", "line_width")
         list_type = p.get("list_type")
         _require(
-            any(p.get(k) is not None for k in font_opts + para_opts) or list_type is not None,
-            "edit op='format' needs at least one font, paragraph, or list option",
+            any(p.get(k) is not None for k in font_opts + para_opts + fill_opts)
+            or list_type is not None,
+            "edit op='format' needs at least one font, paragraph, fill, or list option",
         )
         anchor = deck.anchor_by_id(p["anchor_id"])
         if any(p.get(k) is not None for k in font_opts):
@@ -302,6 +304,17 @@ def _edit_core(deck: Presentation, op: str, p: dict[str, Any]) -> dict[str, Any]
                 space_after=p.get("space_after"),
                 line_spacing=p.get("line_spacing"),
                 indent_level=p.get("indent_level"),
+            )
+        if any(p.get(k) is not None for k in fill_opts):
+            if not isinstance(anchor, Shape):
+                raise ToolError(
+                    "invalid_args: fill_color/line_color/line_width need a shape anchor "
+                    f"(shape:/shapeid:/ph:), got {p['anchor_id']!r}"
+                )
+            anchor.set_fill(
+                fill=p.get("fill_color"),
+                line=p.get("line_color"),
+                line_width=p.get("line_width"),
             )
         if list_type == "none":
             anchor.remove_list()
@@ -338,10 +351,15 @@ def _edit_core(deck: Presentation, op: str, p: dict[str, Any]) -> dict[str, Any]
         _require(kind is not None, "edit op='shape_add' requires `kind`")
         geom = {k: p.get(k) for k in ("left", "top", "width", "height")}
         shapes = deck.slides[p["slide"]].shapes
+        fill_kw = {
+            "fill": p.get("fill_color"),
+            "line": p.get("line_color"),
+            "line_width": p.get("line_width"),
+        }
         if kind == "textbox":
-            created = shapes.add_textbox(p.get("text") or "", **geom)
+            created = shapes.add_textbox(p.get("text") or "", **fill_kw, **geom)
         elif kind == "shape":
-            created = shapes.add_shape(p.get("shape_type") or "rectangle", **geom)
+            created = shapes.add_shape(p.get("shape_type") or "rectangle", **fill_kw, **geom)
             if p.get("text"):
                 created.set_text(p["text"])
         elif kind == "table":
@@ -392,6 +410,15 @@ def _edit_core(deck: Presentation, op: str, p: dict[str, Any]) -> dict[str, Any]
         info = {"anchor_id": sh.anchor_id, "name": sh.name, "id": sh.shape_id}
         sh.delete()
         return {"ok": True, **info}
+
+    if op == "shape_order":
+        sh = _resolve_shape(deck, p.get("anchor_id"))
+        _require(
+            p.get("order") is not None,
+            "edit op='shape_order' requires `order` (front/back/forward/backward)",
+        )
+        new_index = sh.reorder(p["order"])
+        return {"ok": True, "anchor_id": sh.anchor_id, "name": sh.name, "index": new_index}
 
     # -- tables (addressed by the table shape's anchor_id) -----------------
     if op in ("table_add_row", "table_delete_row"):
@@ -620,6 +647,7 @@ def ppt_edit(
         "shape_move",
         "shape_resize",
         "shape_delete",
+        "shape_order",
         "set_alt",
         "table_add_row",
         "table_delete_row",
@@ -650,6 +678,10 @@ def ppt_edit(
     space_after: float | None = None,
     line_spacing: float | None = None,
     indent_level: int | None = None,
+    fill_color: str | None = None,
+    line_color: str | None = None,
+    line_width: float | None = None,
+    order: Literal["front", "back", "forward", "backward"] | None = None,
     list_type: Literal["bulleted", "numbered", "none"] | None = None,
     bullet_char: str | None = None,
     slide: int | None = None,
@@ -697,11 +729,14 @@ def ppt_edit(
       several pass `replace_all=true` or `occurrence` (1-based) — otherwise it
       errors `ambiguous`. Zero matches errors `not_found`. Use op="find" first to
       preview the hits.
-    - "format": font (`bold`/`italic`/`underline`/`size`/`font`/`color`), paragraph
-      (`alignment`/`space_before`/`space_after`/`line_spacing` in points/`indent_level`
-      1-5), and/or list (`list_type` "bulleted"/"numbered", or "none" to strip;
-      `bullet_char` for a custom bullet). PowerPoint has no named styles, so this
-      direct formatting is its "apply a style". Pass at least one option.
+    - "format": font (`bold`/`italic`/`underline`/`size`/`font`/`color` — `color` is
+      *font* color), paragraph (`alignment`/`space_before`/`space_after`/`line_spacing`
+      in points/`indent_level` 1-5), shape fill/border on a shape anchor
+      (`fill_color`/`line_color` — a hex or "none" for transparent/no border;
+      `line_width` in points), and/or list (`list_type` "bulleted"/"numbered", or
+      "none" to strip; `bullet_char` for a custom bullet). PowerPoint has no named
+      styles, so this direct formatting is its "apply a style". Pass at least one
+      option.
 
     Slide lifecycle:
     - "slide_add": add a slide (`layout` name, optional 1-based `index`; default end).
@@ -709,14 +744,19 @@ def ppt_edit(
     - "slide_move": move slide `slide` to position `to`.
     - "set_layout": re-apply layout `layout` to slide `slide`.
 
-    Shapes (create on `slide`; move/resize/delete/tag by `anchor_id`):
+    Shapes (create on `slide`; move/resize/delete/order/tag by `anchor_id`):
     - "shape_add": add `kind`="textbox" (with `text`), "shape" (autoshape via
       `shape_type`, e.g. "star", optional `text`), "picture" (`path`, optional
       `alt_text`), "table" (`rows`+`cols`), "chart" (`chart_type`, optional
       `categories`+`series`), or "smartart" (`smartart_kind` e.g. "process"/
-      "cycle"/"orgchart", optional `nodes`). Optional `left`/`top`/`width`/`height`.
+      "cycle"/"orgchart", optional `nodes`). Optional `left`/`top`/`width`/`height`;
+      textbox/shape also take `fill_color`/`line_color` (hex or "none") + `line_width`.
     - "shape_move": move to absolute `left`/`top`. "shape_resize": set `width`/`height`.
+    - "shape_order": restack by `order`="front"/"back"/"forward"/"backward" (e.g.
+      send a new background panel to the back, behind existing content).
     - "shape_delete": delete it. "set_alt": set `alt_text` (a drift-proof handle).
+      Address a shape that must survive a delete/restack by `shapeid:S:ID` (the
+      stable `id` from any shape listing), not the positional `shape:S:N`.
 
     Tables, charts & SmartArt (target the shape by its `anchor_id`, a shape:S:N):
     - "table_add_row": append a row, optionally filled from `values`.
@@ -762,6 +802,10 @@ def ppt_edit(
         "space_after": space_after,
         "line_spacing": line_spacing,
         "indent_level": indent_level,
+        "fill_color": fill_color,
+        "line_color": line_color,
+        "line_width": line_width,
+        "order": order,
         "list_type": list_type,
         "bullet_char": bullet_char,
         "slide": slide,

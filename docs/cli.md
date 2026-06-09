@@ -278,8 +278,9 @@ one Ctrl-Z.
 # Text box
 pptlive shape add --slide 4 --kind textbox --text "Revenue up 12%" --left 72 --top 72
 
-# Autoshape (see --shape-type choices)
-pptlive shape add --slide 4 --kind shape --shape-type star --left 400 --top 120 --width 120 --height 120
+# Autoshape (see --shape-type choices), with a solid fill and no border
+pptlive shape add --slide 4 --kind shape --shape-type star --left 400 --top 120 --width 120 --height 120 \
+    --fill "#1E74B5" --line none
 
 # Picture (embedded, never linked) with a drift-proof alt-text handle
 pptlive shape add --slide 4 --kind picture --path logo.png --left 600 --top 40 --alt-text "Acme logo"
@@ -295,6 +296,8 @@ pptlive shape add --slide 4 --kind chart --chart-type column \
 ```json
 {"ok": true, "anchor_id": "shape:4:3", "name": "TextBox 3", "id": 4,
  "type": "textbox", "geometry": {"left": 72, "top": 72, "width": 180, "height": 29},
+ "fill": {"color": null, "visible": true},
+ "line": {"color": null, "weight": 1.0, "visible": true},
  "alt_text": "", "text": "Revenue up 12%"}
 ```
 
@@ -304,24 +307,45 @@ Notes:
   `--kind chart` needs both `--categories` and `--series`.
 - `--categories` takes a JSON array or a comma-separated list. `--series` takes
   a JSON object `{"name":[values]}` or an array of `[name,[values]]`.
+- `--fill` / `--line` (textbox/shape only) take a `#RRGGBB` hex or `none`
+  (transparent fill / no border); `--line-width` is the border weight in points.
+- Every shape read carries `fill` and `line` (`{color, visible[, weight]}`); a
+  theme/automatic color reads back as `color: null`, never a misleading `#000000`.
 - A new shape lands at the **top of the z-order** (last slot), so its
   `shape:S:N` is the post-add `Shapes.Count`. A text box created with text
   auto-fits its height, so a requested `--height` is advisory when AutoSize is
   on.
 
-### `shape move | resize | delete`
+### `shape move | resize | delete | order`
 
-Address by `shape:S:N` or `ph:S:KIND` (a non-shape anchor like `notes:S` is
-exit `2`).
+Address by `shape:S:N`, `shapeid:S:ID`, or `ph:S:KIND` (a non-shape anchor like
+`notes:S` is exit `2`).
 
 ```bash
 pptlive shape move   --anchor-id shape:4:3 --left 100 --top 140
 pptlive shape resize --anchor-id shape:4:3 --width 300 --height 200
 pptlive shape delete --anchor-id shape:4:3
+pptlive shape order  --anchor-id shape:4:3 --to back    # front | back | forward | backward
 ```
 
 `move` and `resize` echo the new `geometry`; each needs at least one
-coordinate/dimension.
+coordinate/dimension. `order` restacks the shape and echoes its new 1-based
+`index` — `--to back` tucks a freshly added background panel *behind* the
+existing content (otherwise it lands on top). Note that delete/restack shift the
+`shape:S:N` indices of the shapes they pass; re-read after, or address by
+`shapeid:S:ID` (below).
+
+### `shape fill`
+
+Set a shape's **fill** and/or **border** (the spatial equivalent of
+`format-text`, which is font color). `--fill`/`--line` take a `#RRGGBB` hex or
+`none`; `--line-width` is points. Pass at least one. Echoes the shape's updated
+`fill`/`line`.
+
+```bash
+pptlive shape fill --anchor-id shape:4:3 --fill "#1E74B5" --line none
+pptlive shape fill --anchor-id shapeid:4:9 --line "#333333" --line-width 1.5
+```
 
 ### `shape set-alt`
 
@@ -330,6 +354,18 @@ after z-order drift.
 
 ```bash
 pptlive shape set-alt --anchor-id shape:4:3 --alt-text "Acme logo (top-right)"
+```
+
+### `shapeid:S:ID` — the delete-proof handle
+
+Every shape read emits a stable `id` (`Shape.Id`). Address a shape by it with
+`shapeid:S:ID` anywhere an `--anchor-id` is taken. Unlike `shape:S:N` (a z-order
+index that shifts when a lower shape is deleted or restacked), the `shapeid`
+keeps pointing at the same shape across structural edits — reach for it when a
+multi-step batch deletes or reorders shapes it later references.
+
+```bash
+pptlive shape fill --anchor-id shapeid:4:9 --fill "#102030"
 ```
 
 ### `shape export`

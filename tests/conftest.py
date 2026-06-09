@@ -312,6 +312,32 @@ class _FakeTextFrame:
         self._paras = [_FakePara(p) for p in str(full).split("\r")]
 
 
+class _FakeShapeFill:
+    """`Shape.Fill` — Visible + ForeColor.RGB + Solid().
+
+    Defaults to a visible *theme* fill (the `0x80000000` automatic sentinel, so a
+    readback reports `color: None` until a literal RGB is set), matching how a
+    fresh autoshape inherits the theme accent.
+    """
+
+    def __init__(self) -> None:
+        self.Visible = _MSO_TRUE
+        self.Type = 5  # msoFillBackground (theme/inherited) until Solid()
+        self.ForeColor = SimpleNamespace(RGB=0x80000000)
+
+    def Solid(self) -> None:
+        self.Type = 1  # msoFillSolid
+
+
+class _FakeShapeLine:
+    """`Shape.Line` — Visible + Weight + ForeColor.RGB (the border)."""
+
+    def __init__(self) -> None:
+        self.Visible = _MSO_TRUE
+        self.Weight = 1.0
+        self.ForeColor = SimpleNamespace(RGB=0x80000000)
+
+
 class _FakeShape:
     """A shape. `text=None` means no text frame (picture/line)."""
 
@@ -339,6 +365,8 @@ class _FakeShape:
         self.Height = height
         self.Rotation = rotation
         self.AlternativeText = ""
+        self.Fill = _FakeShapeFill()
+        self.Line = _FakeShapeLine()
         self._placeholder_type = placeholder_type
         self._table = table
         self._chart: _FakeChart | None = None
@@ -351,6 +379,31 @@ class _FakeShape:
     def Delete(self) -> None:
         assert self._collection is not None
         self._collection._shapes.remove(self)
+
+    @property
+    def ZOrderPosition(self) -> int:
+        """1-based slot in the collection (index 1 = back, Count = front)."""
+        assert self._collection is not None
+        return self._collection._shapes.index(self) + 1
+
+    def ZOrder(self, cmd: int) -> None:
+        """Restack within the collection. `cmd` is the `MsoZOrderCmd` int
+        (0=BringToFront, 1=SendToBack, 2=BringForward, 3=SendBackward); the list
+        is back→front, so front == last slot."""
+        assert self._collection is not None
+        lst = self._collection._shapes
+        i = lst.index(self)
+        lst.remove(self)
+        if cmd == 0:  # BringToFront
+            lst.append(self)
+        elif cmd == 1:  # SendToBack
+            lst.insert(0, self)
+        elif cmd == 2:  # BringForward (one toward front)
+            lst.insert(min(i + 1, len(lst)), self)
+        elif cmd == 3:  # SendBackward (one toward back)
+            lst.insert(max(i - 1, 0), self)
+        else:
+            lst.insert(i, self)
 
     @property
     def HasTextFrame(self) -> int:

@@ -97,6 +97,7 @@ anchor IDs are colon-separated with the slide index first:
 
 ```
 shape:3:2          # 2nd shape (1-based z-order) on slide 3 — the canonical handle
+shapeid:3:7        # shape with stable Shape.Id 7 on slide 3 — the delete-proof handle
 ph:3:title         # placeholder of semantic KIND on slide 3 (the LLM-preferred form)
 para:3:2:1         # paragraph 1 of shape 2 on slide 3
 cell:3:5:1:2       # cell (row 1, col 2) of the table in shape 5 on slide 3
@@ -122,16 +123,20 @@ you reach a slide with `deck.slides[S]`, not `anchor_by_id`.
 ### z-order drifts — design around it
 
 `shape:S:N` uses the 1-based z-order index, which **shifts when shapes are
-added or removed**. pptlive resolves `shape:S:N` *live* on every use and never
-caches it. To survive drift, every shape listing also emits:
+added, removed, or restacked** (`shape order` / `Shape.reorder`). pptlive
+resolves `shape:S:N` *live* on every use and never caches it. To survive drift,
+every shape listing also emits:
 
 - `name` — `Shape.Name` (e.g. `"Title 1"`, `"Content Placeholder 2"`),
   usually unique per slide. Look one up with `slide.shapes["Title 1"]`.
-- `id` — `Shape.Id`, **stable across reorder** for re-identification.
+- `id` — `Shape.Id`, **stable across reorder *and* delete** for re-identification.
+  Address it directly with `shapeid:S:ID` (`slide.shapes.by_id(7)`) — the
+  delete-proof handle: deleting a lower shape renumbers every `shape:S:N` above
+  it, but the `shapeid` keeps pointing at the same shape.
 - `alt_text` — `Shape.AlternativeText`, which you can *set* as a description
   and re-find a picture/diagram by even after drift.
 
-Steer toward `ph:S:KIND` and `.Name` as the drift-proof forms.
+Steer toward `ph:S:KIND`, `.Name`, and `shapeid:S:ID` as the drift-proof forms.
 `para:S:N:P` and `cell:S:N:R:C` likewise resolve live, since the
 paragraph/row count moves as text or rows are inserted.
 
@@ -225,6 +230,25 @@ Slide dimensions come from
 [`deck.page_setup()`](python-api.md#pptlive.Presentation)
 (`SlideWidth` / `SlideHeight`), so an agent can place things relative to the
 canvas.
+
+Shapes also carry **fill**, **border**, and **stacking**:
+
+```python
+shape.set_fill(fill="#1E74B5", line="none")     # solid fill, no border
+shape.set_fill(line="#333333", line_width=1.5)  # just the border
+panel.reorder("back")                           # send behind existing content
+```
+
+`fill` / `line` take a color (`"#RRGGBB"`, an `(r, g, b)` tuple, or a raw RGB
+int) or the string `"none"` (transparent fill / no border); `fill=` and `line=`
+also ride on `shapes.add_shape(...)` / `add_textbox(...)`. This is *shape* color
+— distinct from [`format_text`](python-api.md#pptlive.Anchor)'s font `color`.
+[`reorder`](python-api.md#pptlive.Shape) (`"front"`/`"back"`/`"forward"`/
+`"backward"`) is what lets a freshly added background band slide *behind* content
+that's already there — otherwise every new shape lands on top. Every shape read
+reports `fill` and `line` back (`{color, visible[, weight]}`), with a theme or
+automatic color shown honestly as `color: null` rather than a misleading
+`#000000`.
 
 ## The `.com` escape hatch
 

@@ -41,6 +41,7 @@ from ..constants import (
     THEME_COLOR_CHOICES,
     THEME_FONT_SCRIPT_CHOICES,
     THEME_FONT_SLOTS,
+    ZORDER_CHOICES,
 )
 from ..exceptions import AmbiguousMatchError, AnchorNotFoundError, PowerPointNotRunningError
 from .main import _run, emit
@@ -660,7 +661,7 @@ def shapes_cmd(ctx: click.Context, slide_index: int) -> None:
 
 @click.group(name="shape")
 def shape() -> None:
-    """Create + place shapes: add, move, resize, delete (geometry in points)."""
+    """Create, place & style shapes: add, move, resize, delete, fill, order (points)."""
 
 
 def _resolve_shape(deck: Presentation, anchor_id: str) -> Shape:
@@ -738,6 +739,21 @@ def _resolve_shape(deck: Presentation, anchor_id: str) -> Shape:
 @click.option("--width", type=float, default=None, help="Width (points).")
 @click.option("--height", type=float, default=None, help="Height (points).")
 @click.option(
+    "--fill",
+    "fill",
+    default=None,
+    help='Fill color (#RRGGBB) or "none" for transparent (textbox/shape).',
+)
+@click.option(
+    "--line",
+    "line",
+    default=None,
+    help='Border color (#RRGGBB) or "none" for no border (textbox/shape).',
+)
+@click.option(
+    "--line-width", "line_width", type=float, default=None, help="Border weight in points."
+)
+@click.option(
     "--alt-text",
     "alt_text",
     default=None,
@@ -762,6 +778,9 @@ def shape_add(
     top: float | None,
     width: float | None,
     height: float | None,
+    fill: str | None,
+    line: str | None,
+    line_width: float | None,
     alt_text: str | None,
 ) -> None:
     """Add a shape to a slide; print its anchor_id, name, type, and geometry."""
@@ -782,11 +801,25 @@ def shape_add(
             with deck.edit(f"CLI: add {kind} on slide {slide_index}"):
                 if kind == "textbox":
                     new = shapes.add_textbox(
-                        text or "", left=left, top=top, width=width, height=height
+                        text or "",
+                        left=left,
+                        top=top,
+                        width=width,
+                        height=height,
+                        fill=fill,
+                        line=line,
+                        line_width=line_width,
                     )
                 elif kind == "shape":
                     new = shapes.add_shape(
-                        shape_type, left=left, top=top, width=width, height=height
+                        shape_type,
+                        left=left,
+                        top=top,
+                        width=width,
+                        height=height,
+                        fill=fill,
+                        line=line,
+                        line_width=line_width,
                     )
                 elif kind == "table":
                     assert rows is not None and cols is not None  # guarded above
@@ -960,6 +993,83 @@ def shape_set_alt(ctx: click.Context, anchor_id: str, alt_text: str) -> None:
                 {"ok": True, "anchor_id": sh.anchor_id, "alt_text": sh.alt_text},
                 as_text=not ctx.obj["as_json"],
                 text=f"set alt-text on {sh.anchor_id}: {alt_text!r}",
+            )
+
+    _run(ctx, go)
+
+
+@shape.command(name="fill")
+@click.option(
+    "--anchor-id",
+    "anchor_id",
+    required=True,
+    help="Shape to style (shape:S:N / shapeid:S:ID / ph).",
+)
+@click.option(
+    "--fill", "fill", default=None, help='Fill color (#RRGGBB) or "none" for transparent.'
+)
+@click.option(
+    "--line", "line", default=None, help='Border color (#RRGGBB) or "none" for no border.'
+)
+@click.option(
+    "--line-width", "line_width", type=float, default=None, help="Border weight in points."
+)
+@click.pass_context
+def shape_fill(
+    ctx: click.Context,
+    anchor_id: str,
+    fill: str | None,
+    line: str | None,
+    line_width: float | None,
+) -> None:
+    """Set a shape's fill and/or line (border) color — distinct from font color."""
+
+    def go() -> None:
+        if fill is None and line is None and line_width is None:
+            raise click.UsageError("shape fill requires --fill, --line, and/or --line-width")
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            sh = _resolve_shape(deck, anchor_id)
+            with deck.edit(f"CLI: fill {anchor_id}"):
+                sh.set_fill(fill=fill, line=line, line_width=line_width)
+            payload = {"ok": True, **sh.to_dict()}
+            emit(
+                payload,
+                as_text=not ctx.obj["as_json"],
+                text=f"styled {sh.anchor_id} (fill={payload['fill']}, line={payload['line']})",
+            )
+
+    _run(ctx, go)
+
+
+@shape.command(name="order")
+@click.option(
+    "--anchor-id",
+    "anchor_id",
+    required=True,
+    help="Shape to restack (shape:S:N / shapeid:S:ID / ph).",
+)
+@click.option(
+    "--to",
+    "to",
+    type=click.Choice(ZORDER_CHOICES),
+    required=True,
+    help="front / back / forward / backward.",
+)
+@click.pass_context
+def shape_order(ctx: click.Context, anchor_id: str, to: str) -> None:
+    """Restack a shape in the slide z-order; print its new 1-based position."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            sh = _resolve_shape(deck, anchor_id)
+            with deck.edit(f"CLI: order {anchor_id} {to}"):
+                new_index = sh.reorder(to)
+            emit(
+                {"ok": True, "anchor_id": sh.anchor_id, "name": sh.name, "index": new_index},
+                as_text=not ctx.obj["as_json"],
+                text=f"sent {sh.anchor_id} to {to} (now z-index {new_index})",
             )
 
     _run(ctx, go)

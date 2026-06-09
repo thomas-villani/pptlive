@@ -231,6 +231,8 @@ class Presentation:
 
         Recognised:
           - `shape:S:N`   — Nth shape (1-based z-order) on slide S
+          - `shapeid:S:ID`— shape with stable `Shape.Id` ID on slide S — the
+                            delete-proof handle (the `id` in every shape listing)
           - `ph:S:KIND`   — placeholder of semantic KIND on slide S
                             (title/ctrtitle/subtitle/body/footer/date/slidenum)
           - `para:S:N:P`  — paragraph P of shape N on slide S (v0.3)
@@ -257,6 +259,16 @@ class Presentation:
             except ValueError as e:
                 raise AnchorNotFoundError("shape", anchor_id) from e
             return self.slides[s].shapes[n]
+
+        if kind == "shapeid":
+            parts = rest.split(":")
+            if len(parts) != 2:
+                raise AnchorNotFoundError("shape", anchor_id)
+            try:
+                s, sid = int(parts[0]), int(parts[1])
+            except ValueError as e:
+                raise AnchorNotFoundError("shape", anchor_id) from e
+            return self.slides[s].shapes.by_id(sid)
 
         if kind == "para":
             parts = rest.split(":")
