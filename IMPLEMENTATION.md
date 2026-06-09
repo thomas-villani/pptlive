@@ -45,6 +45,13 @@ resolved open questions inline (strike them through, link the commit).
 > (separate CLI invocations stay distinct undo entries — each re-fences at its
 > own `edit()` entry). Still open: CI and v0.1+. The spike harnesses live at
 > `scripts/spike.py` and `scripts/undo_test.py`.
+>
+> **Post-v0.9 tiers have also landed** (each with its own SHIPPED section below):
+> **v1.0** fuzzy find / replace, the **v1.2** shape-styling round (fill / border,
+> z-order, the delete-proof `shapeid:S:ID` anchor, SmartArt / chart
+> `recolor_text`), **v1.3** threaded review comments, and the **v1.1** output tier
+> (whole-deck snapshot + explicit `save` / `save_as` / PDF export). All fake-COM
+> unit tests stay green (`ruff`, `mypy`, `pytest`).
 
 ---
 
@@ -636,7 +643,7 @@ slides × shapes → each text frame, table cells, and speaker notes; there is n
 
 - [x] **`_findreplace.py`** — wordlive's pure fuzzy-matching core ported **almost
   verbatim** (`_normalize` / NFKC + smart-quote/dash/NBSP folds + whitespace
-  collapse, `find_matches`, `normalized_equal`, `Match`). OS-independent and
+  collapse, `find_matches`, `Match`). OS-independent and
   unit-tested against the fake. Fold-table keys are written as `\u`/`\x` escapes
   so the exotic code points survive a source round-trip.
 - [x] **`Presentation.find(text, *, scope=None)`** → `[{anchor_id, start, length,
@@ -670,6 +677,40 @@ slides × shapes → each text frame, table cells, and speaker notes; there is n
 **Deferred:** a within-shape `range:S:N:START-END` anchor (until a real
 mid-paragraph workflow needs it); the CLI `exec` batch verb (MCP `ppt_batch`
 already covers batch; the standalone CLI `exec` stays on the roadmap).
+
+## v1.2 — shape styling: fill / border, z-order, shapeid, composite recolor — SHIPPED
+
+The styling round that closed the PPTLIVE-007…010 field-guide gaps — the
+shape-level visual verbs and the delete-proof anchor that earlier rounds asked
+for. Resolves spec Open Q #3 (symbolic `exec` binding stays deferred).
+
+- [x] **Shape fill / border (PPTLIVE-007/008)** — `Shape.set_fill(fill=/line=/
+  line_width=)` sets the fill and border (a color, or `"none"` for transparent /
+  no border) — distinct from `format_text`'s font `color`; `fill=`/`line=`/
+  `line_width=` also ride on `add_shape`/`add_textbox`. Every shape listing now
+  carries `fill`/`line` (`{color, visible[, weight]}`), guarded by the same
+  theme-sentinel `color_hex_or_none` as font color (so a theme-linked fill reads
+  back `None`, never a wrong `#000000`).
+- [x] **Z-order (PPTLIVE-008)** — `Shape.reorder("front"|"back"|"forward"|
+  "backward")` restacks via `Shape.ZOrder` (`MsoZOrderCmd`). Because z-order is
+  what `shape:S:N` indexes, this is why that anchor is resolved live and never
+  cached.
+- [x] **`shapeid:S:ID` anchor (PPTLIVE-010)** — `ShapeById` resolves by stable
+  `Shape.Id` (emitted as `id` in every shape listing), the **delete-proof** handle
+  that survives a delete/restack which shifts `shape:S:N`. The drift-proof forms
+  are now `ph:S:KIND`, `.Name`, and `shapeid:S:ID`.
+- [x] **Composite-text recolor (PPTLIVE-009)** — a SmartArt diagram / chart has no
+  text anchor, so `format_text` can't reach its internal labels.
+  `SmartArt.recolor_text(color)` walks `AllNodes`; `Chart.recolor_text(color)`
+  sets every shown chart text element (legend / both axis tick labels / title /
+  per-series data labels) plus the `ChartArea` default. Coarse "recolor all text
+  to X" only (the dark-theme fix), guarded by `HasLegend`/`HasTitle`/best-effort
+  axes. Deferred: composite-text *fill* and per-element targeting.
+- [x] **Library + CLI (`shape fill`, `shape order`, `shapeid:` everywhere a shape
+  anchor is accepted, `chart recolor-text`, `smartart recolor-text`) + MCP
+  (`ppt_edit` `format` fill keys / `shape_order` / `chart_recolor_text` /
+  `smartart_recolor_text`).** Unit-tested in `tests/test_styling.py` +
+  `tests/test_cli.py` + `tests/test_mcp.py`. See `roadmap.md`.
 
 ## v1.3 — review loop: comments — SHIPPED
 

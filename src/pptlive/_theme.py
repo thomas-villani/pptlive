@@ -43,6 +43,7 @@ from .constants import (
     THEME_COLOR_CHOICES,
     alignment_for,
     color_hex,
+    color_hex_or_none,
     is_true,
     parse_color,
     text_style_for,
@@ -55,12 +56,7 @@ if TYPE_CHECKING:
     from ._presentation import Presentation
 
 
-def _safe(fn: Any, default: Any) -> Any:
-    """Read a COM property defensively — degrade to `default` rather than raise."""
-    try:
-        return fn()
-    except Exception:
-        return default
+_safe = _com.safe_read  # defensive COM-property read (returns a default on failure)
 
 
 # msoFillType ints -> a friendly name (read-back only; we only *set* solid fills).
@@ -185,7 +181,7 @@ class Master:
             "bold": _safe(lambda: is_true(f.Bold), None),
             "italic": _safe(lambda: is_true(f.Italic), None),
             "underline": _safe(lambda: is_true(f.Underline), None),
-            "color": _safe(lambda: color_hex(f.Color.RGB), None),
+            "color": _safe(lambda: color_hex_or_none(f.Color.RGB), None),
             "alignment": _safe(lambda: int(pf.Alignment), None),
         }
 
@@ -210,7 +206,7 @@ class Master:
                 "type": _FILL_TYPE_NAMES.get(fill_type, fill_type)
                 if fill_type is not None
                 else None,
-                "color": _safe(lambda: color_hex(fill.ForeColor.RGB), None),
+                "color": _safe(lambda: color_hex_or_none(fill.ForeColor.RGB), None),
             }
         return {"text_styles": text_styles, "background": background}
 

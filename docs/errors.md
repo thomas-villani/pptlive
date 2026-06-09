@@ -17,6 +17,7 @@ Exception
     │   └── LayoutNotFoundError
     ├── NoTextFrameError
     ├── SlideShowNotRunningError
+    ├── UnsavedPresentationError
     ├── AmbiguousMatchError
     ├── PowerPointBusyError
     └── ComError
@@ -78,6 +79,13 @@ it maps to the generic exit code (**1**), not 2. Start a show first with
 `deck.show.start()`; `deck.show.state()` is the one verb that never raises when
 nothing is running (it just reports `running: false`).
 
+### `UnsavedPresentationError`
+`deck.save()` was called on a deck that has never been saved (no file path yet),
+so there's nothing to save *to*. PowerPoint's own `Save()` doesn't raise here —
+on a OneDrive/SharePoint build it silently uploads to the default cloud folder —
+so pptlive guards on the empty path and raises instead. Use `deck.save_as(path)`
+to give it a file first. A precondition failure, so it maps to exit **1**.
+
 ### `AmbiguousMatchError`
 A fuzzy match resolved to more than one target without disambiguation. The
 exception carries the candidates so an agent can pick one and retry.
@@ -127,7 +135,7 @@ The CLI maps the exception hierarchy onto seven exit codes, defined in
 | Exit | Exception(s)                                          | Meaning                                       | Retry?                          |
 | ---- | ----------------------------------------------------- | --------------------------------------------- | ------------------------------- |
 | `0`  | —                                                     | success                                       | —                               |
-| `1`  | `PptliveError` (default), `SlideShowNotRunningError`, `ComError` | other / unclassified / no show running | depends on cause                |
+| `1`  | `PptliveError` (default), `SlideShowNotRunningError`, `UnsavedPresentationError`, `ComError` | other / unclassified / no show running / never-saved deck | depends on cause                |
 | `2`  | `AnchorNotFoundError`, `SlideNotFoundError`, `LayoutNotFoundError`, `PresentationNotFoundError` | anchor / slide / shape / layout / deck missing | yes, after re-reading content   |
 | `3`  | `PowerPointBusyError`                                 | modal dialog or busy RPC                      | **yes**, with back-off          |
 | `4`  | `PowerPointNotRunningError`                           | no PowerPoint instance                        | only if the user launches PowerPoint |

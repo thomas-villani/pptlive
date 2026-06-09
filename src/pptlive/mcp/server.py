@@ -635,11 +635,14 @@ def _render_core(ppt: Any, op: str, p: dict[str, Any]) -> dict[str, Any]:
         return {"ok": True, "path": saved_path, "saved": True, "format": "pptx"}
     if op == "save_as":
         _require(p.get("out") is not None, "render op='save_as' requires `out` (the .pptx path)")
+        fmt = str(p.get("save_format", "pptx"))
         try:
-            written = deck.save_as(p["out"], overwrite=bool(p.get("overwrite", False)))
-        except FileExistsError as exc:
+            written = deck.save_as(
+                p["out"], fmt=fmt, overwrite=bool(p.get("overwrite", False))
+            )
+        except (FileExistsError, ValueError) as exc:
             raise ToolError(f"invalid_args: {exc}") from exc
-        return {"ok": True, "path": written, "format": "pptx"}
+        return {"ok": True, "path": written, "format": fmt}
     if op == "navigate":
         _require(p.get("anchor_id") is not None, "render op='navigate' requires `anchor_id`")
         anchor = deck.anchor_by_id(p["anchor_id"])
@@ -997,6 +1000,7 @@ def ppt_render(
     slides: str | None = None,
     max_dim: int | None = None,
     overwrite: bool = False,
+    save_format: str = "pptx",
 ) -> Any:
     """Render a PowerPoint slide or shape to an image a vision model can see, or
     move the user's view to a slide/shape. `op`:
@@ -1027,8 +1031,9 @@ def ppt_render(
     - "save": save the deck to its existing file (explicit; pptlive never
       auto-saves). Errors if the deck has never been saved — use "save_as" first.
     - "save_as": save the deck to `out` (required, a .pptx path) and REBIND the
-      working file to it (the open deck becomes that file). Refuses to clobber an
-      existing file unless `overwrite=True`. For PDF use "deck_pdf" (a read).
+      working file to it (the open deck becomes that file). `save_format` is the
+      target format (default "pptx"). Refuses to clobber an existing file unless
+      `overwrite=True`. For PDF use "deck_pdf" (a read).
     - "navigate": move the user's view to `anchor_id`'s slide — a deliberate,
       opt-in view move (every other tool leaves the view alone). With `select=True`
       (default), also selects the target shape. Use only when asked to be taken
@@ -1055,6 +1060,7 @@ def ppt_render(
         "slides": slides,
         "max_dim": max_dim,
         "overwrite": overwrite,
+        "save_format": save_format,
     }
     with _mcp_errors(), attach() as ppt:
         result = _render_core(ppt, op, params)

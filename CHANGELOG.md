@@ -18,6 +18,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Docs across the MCP `write` op, the CLI `--text` help, and both SKILL guides were
   corrected (they previously mislabeled `\n` as "paragraphs").
 
+### Fixed
+
+- **CLI `shape add --kind shape --text X` now applies the text.** It was silently
+  dropped (only the `textbox` branch passed `--text` through), while the MCP
+  `shape_add` op already set it — a CLI/MCP drift. Autoshapes created with `--text`
+  now carry that text.
+- **MCP `ppt_render` `save_as` now honors a `save_format` argument** (default
+  `"pptx"`), matching the CLI's `save-as --format`. It previously hard-coded the
+  format and always reported `"pptx"`. An unrecognized format surfaces as
+  `invalid_args` rather than an unclassified error.
+- **Ambiguous fuzzy `replace` now follows the standard CLI failure contract.** It
+  used to print a JSON error object on **stdout** *and* exit 5, unlike every other
+  failure (which writes only to stderr). The contract is now uniform: stdout JSON
+  on success only; the actionable "N matches — set occurrence/all" hint goes to
+  stderr with exit 5. The MCP path is unchanged (it still returns the structured
+  `matches` for an agent to retry on).
+- **Theme/master color reads no longer emit a wrong `#000000` for a theme-linked
+  color.** `Master` text-style and background color reads now route through the
+  same `color_hex_or_none` theme-sentinel guard that font and shape fill/line reads
+  already used, so an inherited/automatic color reads back as `null`, not black.
+
 ### Added
 
 - **Save & PDF export — the explicit file-output verbs** (v1.1, completing the

@@ -193,6 +193,19 @@ def test_shape_add_autoshape(fake_powerpoint) -> None:  # type: ignore[no-untype
     assert new.AutoShapeType == 9  # oval
 
 
+def test_shape_add_autoshape_with_text(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    # --text on an autoshape must be applied (it used to be silently dropped: only
+    # the textbox branch passed it through, while MCP shape_add did set it).
+    result = CliRunner().invoke(
+        main,
+        ["shape", "add", "--slide", "3", "--kind", "shape", "--shape-type", "rectangle",
+         "--text", "Hello"],
+    )
+    assert result.exit_code == 0
+    new = fake_powerpoint.ActivePresentation.Slides(3).Shapes(3)
+    assert new.TextFrame.TextRange.Text == "Hello"
+
+
 def test_shape_add_picture(fake_powerpoint, tmp_path) -> None:  # type: ignore[no-untyped-def]
     img = tmp_path / "pic.png"
     img.write_bytes(b"\x89PNG\r\n\x1a\n")

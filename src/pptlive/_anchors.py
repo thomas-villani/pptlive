@@ -373,12 +373,7 @@ def _strip_break(text: str) -> str:
     return text.rstrip("\r\v\n")
 
 
-def _safe(fn: Any, default: Any) -> Any:
-    """Run `fn`, returning `default` if PowerPoint can't supply the value."""
-    try:
-        return fn()
-    except Exception:
-        return default
+_safe = _com.safe_read  # defensive COM-property read (returns a default on failure)
 
 
 def _font_color_hex(font: Any) -> str | None:

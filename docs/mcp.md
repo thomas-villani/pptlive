@@ -73,9 +73,9 @@ fifteen. They wrap the same Python API, so the politeness model and one-Ctrl-Z
 
 | Tool | `op`s |
 | ---- | ----- |
-| `ppt_read` | `status` · `slides` · `outline` · `slide` · `anchor` · `find` · `selection` · `table` · `chart` · `smartart` · `theme` · `master` · `layouts` — every read; never moves the view |
-| `ppt_edit` | `write` · `find_replace` · `format` · `slide_add` / `slide_delete` / `slide_duplicate` / `slide_move` / `set_layout` · `shape_add` / `shape_move` / `shape_resize` / `shape_delete` / `set_alt` · `table_add_row` / `table_delete_row` · `chart_set_type` / `chart_set_data` · `smartart_set_nodes` · `theme_set_color` / `theme_set_font` · `master_format_text_style` / `master_format_paragraph_style` / `master_set_background` — every mutation; one Ctrl-Z each |
-| `ppt_render` | `slide_image` · `shape_image` (PNGs a vision model can read) · `navigate` (the one deliberate view move) |
+| `ppt_read` | `status` · `slides` · `outline` · `slide` · `anchor` · `selection` · `find` · `table` · `chart` · `smartart` · `comments` · `theme` · `master` · `layouts` — every read; never moves the view |
+| `ppt_edit` | `write` · `find_replace` · `format` (font + paragraph + shape **fill / line** + list bullets in one op) · `slide_add` / `slide_delete` / `slide_duplicate` / `slide_move` / `set_layout` · `shape_add` / `shape_move` / `shape_resize` / `shape_delete` / `shape_order` (z-order) / `set_alt` · `table_add_row` / `table_delete_row` · `chart_set_type` / `chart_set_data` / `chart_recolor_text` · `smartart_set_nodes` / `smartart_recolor_text` · `comment_add` / `comment_reply` / `comment_delete` · `theme_set_color` / `theme_set_font` · `master_format_text_style` / `master_format_paragraph_style` / `master_set_background` — every mutation; one Ctrl-Z each |
+| `ppt_render` | `slide_image` · `shape_image` · `deck_snapshot` (one image per slide — the whole-deck vision read, `max_dim` caps each slide's long edge) — PNGs a vision model can read · `deck_pdf` / `save` / `save_as` (explicit output; pptlive never auto-saves) · `navigate` (the one deliberate view move) |
 | `ppt_show` | live slide show: `state` · `start` · `end` · `next` · `previous` · `goto` · `black` · `white` · `resume` |
 | `ppt_batch` | run a **list** of the ops above against one connection — `edit`s fenced into a **single** undo entry (`atomic`), with `stop_on_error` control |
 
@@ -83,9 +83,10 @@ Tables, charts, and SmartArt are addressed by their shape's `anchor_id` (a
 `shape:S:N`); cells stay `cell:S:N:R:C` anchors you write to with `ppt_edit
 op="write"`. The `theme_*` and `master_*` ops are deck-wide (no anchor) — one
 call restyles every inheriting slide. The
-full anchor model (`shape:S:N`, `ph:S:KIND`, `para:S:N:P`, `cell:S:N:R:C`,
-`notes:S`, `here:`) is documented under [Concepts](concepts.md#anchor-ids), and
-each op's fields mirror the [CLI](cli.md).
+full anchor model (`shape:S:N`, `shapeid:S:ID` — the delete-proof handle —
+`ph:S:KIND`, `para:S:N:P`, `cell:S:N:R:C`, `notes:S`, `comments:S`, `here:`) is
+documented under [Concepts](concepts.md#anchor-ids), and each op's fields mirror
+the [CLI](cli.md).
 
 ### Batches
 

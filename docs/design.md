@@ -42,9 +42,10 @@ The four principles, in priority order:
    active slide is the PowerPoint equivalent of stomping the cursor — and more
    jarring, because it's a full-screen change.
 2. **Semantic anchors over `Selection`.** Operations target hierarchical named
-   handles — `ph:S:KIND`, `shape:S:N`, `para:S:N:P`, `cell:S:N:R:C`, `notes:S`
-   — not the live selection. Anchors are stable enough to address in JSON and
-   visible to an LLM as strings; the selection is neither.
+   handles — `ph:S:KIND`, `shape:S:N`, `shapeid:S:ID`, `para:S:N:P`,
+   `cell:S:N:R:C`, `notes:S`, `comments:S` — not the live selection. Anchors are
+   stable enough to address in JSON and visible to an LLM as strings; the
+   selection is neither.
 3. **Atomic undo.** Every [`deck.edit()`](python-api.md#pptlive.Presentation)
    block fences a single undo entry via `StartNewUndoEntry`, so one Ctrl-Z
    reverts the whole intent — even though PowerPoint has no Word-style
@@ -131,17 +132,21 @@ unit-testable against a fake-COM fixture with no PowerPoint installed.
 The roadmap lives in
 [`IMPLEMENTATION.md`](https://github.com/thomas-villani/pptlive/blob/main/IMPLEMENTATION.md).
 The current release covers the politeness / anchors / `EditScope` core, the
-LLM-first CLI, the slide lifecycle, shapes & geometry, text structure
+LLM-first CLI, the slide lifecycle, shapes & geometry (fill / border, z-order
+restacking, the delete-proof `shapeid:S:ID` anchor), text structure
 (paragraphs, font formatting, bullets), tables (cells as `cell:S:N:R:C`
 anchors), slide render + live selection (`here:`), pictures (alt text + per-shape
-export), charts (embedded-Excel data), SmartArt diagrams (node-tree read /
-`set_nodes`), deck-wide styling via the theme and master (palette, heading/body
-fonts, master text styles, background), and live slide-show control
-(`deck.show`). It also ships an optional [MCP server](mcp.md) for Claude Desktop
-and other MCP clients. Deferred: event sinks
+export), charts (embedded-Excel data) and SmartArt diagrams (node-tree read /
+`set_nodes`) — both with coarse `recolor_text` for dark-theme labels, deck-wide
+styling via the theme and master (palette, heading/body fonts, master text
+styles, background), fuzzy [find / replace](python-api.md) across shapes / cells /
+notes, threaded review [comments](python-api.md), the whole-deck [snapshot](python-api.md)
+vision read, explicit [save / save_as / PDF export](python-api.md), and live
+slide-show control (`deck.show`). It also ships an optional [MCP server](mcp.md)
+for Claude Desktop and other MCP clients. Deferred: event sinks
 (`SlideShowNextSlide`, `WindowSelectionChange`), an async wrapper, transitions &
-animations, find/replace, and custom slide-layout authoring (creating new
-layouts — distinct from the theme/master styling that already ships).
+animations, and custom slide-layout authoring (creating new layouts — distinct
+from the theme/master styling that already ships).
 
 ## Full design document
 
