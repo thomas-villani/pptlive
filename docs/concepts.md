@@ -76,6 +76,10 @@ title.insert_paragraph_after("Subtitle line")
 title.com                           # raw COM TextRange — escape hatch
 ```
 
+In `set_text`, a `\n` (or `\r`) starts a **new paragraph** — each line becomes
+its own addressable `para:S:N:P`. For a soft line break *within* a paragraph,
+embed `\v` (`pptlive._anchors.SOFT_BREAK`).
+
 Why not Selection-driven? Two reasons:
 
 1. **Idempotent operations are easier to reason about.** "Set the title of
@@ -102,7 +106,12 @@ here:              # whatever the user has selected right now (opt-in)
 
 `ph:S:KIND` takes a semantic `KIND` of `title`, `ctrtitle`, `subtitle`,
 `body`, `footer`, `date`, or `slidenum` — "the title of slide 3" without
-caring about z-order. It's the form to prefer in tool-use payloads.
+caring about z-order. It's the form to prefer in tool-use payloads. `body`
+also matches the generic **content** placeholder (which reads back as
+`placeholder: "object"`, e.g. `"Content Placeholder 2"`). A **Two Content** /
+**Comparison** layout has *two* such placeholders, so `ph:S:body` is ambiguous
+and raises an error listing the candidate `shape:S:N` anchors — reach each
+column by its `shape:S:N` or `.Name` instead.
 
 The bare `slide:S` form is deliberately **not** an anchor — a whole slide has
 no single text range, just like a whole table doesn't. Slide-level verbs

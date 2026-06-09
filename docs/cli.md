@@ -167,7 +167,8 @@ Never raises on a miss — zero matches is an **empty array** and exit `0`.
 ## `write --anchor-id ID --text "…"`
 
 Set the entire text of a text anchor. Preserves the viewed slide; one Ctrl-Z.
-Embed `\n` for paragraph breaks.
+Embed `\n` (or `\r`) to start a new paragraph — each line becomes its own
+addressable `para:S:N:P`. For a soft line break *within* a paragraph, embed `\v`.
 
 ```bash
 pptlive write --anchor-id ph:2:title --text "Agenda"
@@ -348,7 +349,11 @@ pptlive shape export --anchor-id shape:4:3 --out logo.png
 ### `paragraphs --anchor-id ID`
 
 List a shape's paragraphs, each with its `para:S:N:P` anchor, text, indent
-level, and bullet.
+level, bullet, alignment, and effective `font` (`bold`/`italic`/`underline` as
+`true`/`false`/`"mixed"`, `size`, `font` name, `color` `#RRGGBB` or `null` for a
+theme/automatic color). The `font` values are *rendered* — COM exposes no
+"directly set vs inherited" flag (only color distinguishes a literal from a theme
+color).
 
 ```bash
 pptlive paragraphs --anchor-id ph:4:body
@@ -356,8 +361,10 @@ pptlive paragraphs --anchor-id ph:4:body
 
 ```json
 [
-  {"anchor_id": "para:4:2:1", "text": "Revenue up 12%", "indent_level": 1, "bullet": "bulleted"},
-  {"anchor_id": "para:4:2:2", "text": "Churn down 3%",  "indent_level": 1, "bullet": "bulleted"}
+  {"anchor_id": "para:4:2:1", "text": "Revenue up 12%", "indent_level": 1, "bullet": "bulleted",
+   "font": {"bold": false, "italic": false, "underline": false, "size": 18.0, "font": "Aptos", "color": "#000000"}},
+  {"anchor_id": "para:4:2:2", "text": "Churn down 3%",  "indent_level": 1, "bullet": "bulleted",
+   "font": {"bold": false, "italic": false, "underline": false, "size": 18.0, "font": "Aptos", "color": null}}
 ]
 ```
 
@@ -536,7 +543,9 @@ pptlive master set-background --color "#1F1F1F"      # solid fill (v0.9 ships so
 `--underline`, `--size`, `--font`, `--color`) and `format-paragraph-style`
 mirrors `format-paragraph` (`--alignment`, `--space-before`, `--space-after`,
 `--line-spacing`) — but applied deck-wide to a `--style` + `--level` instead of
-to one anchor. Each needs at least one formatting option.
+to one anchor. `--level` defaults to `1` (the natural choice for `title`); pass
+`--level N` (1–5) for the other outline levels. Each needs at least one
+formatting option.
 
 ---
 
