@@ -933,6 +933,20 @@ def test_save_as_refuses_overwrite(fake_powerpoint: Any, tmp_path: Any) -> None:
     assert out.read_bytes().startswith(b"PK\x03\x04")
 
 
+def test_save_as_threads_format_param(fake_powerpoint: Any, tmp_path: Any) -> None:
+    # save_as honors an explicit `format` and reports it back, matching the CLI's
+    # --format (it used to hard-code "pptx" and ignore the param).
+    out = tmp_path / "copy.pptx"
+    res = ppt_render("save_as", out=str(out), save_format="pptx")
+    assert res["ok"] is True
+    assert res["format"] == "pptx"
+
+
+def test_save_as_unknown_format_is_invalid_args(fake_powerpoint: Any, tmp_path: Any) -> None:
+    with pytest.raises(ToolError, match="invalid_args"):
+        ppt_render("save_as", out=str(tmp_path / "x.odp"), save_format="odp")
+
+
 def test_deck_pdf_in_batch_does_not_break_image_embedding(
     fake_powerpoint: Any, tmp_path: Any
 ) -> None:

@@ -223,10 +223,7 @@ class SlideShow:
 
     @staticmethod
     def _safe_int(getter: Any) -> int | None:
-        try:
-            return int(getter())
-        except Exception:
-            return None
+        return _com.safe_read(lambda: int(getter()), None)
 
     def __repr__(self) -> str:
         return f"<SlideShow running={self.is_running()!r}>"

@@ -99,6 +99,20 @@ def test_snapshot_no_max_dim_is_native(deck, fake_powerpoint) -> None:  # type: 
     assert (rec["Width"], rec["Height"]) == (1280, 720)
 
 
+def test_snapshot_is_polite(deck, fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    # snapshot() is documented as a *read*: exporting every slide must not move
+    # the viewed slide or disturb the live Selection (no deck.edit() fence). This
+    # is the whole-deck analog of test_export_is_polite — the export loop over all
+    # slides is the most likely place to accidentally walk the view.
+    fake_powerpoint._viewed = 2
+    fake_powerpoint._select_shapes("Title 1")
+    before_type, before_view = fake_powerpoint._selection_type, fake_powerpoint._viewed
+    deck.snapshot()  # all three slides
+    assert fake_powerpoint._selection_type == before_type
+    assert fake_powerpoint._selected_names == ("Title 1",)
+    assert fake_powerpoint._viewed == before_view
+
+
 # -- file placement ---------------------------------------------------------
 
 

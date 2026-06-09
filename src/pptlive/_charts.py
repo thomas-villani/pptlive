@@ -31,12 +31,8 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from . import _com
-from .constants import chart_type_for, chart_type_name, color_hex, parse_color
+from .constants import XlAxisType, chart_type_for, chart_type_name, color_hex, parse_color
 from .exceptions import PptliveError
-
-# XlAxisType — the two axes whose tick labels carry text.
-_XL_CATEGORY = 1
-_XL_VALUE = 2
 
 if TYPE_CHECKING:
     from ._shapes import Shape
@@ -303,7 +299,10 @@ class Chart:
                     labeled += 1
             if labeled:
                 recolored.append("data_labels")
-        for axis_type, name in ((_XL_CATEGORY, "category_axis"), (_XL_VALUE, "value_axis")):
+        for axis_type, name in (
+            (XlAxisType.CATEGORY, "category_axis"),
+            (XlAxisType.VALUE, "value_axis"),
+        ):
             if _attempt_axis(axis_type):
                 recolored.append(name)
         return {

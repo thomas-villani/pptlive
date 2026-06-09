@@ -134,6 +134,20 @@ def retry_on_busy(
     raise last
 
 
+def safe_read(fn: Callable[..., Any], default: Any) -> Any:
+    """Read a COM property defensively — return `default` if it can't be supplied.
+
+    The best-effort read used by `to_dict` / `read()` dumps: a single property the
+    object can't supply (a theme-linked color, an absent axis) degrades to `default`
+    rather than failing the whole structured read. Mutations never use this — they
+    must surface their failures as typed `PptliveError`s via `translate_com_errors`.
+    """
+    try:
+        return fn()
+    except Exception:  # noqa: BLE001
+        return default
+
+
 @contextmanager
 def translate_com_errors() -> Iterator[None]:
     """Translate pywintypes.com_error into pptlive's typed exceptions."""

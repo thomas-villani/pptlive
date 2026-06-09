@@ -862,6 +862,18 @@ class XlChartType(IntEnum):
     RADAR = -4151
 
 
+class XlAxisType(IntEnum):
+    """`Chart.Axes(type)` — the two axes whose tick labels carry text.
+
+    Excel's `XlAxisType`, shared with PowerPoint's chart object model. Only the
+    category and value axes are surfaced (the ones `recolor_text` walks); the
+    series axis (3-D charts) isn't needed yet.
+    """
+
+    CATEGORY = 1
+    VALUE = 2
+
+
 # Friendly token -> XlChartType int. Short aliases ("column", "bar", "scatter")
 # map to the clustered/standard variant; explicit names resolve to themselves.
 _CHART_TYPES: dict[str, int] = {

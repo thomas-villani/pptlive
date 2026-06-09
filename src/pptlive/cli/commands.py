@@ -45,7 +45,7 @@ from ..constants import (
     THEME_FONT_SLOTS,
     ZORDER_CHOICES,
 )
-from ..exceptions import AmbiguousMatchError, AnchorNotFoundError, PowerPointNotRunningError
+from ..exceptions import AnchorNotFoundError, PowerPointNotRunningError
 from .main import _run, emit
 
 
@@ -1078,6 +1078,8 @@ def shape_add(
                         line=line,
                         line_width=line_width,
                     )
+                    if text:
+                        new.set_text(text)
                 elif kind == "table":
                     assert rows is not None and cols is not None  # guarded above
                     new = shapes.add_table(
@@ -2416,27 +2418,17 @@ def replace(
     def go() -> None:
         with attach() as ppt:
             deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            try:
-                with deck.edit(f"CLI: find/replace {find_text!r}"):
-                    applied = deck.find_replace(
-                        find_text,
-                        text,
-                        scope=in_,
-                        all=replace_all,
-                        occurrence=occurrence,
-                    )
-            except AmbiguousMatchError as exc:
-                emit(
-                    {
-                        "ok": False,
-                        "error": "ambiguous_match",
-                        "find": exc.find,
-                        "matches": exc.matches,
-                    },
-                    as_text=not ctx.obj["as_json"],
-                    text=f"{len(exc.matches)} matches — use --all or --occurrence N",
+            # An ambiguous match raises AmbiguousMatchError; let it propagate to the
+            # _run boundary, which reports it on stderr + exit 5 like every other
+            # failure (the CLI contract is: stdout JSON only on success).
+            with deck.edit(f"CLI: find/replace {find_text!r}"):
+                applied = deck.find_replace(
+                    find_text,
+                    text,
+                    scope=in_,
+                    all=replace_all,
+                    occurrence=occurrence,
                 )
-                raise
             emit(
                 {"ok": True, "count": len(applied), "replacements": applied},
                 as_text=not ctx.obj["as_json"],

@@ -242,10 +242,11 @@ def test_cli_replace_find_all(fake_powerpoint) -> None:  # type: ignore[no-untyp
 def test_cli_replace_find_ambiguous_exit_5(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     result = CliRunner().invoke(main, ["replace", "--find", "de", "--text", "X"])
     assert result.exit_code == 5
-    # the structured ambiguous payload is emitted on stdout before the error exit
-    payload = json.loads(result.output.splitlines()[0])
-    assert payload["error"] == "ambiguous_match"
-    assert len(payload["matches"]) == 2
+    # Failures follow the CLI contract: no JSON object on stdout, the actionable
+    # hint goes to stderr (same as every other failure path). The message names
+    # both the count and the disambiguators so an LLM driver can retry.
+    assert "2 matches" in result.output
+    assert "occurrence" in result.output
 
 
 def test_cli_replace_find_zero_matches_exit_2(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]

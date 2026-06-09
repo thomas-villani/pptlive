@@ -203,9 +203,11 @@ pptlive chart set-data --slide 4 --shape 6 \
 
 ## 8. Tag a picture so you can re-find it after drift
 
-z-order shifts every time a shape is added or removed, so don't lean on
-`shape:S:N`. Set a picture's **alt text** on create and re-find it by name or
-description.
+z-order shifts every time a shape is added, removed, or restacked, so don't lean
+on `shape:S:N`. The drift-proof handle is **`shapeid:S:ID`** — the stable
+`Shape.Id` printed as `id` in every shape listing, which survives a delete/restack
+that would shift the z-order index. Alt text and `.Name` are the other re-find
+handles.
 
 ```python
 with pl.attach() as ppt:
@@ -215,9 +217,12 @@ with pl.attach() as ppt:
         logo = deck.slides[4].shapes.add_picture(
             "logo.png", left=600, top=40, alt_text="Acme logo (top-right)"
         )
+    logo_id = logo.to_dict()["id"]                 # stable Shape.Id
 
-    # Later — after other shapes were added — re-find it by name, not z-order:
-    deck.slides[4].shapes["Picture 3"].move(top=60)
+    # Later — after other shapes were added or restacked — re-find it three ways,
+    # none of which depend on the live z-order:
+    deck.anchor_by_id(f"shapeid:4:{logo_id}").move(top=60)   # the delete-proof handle
+    deck.slides[4].shapes["Picture 3"].move(top=60)          # by name
 ```
 
 ## 9. Add and edit a SmartArt diagram
@@ -420,4 +425,123 @@ One match auto-applies; several without `all` / `occurrence` raise
 pptlive find --text "Acme"
 pptlive replace --find "Acme" --text "Globex" --all
 pptlive replace --find "Q3 plan" --text "Q3 forecast" --in slide:2
+```
+
+## 15. Style a shape's fill, border, and z-order
+
+`set_fill` controls a shape's **fill** and **border** — a color, or `"none"` for
+transparent / no border. That's distinct from `format_text`'s `color`, which is
+the *font* color. `reorder` restacks the shape (`front` / `back` / `forward` /
+`backward`); since z-order is what `shape:S:N` indexes, reach for a drift-proof
+handle afterwards. `fill` / `line` / `line_width` also ride on creation.
+
+```python
+with pl.attach() as ppt:
+    deck = ppt.presentations.active
+
+    with deck.edit("Style the callout"):
+        box = deck.slides[2].shapes.add_shape(
+            "rounded_rectangle", left=80, top=300, width=300, height=90,
+            fill="#C00000", line="none",          # red fill, no border
+        )
+        box.set_text("Key takeaway")
+        box.set_fill(line="#FFFFFF", line_width=2)   # add a white 2pt border
+        box.reorder("front")                          # bring it above overlapping shapes
+```
+
+```bash
+pptlive shape fill  --anchor-id shape:2:6 --fill "#C00000" --line none
+pptlive shape order --anchor-id shape:2:6 --to front
+```
+
+## 16. Recolor composite text for a dark background
+
+A SmartArt diagram or chart has no text anchor, so `format_text` can't reach its
+internal labels. `recolor_text` is the coarse "make every label this color" fix
+for a dark theme — it walks each node / every shown chart text element (legend,
+both axis tick labels, title, data labels).
+
+```python
+with pl.attach() as ppt:
+    deck = ppt.presentations.active
+    with deck.edit("Make diagrams legible on the dark master"):
+        deck.slides[3].shapes["Diagram 2"].smartart.recolor_text("#FFFFFF")
+        deck.slides[4].shapes["Chart 2"].chart.recolor_text("#FFFFFF")
+```
+
+## 17. Run a review loop with comments
+
+Comments attach to a **slide** at an `(x, y)` point (not a text range) and are
+**threaded**. Adding binds to the signed-in Office account, so a passed
+`author` / `initials` is best-effort. There is no resolve/reopen verb (the status
+isn't COM-readable on current builds) — delete a thread when it's addressed.
+
+```python
+with pl.attach() as ppt:
+    deck = ppt.presentations.active
+
+    for slide in deck.slides:
+        for c in slide.comments:                 # iterating yields Comment objects
+            print(slide.index, c.author, c.text)   # (.list() returns the same as dicts)
+
+    with deck.edit("Leave and answer review notes"):
+        note = deck.slides[2].comments.add("Tighten this headline", left=100, top=80)
+        note.reply("Done — shortened to five words")
+        deck.slides[2].comments[1].delete()      # resolve by deleting (takes its replies)
+
+    roll = deck.comments()                        # deck-wide {total, slides:[...]}
+```
+
+```bash
+pptlive comment list --slide 2
+pptlive comment add  --slide 2 --text "Tighten this headline" --left 100 --top 80
+pptlive comment reply  --slide 2 --index 1 --text "Done"
+pptlive comment delete --slide 2 --index 1
+```
+
+## 18. See the whole deck at once (token-aware vision read)
+
+`deck.snapshot()` renders one low-resolution PNG per slide so a vision model can
+*see* every slide cheaply — the "did my styling land across the deck?" read.
+`max_dim` caps each slide's long edge in pixels; since every slide shares one
+geometry, that's a uniform, predictable per-slide token budget (~1000 px stays
+legible). It's a **read** — no `edit()` fence, and the view doesn't move.
+
+```python
+with pl.attach() as ppt:
+    deck = ppt.presentations.active
+
+    snaps = deck.snapshot(max_dim=1000)           # [Snapshot(slide, png, path), ...]
+    for s in snaps:
+        ...                                        # hand s.png to your image tool, look
+
+    deck.snapshot("review.png", slides=(2, 4))    # or write to disk: review-s2/3/4.png
+```
+
+```bash
+pptlive snapshot --slides 2-4 --max-dim 1000 --out review.png
+```
+
+## 19. Save, save-as, and export a PDF
+
+pptlive **never auto-saves** — output is always an explicit verb. `save` persists
+to the existing file (and raises `UnsavedPresentationError` if the deck has never
+been saved — use `save_as` first). `save_as` writes *and rebinds* the working
+file (the open deck becomes the new file). `export_pdf` is a **read**: it writes a
+PDF without rebinding the working file or clearing its dirty flag.
+
+```python
+with pl.attach() as ppt:
+    deck = ppt.presentations.active
+
+    if not deck.saved:                            # the dirty flag, also on `status`
+        deck.save()                               # -> the existing file
+    deck.save_as("Q3 Review v2.pptx", overwrite=True)   # write + rebind
+    deck.export_pdf("Q3 Review.pdf")              # deliverable; deck stays bound to the .pptx
+```
+
+```bash
+pptlive save
+pptlive save-as "Q3 Review v2.pptx" --overwrite
+pptlive export-pdf "Q3 Review.pdf"
 ```

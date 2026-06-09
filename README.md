@@ -59,10 +59,13 @@ with pl.attach() as ppt:
     with deck.edit("Lay out the results slide"):
         shapes = deck.slides[4].shapes
         shapes.add_textbox("Revenue up 12%", left=pl.units.inches(1), top=72)
-        star = shapes.add_shape("star", left=400, top=120, width=120, height=120)
+        star = shapes.add_shape("star", left=400, top=120, width=120, height=120,
+                                fill="#C00000", line="none")     # fill / border on creation
         logo = shapes.add_picture("logo.png", left=600, top=40,   # embedded, never linked
                                   alt_text="Acme logo")           # a drift-proof re-id handle
         deck.slides[4].shapes["Picture 3"].move(top=140)   # absolute, points
+        star.set_fill(fill="#1F1F1F", line="#FFFFFF", line_width=2)  # fill ≠ font color
+        star.reorder("front")                              # z-order: front/back/forward/backward
         star.delete()
 
     # Pictures — alt text doubles as a re-identification handle; export one shape for vision.
@@ -75,6 +78,7 @@ with pl.attach() as ppt:
             "column", ["Q1", "Q2", "Q3"], {"Revenue": [10, 20, 30], "Profit": [3, 6, 9]}
         ).chart
         chart.set_type("line")                           # change the kind
+        chart.recolor_text("#FFFFFF")                    # all chart text white (dark-theme fix)
     data = chart.read()                                  # {chart_type, categories, series:[...]}
 
     # SmartArt — a diagram is a shape too; its content is a node tree.
@@ -83,6 +87,7 @@ with pl.attach() as ppt:
             "process", ["Discover", "Design", "Build", "Ship"]   # flat list…
         ).smartart
         sa.set_nodes([{"text": "CEO", "children": ["VP Eng", "VP Sales"]}])  # …or a tree
+        sa.recolor_text("#FFFFFF")                       # every node label white
     tree = sa.read()                                     # {layout, nodes:[{text, level, children}]}
 
     # Text structure — paragraphs, formatting, bullets. (Per-anchor formatting;
@@ -114,6 +119,28 @@ with pl.attach() as ppt:
         deck.master.set_background("#1F1F1F")            # solid fill
     palette = deck.theme.read()                          # {colors:{slot:#RRGGBB}, fonts:{major, minor}}
 
+    # Find / replace — fuzzy traversal across shapes, table cells, and notes
+    # (no deck-wide character stream, so this is a walk, not a range).
+    hits = deck.find("Q3 Reuslts")                       # [{anchor_id, start, length, text, ...}]
+    with deck.edit("Fix the typo everywhere"):
+        deck.find_replace("Q3 Reuslts", "Q3 Results", all=True)
+
+    # Review comments — slide-anchored at an (x, y) point, and threaded.
+    review = deck.slides[2].comments                     # per-slide CommentCollection
+    with deck.edit("Leave review notes"):
+        c = review.add("Tighten this headline", left=100, top=80)
+        c.reply("Agreed — will do")
+    roll = deck.comments()                               # deck-wide roll-up {total, slides:[...]}
+
+    # Whole-deck snapshot — one low-res PNG per slide so a vision model can SEE
+    # the whole deck cheaply (max_dim caps each slide's long edge). A read — polite.
+    snaps = deck.snapshot(max_dim=1000)                  # [Snapshot(slide, png, path), ...]
+
+    # Output tier — explicit, never implicit (pptlive never auto-saves).
+    deck.save()                                          # persist to the existing file
+    deck.save_as("v2.pptx", overwrite=True)              # write + rebind the working file
+    deck.export_pdf("deck.pdf")                          # a read: no rebind, dirty flag kept
+
     # Render — let a vision model *see* the slide it just built (export → read → iterate).
     png = deck.slides[4].export_image(width=1280)    # temp PNG (or pass a path); polite
     #   ...hand `png` to your image tool, look, then revise.
@@ -140,18 +167,20 @@ slide-index first:
 | anchor_id      | resolves to |
 | -------------- | ----------- |
 | `shape:S:N`    | Nth shape (1-based z-order) on slide S — the canonical handle |
+| `shapeid:S:ID` | shape with stable `Shape.Id` ID on slide S — the **delete-proof** handle (survives a delete/restack that shifts `shape:S:N`) |
 | `ph:S:KIND`    | placeholder of semantic KIND (`title`/`ctrtitle`/`subtitle`/`body`/`footer`/`date`/`slidenum`) — the LLM-preferred form |
 | `para:S:N:P`   | paragraph P (1-based) of shape N on slide S |
 | `cell:S:N:R:C` | cell (row R, col C) of the table in shape N on slide S — a `Cell` *is* an anchor, so it takes every text/format verb |
 | `notes:S`      | speaker-notes body of slide S |
+| `comments:S`   | the review comments on slide S — a read selector (a container, addressed for reply/delete by `(slide, 1-based index)`) |
 | `here:`        | whatever the user has selected right now — the shape, or the paragraph holding the text caret (the opt-in way to act on the live selection) |
 
-z-order **drifts** when shapes are added or removed, so `shape:S:N` is resolved
-live and never cached; every shape listing also emits `name` (`Shape.Name`) and
-`id` (`Shape.Id`, stable across reorder) so you can re-identify after drift.
-Steer toward `ph:S:KIND` and `.Name` as the drift-proof forms. `para:S:N:P` and
-`cell:S:N:R:C` also resolve live (the paragraph/row count shifts as text or rows
-are inserted/deleted).
+z-order **drifts** when shapes are added or removed (or restacked via
+`Shape.reorder`), so `shape:S:N` is resolved live and never cached; every shape
+listing also emits `name` (`Shape.Name`) and `id` (`Shape.Id`, stable across
+reorder). The drift-proof forms are `ph:S:KIND`, `.Name`, and `shapeid:S:ID`.
+`para:S:N:P` and `cell:S:N:R:C` also resolve live (the paragraph/row count shifts
+as text or rows are inserted/deleted).
 
 ## CLI
 
@@ -170,6 +199,8 @@ pptlive read anchor --anchor-id ph:2:title       # read any text anchor (ph:/sha
 pptlive read notes --slide 1                     # sugar for --anchor-id notes:1
 pptlive write   --anchor-id ph:2:body  --text "Intro\nDemo\nQ&A"
 pptlive replace --anchor-id shape:3:1  --text "New text"
+pptlive find    --text "Q3 Reuslts" [--in slide:2]          # fuzzy locate across shapes/cells/notes
+pptlive replace --find "Q3 Reuslts" --text "Q3 Results" --all  # fuzzy replace (or --occurrence N)
 
 pptlive slide layouts                            # the layout names add/set-layout accept
 pptlive slide add --layout two_content [--index 4]
@@ -187,6 +218,8 @@ pptlive shape move   --anchor-id shape:4:3 --left 100 --top 140
 pptlive shape resize --anchor-id shape:4:3 --width 300 --height 200
 pptlive shape delete --anchor-id shape:4:3
 pptlive shape set-alt --anchor-id shape:4:3 --alt-text "Acme logo"      # drift-proof re-id handle
+pptlive shape fill    --anchor-id shape:4:3 --fill "#C00000" --line none --line-width 2  # fill/border
+pptlive shape order   --anchor-id shape:4:3 --to front       # z-order: front/back/forward/backward
 pptlive shape export  --anchor-id shape:4:3 --out logo.png   # render one shape (native size)
 
 pptlive shape add --slide 4 --kind chart --chart-type column \
@@ -194,11 +227,13 @@ pptlive shape add --slide 4 --kind chart --chart-type column \
 pptlive chart read     --slide 4 --shape 5                    # {chart_type, categories, series}
 pptlive chart set-type --slide 4 --shape 5 --chart-type line
 pptlive chart set-data --slide 4 --shape 5 --categories "A,B" --series '{"S":[1,2]}'
+pptlive chart recolor-text --slide 4 --shape 5 --color "#FFFFFF"   # all chart text (dark-theme fix)
 
 pptlive shape add --slide 3 --kind smartart --smartart-kind process \
     --nodes '["Discover","Design","Build","Ship"]'           # flat list or {text,children} tree
 pptlive smartart read      --slide 3 --shape 2               # {layout, nodes:[{text, level, children}]}
 pptlive smartart set-nodes --slide 3 --shape 2 --nodes '[{"text":"CEO","children":["Eng","Sales"]}]'
+pptlive smartart recolor-text --slide 3 --shape 2 --color "#FFFFFF"   # every node label
 
 pptlive theme  read                              # deck palette (12 slots) + heading/body fonts
 pptlive theme  set-color --slot accent1 --color "#C00000"    # recolors the whole deck
@@ -228,6 +263,16 @@ pptlive show next                                # advance; also: prev, goto --s
 pptlive show black                               # blank to black (white / resume too)
 pptlive show state                               # {running, state, current_slide, ...} (read-only)
 pptlive show end
+
+pptlive comment list [--slide 2]                 # comments on a slide, or the deck-wide roll-up
+pptlive comment add   --slide 2 --text "Tighten this" [--left 100 --top 80]
+pptlive comment reply  --slide 2 --index 1 --text "Agreed"
+pptlive comment delete --slide 2 --index 1       # takes its replies too
+
+pptlive snapshot [--slides 2-4] [--max-dim 1000] # one PNG per slide — the whole-deck vision read
+pptlive save                                     # persist to the existing file (explicit)
+pptlive save-as v2.pptx [--overwrite]            # write + rebind the working file
+pptlive export-pdf deck.pdf                      # a read: PDF without rebinding the working file
 ```
 
 Exit codes: `0` ok · `1` other · `2` anchor/slide/shape/presentation not found ·
@@ -280,15 +325,16 @@ one-Ctrl-Z `edit` fencing carry over and reads never move the view:
 
 | tool | `op`s |
 | ---- | ----- |
-| `ppt_read` | `status` · `slides` · `outline` · `slide` · `anchor` · `selection` · `table` · `chart` · `smartart` · `theme` · `master` · `layouts` — every read; never moves the view |
-| `ppt_edit` | `write` · `format` · `slide_add`/`slide_delete`/`slide_duplicate`/`slide_move`/`set_layout` · `shape_add`/`shape_move`/`shape_resize`/`shape_delete`/`set_alt` · `table_add_row`/`table_delete_row` · `chart_set_type`/`chart_set_data` · `smartart_set_nodes` · `theme_set_color`/`theme_set_font` · `master_format_text_style`/`master_format_paragraph_style`/`master_set_background` — every mutation; one Ctrl-Z each |
-| `ppt_render` | `slide_image` · `shape_image` (PNGs a vision model can read) · `navigate` (the one deliberate view move) |
+| `ppt_read` | `status` · `slides` · `outline` · `slide` · `anchor` · `selection` · `find` · `table` · `chart` · `smartart` · `comments` · `theme` · `master` · `layouts` — every read; never moves the view |
+| `ppt_edit` | `write` · `find_replace` · `format` (font + paragraph + shape fill/line + bullets) · `slide_add`/`slide_delete`/`slide_duplicate`/`slide_move`/`set_layout` · `shape_add`/`shape_move`/`shape_resize`/`shape_delete`/`shape_order`/`set_alt` · `table_add_row`/`table_delete_row` · `chart_set_type`/`chart_set_data`/`chart_recolor_text` · `smartart_set_nodes`/`smartart_recolor_text` · `comment_add`/`comment_reply`/`comment_delete` · `theme_set_color`/`theme_set_font` · `master_format_text_style`/`master_format_paragraph_style`/`master_set_background` — every mutation; one Ctrl-Z each |
+| `ppt_render` | `slide_image` · `shape_image` · `deck_snapshot` (one PNG per slide — the whole-deck vision read) · `deck_pdf`/`save`/`save_as` (explicit output) · `navigate` (the one deliberate view move) |
 | `ppt_show` | live slide show: `state` · `start` · `end` · `next` · `previous` · `goto` · `black` · `white` · `resume` |
 | `ppt_batch` | run a **list** of the ops above against one connection — all `edit`s fenced into a **single** undo entry (`atomic`), with `stop_on_error` control |
 
 Tables, charts, and SmartArt are addressed by their shape's `anchor_id` (a
-`shape:S:N`); cells stay `cell:S:N:R:C` anchors you write to with `ppt_edit
-op="write"`. The `theme_*`/`master_*` ops are deck-wide (no anchor).
+`shape:S:N` or the delete-proof `shapeid:S:ID`); cells stay `cell:S:N:R:C` anchors
+you write to with `ppt_edit op="write"`. The `theme_*`/`master_*` ops are
+deck-wide (no anchor).
 
 Tool failures surface as MCP errors carrying a category token — `not_found`,
 `ambiguous`, `busy`, `not_running`, `no_text_frame`, `invalid_args` — the string
