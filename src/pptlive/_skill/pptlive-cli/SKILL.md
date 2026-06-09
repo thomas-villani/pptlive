@@ -74,7 +74,8 @@ you can re-identify after drift. Steer toward `ph:S:KIND`, `.Name`, and
 - `pptlive slide add --layout two_content [--index 4]`.
 - `pptlive slide duplicate --slide 7` · `pptlive slide move --slide 9 --to 2` · `pptlive slide delete --slide 5`.
 - `pptlive slide set-layout --slide 4 --layout title_and_content`.
-- `pptlive slide export --slide 2 --out slide2.png [--width 1280] [--format png]` — render to image so a vision model can *see* it.
+- `pptlive slide export --slide 2 --out slide2.png [--width 1280] [--format png]` — render one slide to an image so a vision model can *see* it.
+- `pptlive snapshot [--slide N | --slides A-B] [--out deck.png] [--max-dim 1000]` — render the **whole deck** (one PNG per slide) so you can check styling across every slide cheaply. `--max-dim` caps each slide's long edge (a uniform, predictable per-slide token cost); with `--out` it writes `<stem>-sN<suffix>`, otherwise base64 inline. The "did my restyle land everywhere?" read.
 
 ## Shapes
 - `pptlive shape add --slide 4 --kind textbox --text "Revenue up 12%" --left 72 --top 72` (points throughout; 1 in = 72 pt).

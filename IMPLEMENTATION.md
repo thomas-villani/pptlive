@@ -704,6 +704,37 @@ signed-in Office-account identity.
 comment-less deck (the legacy `Add` covers it; option (a) needs its own micro-spike);
 mentions / rich-text comment bodies.
 
+## v1.1 — output: deck snapshot (low-res whole-deck render) — SHIPPED
+
+The first cut of the v1.1 output tier, and the cheapest high-leverage feature left.
+Ported from wordlive's `_snapshot.py` (the 2026-06-09 commit) but **shorter**: where
+wordlive routes `ExportAsFixedFormat` → PDF → PyMuPDF, PowerPoint's `Slide.Export`
+already renders a sized PNG (verified v0.4), so a deck snapshot needs no PDF detour
+and no new dependency. The token lever is `max_dim`, a long-edge pixel cap — a vision
+model is billed on pixel *area* (not DPI), so capping the long edge is a predictable,
+and (since every slide shares one geometry) *uniform*, per-slide budget.
+
+- [x] **`_snapshot.py`** — `Snapshot(slide, png, path)` dataclass; `_capped_dims`
+  (long-edge cap at the 96-DPI native scale, never upscales); `render` (per slide →
+  `Slide.export_image` to a temp, read bytes, unlink), `build_snapshots` (write
+  files: single → `out`, multiple → `<stem>-sN<suffix>`), `snapshot` (compose).
+- [x] **`Presentation.snapshot(out=None, *, slides=None, fmt="png", max_dim=None)`**
+  — `slides` = `None` (all) / `int` (one) / `(start, end)` inclusive. A read; no
+  `edit()` fence. The folder-based `export_images` (v0.4) stays for bulk-to-disk.
+- [x] **CLI** — `snapshot [--slide N | --slides A-B] [--out PATH] [--max-dim N]
+  [--format]`: path per slide with `--out`, base64 inline otherwise.
+- [x] **MCP** — `ppt_render` op `deck_snapshot` (`{slides?, max_dim?, fmt?}`) returns
+  one "slide N" label + image block per slide (embed default `max_dim` ~1000),
+  reusing `_render_reply`; paths only in `structuredContent` (no base64
+  double-encode). Flows through `ppt_batch` via `_render_core`.
+- [x] **Tests** — `tests/test_snapshot.py` (cap math, selection, file placement,
+  CLI path-vs-base64) + `tests/test_mcp.py` `deck_snapshot` coverage. The fake
+  `Slide.Export` already writes a dim-encoding stub PNG, so no conftest change.
+  See `roadmap.md` §v1.1.
+
+**Still open in v1.1:** PDF export (`ExportAsFixedFormat`), `save`/`save_as`, and a
+`jpg`-quality / per-slide size knob on the snapshot.
+
 ## v1.0+ — defer
 
 - [ ] Event sinks (`SlideShowNextSlide`, `WindowSelectionChange`); async wrapper.

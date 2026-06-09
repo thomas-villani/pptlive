@@ -17,6 +17,7 @@ find/replace arrives in a later stage.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -354,11 +355,132 @@ def _fmt_show(info: dict[str, Any]) -> str:
     return "show running — " + " ".join(parts)
 
 
+def _parse_slides_range(
+    slide: int | None, slides_range: str | None
+) -> int | tuple[int, int] | None:
+    """Resolve the CLI `--slide` / `--slides` options to a snapshot selector.
+
+    `--slide N` → `N`; `--slides A-B` → `(A, B)`; neither → `None` (all slides).
+    Giving both, or a malformed `--slides`, is a `ValueError` (a bad-input error).
+    """
+    if slide is not None and slides_range is not None:
+        raise ValueError("pass at most one of --slide and --slides")
+    if slide is not None:
+        return slide
+    if slides_range is None:
+        return None
+    start, sep, end = slides_range.partition("-")
+    if not sep:
+        raise ValueError(f"--slides must be a span like '2-4', got {slides_range!r}")
+    try:
+        return int(start), int(end)
+    except ValueError as e:
+        raise ValueError(f"--slides must be a span like '2-4', got {slides_range!r}") from e
+
+
+@click.command(name="snapshot")
+@click.option("--slide", "slide", type=int, default=None, help="Render a single 1-based slide.")
+@click.option(
+    "--slides", "slides_range", default=None, help="Render an inclusive slide span, e.g. '2-4'."
+)
+@click.option(
+    "--out",
+    "out",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Write the PNG here. Multiple slides are written as <stem>-s<N><suffix>. "
+    "Without --out, base64 PNG data is returned inline in the JSON.",
+)
+@click.option(
+    "--max-dim",
+    "max_dim",
+    type=int,
+    default=None,
+    help="Cap each slide's long edge to this many pixels (only ever lowers resolution). "
+    "The lever for a cheap whole-deck layout check — ~1000 stays legible at a "
+    "fraction of the tokens; a uniform per-slide cost across the deck.",
+)
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(IMAGE_FORMAT_CHOICES),
+    default="png",
+    show_default=True,
+    help="Image format.",
+)
+@click.pass_context
+def snapshot_cmd(
+    ctx: click.Context,
+    slide: int | None,
+    slides_range: str | None,
+    out: Path | None,
+    max_dim: int | None,
+    fmt: str,
+) -> None:
+    """Render slides to PNG so a vision model can *see* the whole deck cheaply.
+
+    The token-cost-aware read: `--max-dim` caps each slide's long edge in pixels,
+    giving a predictable, uniform per-slide budget — the lever for "render the
+    whole deck and check my styling landed" without full-resolution bloat. Renders
+    the current unsaved state; polite (doesn't move the view). With `--out` the
+    PNGs are written (single → that path, multiple → `<stem>-s<N><suffix>`) and the
+    JSON reports each `path`; without it, base64 PNG data is returned inline.
+    """
+    try:
+        selector = _parse_slides_range(slide, slides_range)
+    except ValueError as exc:
+        click.echo(f"error: {exc}", err=True)
+        sys.exit(1)
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            snaps = deck.snapshot(out, slides=selector, fmt=fmt, max_dim=max_dim)
+            images = [
+                {
+                    "slide": s.slide,
+                    "bytes": len(s.png),
+                    **(
+                        {"path": str(s.path)}
+                        if s.path is not None
+                        else {"base64": base64.b64encode(s.png).decode("ascii")}
+                    ),
+                }
+                for s in snaps
+            ]
+            sel_text = (
+                f"slide {slide}"
+                if slide is not None
+                else (f"slides {slides_range}" if slides_range else "all slides")
+            )
+            payload = {
+                "ok": True,
+                "selector": sel_text,
+                "count": len(snaps),
+                "format": fmt,
+                "max_dim": max_dim,
+                "images": images,
+            }
+            written = [str(s.path) for s in snaps if s.path is not None]
+            emit(
+                payload,
+                as_text=not ctx.obj["as_json"],
+                text=(
+                    f"snapshot: {len(snaps)} slide(s) -> " + ", ".join(written)
+                    if written
+                    else f"snapshot: {len(snaps)} slide(s) (base64 inline)"
+                ),
+            )
+
+    _run(ctx, go)
+
+
 def register(group: click.Group) -> None:
     group.add_command(status)
     group.add_command(slides_cmd)
     group.add_command(outline)
     group.add_command(slide)
+    group.add_command(snapshot_cmd)
     group.add_command(shapes_cmd)
     group.add_command(shape)
     group.add_command(read)

@@ -58,6 +58,7 @@ src/pptlive/
   _theme.py          Theme + Master  (deck-wide palette/fonts/text-styles/background)  [v0.9]
   _findreplace.py    fuzzy match core (find_matches/normalize); find()/find_replace() on Presentation [v1.0]
   _comments.py       Comment / CommentCollection (slide.comments; threaded, identity-bound add/reply) [v1.3]
+  _snapshot.py       Snapshot + deck.snapshot() — whole-deck low-res PNGs, max_dim token cap [v1.1]
   _selection.py      viewed-slide + Selection snapshot/restore
   _edit.py           EditScope — view/Selection preservation + atomic undo via StartNewUndoEntry (see below)
   _show.py           SlideShow control (deck.show)
@@ -89,6 +90,23 @@ current builds. Library + CLI (`comment list/add/reply/delete`) + MCP (`ppt_read
 `comments`; `ppt_edit` `comment_add`/`comment_reply`/`comment_delete`). Still in
 `spec.md` but unbuilt: the standalone CLI `exec` batch verb (MCP `ppt_batch`
 covers batch).
+
+**Deck snapshot (`_snapshot.py`) shipped in v1.1.** `deck.snapshot(out=None, *,
+slides=None, fmt="png", max_dim=None)` renders slides to PNG so a vision model can
+*see* the whole deck cheaply — the token-cost-aware read. The lever is `max_dim`,
+a **long-edge pixel cap**: a model is billed on pixel *area* (not DPI), so capping
+the long edge gives a predictable per-slide budget, and since every slide shares
+one geometry that budget is *uniform* across the deck (~1000 px stays legible).
+It's the PowerPoint analog of wordlive's snapshot but **shorter** — `Slide.Export`
+already renders a sized PNG, so there's no PDF/PyMuPDF detour and no new dependency
+(it reuses `Slide.export_image`). Returns one `Snapshot(slide, png, path)` per
+slide; `slides` is `None` (all) | `int` (one) | `(start, end)` inclusive; with
+`out` it writes files (single → that path, multiple → `<stem>-sN<suffix>`). A
+**read** — the export leaves the viewed slide + Selection untouched, so no
+`deck.edit()` fence. Library + CLI (`snapshot --slide/--slides/--out/--max-dim`) +
+MCP (`ppt_render` op `deck_snapshot`, returns a "slide N" label + image block per
+slide). The folder-based `deck.export_images` (v0.4) stays for bulk-to-disk; the
+remaining v1.1 output items (PDF export, save/save_as) are still unbuilt.
 Agent skills shipped as **two** guides (`pptlive-cli` + `pptlive-python`), not
 wordlive's single one — `llm-help [--python]` dumps one, `install-skill` writes
 them to `.agents/skills/`, and `install-mcp` / the `mcpb/` bundle wire up MCP.

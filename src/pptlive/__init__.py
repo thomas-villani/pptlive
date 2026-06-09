@@ -33,6 +33,7 @@ from ._shapes import PlaceholderShape, Shape, ShapeById, ShapeCollection
 from ._show import SlideShow
 from ._slides import Slide, SlideCollection
 from ._smartart import SmartArt
+from ._snapshot import Snapshot
 from ._tables import Cell, Table
 from ._theme import Master, Theme
 from .exceptions import (
@@ -84,6 +85,7 @@ __all__ = [
     "SlideShow",
     "SlideShowNotRunningError",
     "SmartArt",
+    "Snapshot",
     "Table",
     "Theme",
     "attach",
