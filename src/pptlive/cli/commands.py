@@ -1696,9 +1696,17 @@ def comment_list(ctx: click.Context, slide_index: int | None) -> None:
 @click.option("--text", "text", required=True, help="The comment body.")
 @click.option("--left", "left", type=float, default=None, help="Anchor x, in points (default 12).")
 @click.option("--top", "top", type=float, default=None, help="Anchor y, in points (default 12).")
-@click.option("--author", "author", default=None, help="Author name (legacy fallback only).")
 @click.option(
-    "--initials", "initials", default=None, help="Author initials (legacy fallback only)."
+    "--author",
+    "author",
+    default=None,
+    help="Author name (best-effort; modern Office binds to the signed-in account).",
+)
+@click.option(
+    "--initials",
+    "initials",
+    default=None,
+    help="Author initials (best-effort; modern Office binds to the signed-in account).",
 )
 @click.pass_context
 def comment_add(

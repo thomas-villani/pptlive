@@ -1143,6 +1143,7 @@ class _FakeComment:
         left: float = 12.0,
         top: float = 12.0,
         dt: datetime | None = None,
+        is_reply: bool = False,
     ) -> None:
         self._container = container
         self.Text = text
@@ -1154,10 +1155,14 @@ class _FakeComment:
         self.Top = float(top)
         self.DateTime = dt if dt is not None else _SEED_DT
         self._replies: list[_FakeComment] = []
+        self._is_reply = is_reply
 
     @property
     def Replies(self) -> _FakeReplies:
-        return _FakeReplies(self._replies)
+        # A top-level comment exposes its own reply list; a *reply* exposes the
+        # sibling list it belongs to (which includes itself) — the self-referential
+        # live behavior that makes a naive thread walk recurse forever.
+        return _FakeReplies(self._container if self._is_reply else self._replies)
 
     def Delete(self) -> None:
         self._container.remove(self)
@@ -1198,6 +1203,7 @@ class _FakeReplies:
             user=user,
             left=left,
             top=top,
+            is_reply=True,
         )
         self._replies.append(rep)
         return rep
@@ -1279,6 +1285,7 @@ def _seeded_comments() -> list[_FakeComment]:
             initials="TV",
             provider="AD",
             user="S::tom@example.com::abc-123",
+            is_reply=True,
         )
     )
     comments.append(parent)

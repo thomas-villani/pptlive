@@ -23,7 +23,9 @@ Honest caveats, both verified on a live deck (2026-06-07,
 - **Authorship can't be spoofed.** `Add2` *ignores* the passed author/initials
   and binds the comment to the account behind `UserID` (only `Text` is honoured)
   — so an agent-authored comment is correctly attributed to the human's account.
-  The `author`/`initials` args here only reach the legacy `Add` fallback.
+  The `author`/`initials` args are **best-effort** (they target the legacy `Add`
+  fallback) but on a modern Office build that path *also* binds to the signed-in
+  account, so they may be ignored entirely (verified live 2026-06-09).
 - **No resolve/reopen.** `Comment.Status` / `.Resolved` are "no longer supported
   by this version" over COM on current builds, so there is no `resolve()` verb
   (unlike wordlive's). Comment *resolution state* is simply not COM-readable.
@@ -101,10 +103,15 @@ class Comment:
     mutate, so wrap them in `deck.edit(...)` (as the CLI/MCP do).
     """
 
-    def __init__(self, slide: Slide, com: Any, index: int) -> None:
+    def __init__(self, slide: Slide, com: Any, index: int, *, is_reply: bool = False) -> None:
         self._slide = slide
         self._com = com
         self._index = index
+        # PowerPoint threads are one level deep, but on a live build a *reply's*
+        # `.Replies` returns the sibling-reply list (which contains the reply
+        # itself), so recursing into it never terminates. A reply therefore
+        # reports no sub-thread — only a top-level comment expands its replies.
+        self._is_reply = is_reply
 
     @property
     def com(self) -> Any:
@@ -159,8 +166,13 @@ class Comment:
         """The thread's replies, in order (empty for a legacy/unthreaded comment).
 
         Replies are themselves `Comment`s (same fields), indexed 1-based within
-        the thread. PowerPoint threads are one level deep, so this does not recurse.
+        the thread. PowerPoint threads are one level deep, so a reply reports no
+        replies of its own — and crucially a live reply's `.Replies` is
+        self-referential (it returns the sibling list, which includes the reply),
+        so we must *not* read it, or a thread walk would never terminate.
         """
+        if self._is_reply:
+            return []
         out: list[Comment] = []
         try:
             with _com.translate_com_errors():
@@ -171,7 +183,7 @@ class Comment:
         for i in range(1, count + 1):
             with _com.translate_com_errors():
                 rep_com = replies.Item(i)
-            out.append(Comment(self._slide, rep_com, i))
+            out.append(Comment(self._slide, rep_com, i, is_reply=True))
         return out
 
     def reply(
@@ -193,7 +205,7 @@ class Comment:
             provider, user = identity if identity is not None else ("", "")
             rep = replies.Add2(left, top, author or "", initials or "", text, provider, user)
             new_index = int(replies.Count)
-        return Comment(self._slide, rep, new_index)
+        return Comment(self._slide, rep, new_index, is_reply=True)
 
     def delete(self) -> None:
         """Delete this comment (and its replies). The wrapper is spent."""
@@ -267,9 +279,11 @@ class CommentCollection:
         identity from, falls back to the legacy `Comments.Add(Left, Top, Author,
         Initials, Text)` (identity-free; may produce a non-threaded comment).
 
-        `author`/`initials` reach only the legacy path — `Add2` overrides them
-        with the identity account (see the module docstring). `left`/`top` are the
-        anchor point in points. Wrap in `deck.edit(...)` for the one-Ctrl-Z fence.
+        `author`/`initials` are best-effort (they target the legacy path) — `Add2`
+        binds to the identity account, and on a modern Office build even the legacy
+        `Add` does, so they may be ignored (see the module docstring). `left`/`top`
+        are the anchor point in points. Wrap in `deck.edit(...)` for the one-Ctrl-Z
+        fence.
         """
         identity = _discover_identity(self._slide._deck)
         with _com.translate_com_errors():

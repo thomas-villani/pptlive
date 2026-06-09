@@ -53,6 +53,15 @@ def test_comment_to_dict_nests_replies(deck) -> None:  # type: ignore[no-untyped
     assert d["replies"][0]["text"] == "Agreed — will do."
 
 
+def test_reply_reports_no_subthread_no_infinite_recursion(deck) -> None:  # type: ignore[no-untyped-def]
+    # A live reply's `.Replies` is self-referential (returns the sibling list,
+    # which contains the reply), so a naive thread walk recurses forever. A reply
+    # must report no replies of its own; the nested dict stops at one level.
+    reply = deck.slides[1].comments[1].replies[0]
+    assert reply.replies == []
+    assert reply.to_dict()["replies"] == []
+
+
 def test_comment_list_empty_slide(deck) -> None:  # type: ignore[no-untyped-def]
     assert deck.slides[2].comments.list() == []
 

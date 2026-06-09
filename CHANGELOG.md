@@ -29,8 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it, and `deck.comments()` is the deck-wide roll-up. Adding binds to the signed-in
   Office account: `add` sources the modern `Comments.Add2` `ProviderID`/`UserID` off
   any existing comment and falls back to the legacy identity-free `Comments.Add` on a
-  comment-less deck (the passed `author`/`initials` reach only that fallback — `Add2`
-  binds to the account). MCP `ppt_read` op `comments`; `ppt_edit` ops `comment_add` /
+  comment-less deck (the passed `author`/`initials` are best-effort — `Add2` binds to
+  the signed-in account, and on a modern Office build even the legacy `Add` does, so
+  they may be ignored). MCP `ppt_read` op `comments`; `ppt_edit` ops `comment_add` /
   `comment_reply` / `comment_delete`. CLI `comment list/add/reply/delete`. No
   resolve/reopen verb — `Comment.Status`/`.Resolved` are not COM-readable on current
   builds (documented).

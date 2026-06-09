@@ -82,7 +82,8 @@ needs the signed-in Office-account identity (`ProviderID`/`UserID`): `add` lifts
 it off any existing comment via the modern `Comments.Add2`, falling back to the
 legacy identity-free `Comments.Add` on a comment-less deck; a reply lifts identity
 off its parent. Two honest caveats baked in: `Add2` **binds to the account** (the
-passed `author`/`initials` reach only the legacy fallback), and there is **no
+passed `author`/`initials` are best-effort — even the legacy `Add` binds to the
+signed-in account on a modern build, so they may be ignored), and there is **no
 resolve/reopen verb** — `Comment.Status`/`.Resolved` are not COM-readable on
 current builds. Library + CLI (`comment list/add/reply/delete`) + MCP (`ppt_read`
 `comments`; `ppt_edit` `comment_add`/`comment_reply`/`comment_delete`). Still in
