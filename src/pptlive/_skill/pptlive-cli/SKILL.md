@@ -38,6 +38,11 @@ is no deck-wide `range:`. Pass an anchor as `--anchor-id`:
 | `notes:S`      | speaker-notes body of slide S |
 | `here:`        | whatever the user has selected right now (the opt-in way to act on the live selection) |
 
+`body` also matches the generic **content** placeholder (reads back as
+`placeholder: object`, e.g. "Content Placeholder N"). A **Two Content** /
+**Comparison** layout has *two*, so `ph:S:body` is ambiguous and exits 5 listing
+the candidate `shape:S:N` anchors — target each column by `shape:S:N` / `.Name`.
+
 z-order **drifts** as shapes are added/removed, so `shape:S:N` is resolved live
 and never cached; every shape listing also emits `name` (`Shape.Name`) and `id`
 (`Shape.Id`, stable across reorder) so you can re-identify after drift. Steer
@@ -53,7 +58,7 @@ toward `ph:S:KIND` and `.Name` as the drift-proof forms.
 - `pptlive find --text "Q3 revenue" [--in slide:3|shape:3:2|notes:3]` — fuzzy, smart-quote/whitespace-tolerant search across the deck (shapes, table cells, notes). Emits `[{anchor_id, start, length, text, context}]` in document order; empty array (exit 0) on no match.
 
 ## Writing — each command is one atomic undo
-- `pptlive write --anchor-id ph:2:body --text "Intro\nDemo\nQ&A"` — set a text anchor (newlines = paragraphs).
+- `pptlive write --anchor-id ph:2:body --text "Intro\nDemo\nQ&A"` — set a text anchor (`\n`/`\r` = new paragraph, each separately addressable as `para:`; `\v` = soft line break within a paragraph).
 - `pptlive replace --anchor-id shape:3:1 --text "New text"` — overwrite a whole anchor.
 - `pptlive replace --find "old" --text "new" [--in slide:3] [--all|--occurrence N]` — fuzzy find/replace; rewrites just the matched span (keeps run formatting). One match auto-applies; several without `--all`/`--occurrence` is exit 5 (ambiguous, lists the matches); zero is exit 2.
 - `pptlive insert --anchor-id para:4:2:3 --text "New bullet" [--before|--after]` — new paragraph relative to an anchor.

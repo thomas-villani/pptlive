@@ -26,6 +26,7 @@ from ._anchors import Notes
 from ._shapes import PlaceholderShape, ShapeCollection, is_placeholder
 from .constants import DEFAULT_LEGACY_LAYOUT, image_filter_for, is_true, placeholder_types_for
 from .exceptions import (
+    AmbiguousMatchError,
     AnchorNotFoundError,
     LayoutNotFoundError,
     PowerPointBusyError,
@@ -100,13 +101,19 @@ class Slide:
         """Resolve a placeholder KIND to (COM shape, 1-based z-order index).
 
         Picks the accepted `PpPlaceholderType` of highest preference (see
-        `constants._PLACEHOLDER_KINDS`). Raises `AnchorNotFoundError` if no
-        matching placeholder exists on the slide, `ValueError` for a bad KIND.
+        `constants._PLACEHOLDER_KINDS`); a more-preferred type wins over a
+        less-preferred one (so `body` prefers a real BODY over a generic OBJECT).
+        But when **two or more** placeholders share the *same* best-preference
+        type — e.g. the two OBJECT bodies of a Two Content / Comparison layout —
+        the kind is genuinely ambiguous: rather than silently pick the first,
+        raise `AmbiguousMatchError` (exit 5) listing the candidate `shape:S:N`
+        anchors so the caller targets one explicitly. Raises `AnchorNotFoundError`
+        if no matching placeholder exists, `ValueError` for a bad KIND.
         """
         accepted = placeholder_types_for(kind)  # ValueError on unknown kind
         accepted_ints = [int(t) for t in accepted]
-        best_rank: int | None = None
-        best: tuple[Any, int] | None = None
+        # Collect every accepted placeholder as (rank, idx, com_shape).
+        matches: list[tuple[int, int, Any]] = []
         for idx, sh in enumerate(self._slide.Shapes, start=1):
             if not is_placeholder(sh):
                 continue
@@ -115,12 +122,24 @@ class Slide:
             except Exception:
                 continue
             if ph_type in accepted_ints:
-                rank = accepted_ints.index(ph_type)
-                if best_rank is None or rank < best_rank:
-                    best_rank, best = rank, (sh, idx)
-        if best is None:
+                matches.append((accepted_ints.index(ph_type), idx, sh))
+        if not matches:
             raise AnchorNotFoundError("placeholder", f"ph:{self.index}:{kind.lower()}")
-        return best
+        best_rank = min(rank for rank, _idx, _sh in matches)
+        tied = [(idx, sh) for rank, idx, sh in matches if rank == best_rank]
+        if len(tied) > 1:
+            candidates = [
+                {
+                    "anchor_id": f"shape:{self.index}:{idx}",
+                    "name": str(sh.Name),
+                    "id": int(sh.Id),
+                    "index": idx,
+                }
+                for idx, sh in tied
+            ]
+            raise AmbiguousMatchError.for_placeholder(f"ph:{self.index}:{kind.lower()}", candidates)
+        idx, sh = tied[0]
+        return sh, idx
 
     def placeholder(self, kind: str) -> PlaceholderShape:
         """Return the `ph:S:KIND` placeholder anchor (resolved live by kind).

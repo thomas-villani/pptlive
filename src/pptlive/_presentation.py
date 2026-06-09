@@ -37,10 +37,16 @@ _CONTEXT_PAD = 30
 
 
 def _match_context(text: str, start: int, end: int) -> str:
-    """A short, single-line snippet of `text` around the half-open span [start, end)."""
+    """A short, single-line snippet of `text` around the half-open span [start, end).
+
+    Paragraph/line separators are shown as visible glyphs rather than flattened to
+    spaces, so the surrounding structure is legible in the preview (`⏎` for a `\\r`
+    paragraph break, `↵` for a `\\n`/`\\v` soft line break). The `start` offsets are
+    computed elsewhere and count each separator as one char, so they're unaffected.
+    """
     lo = max(0, start - _CONTEXT_PAD)
     hi = min(len(text), end + _CONTEXT_PAD)
-    snippet = text[lo:hi].replace("\r", " ").replace("\v", " ").replace("\n", " ")
+    snippet = text[lo:hi].replace("\r", "⏎").replace("\v", "↵").replace("\n", "↵")
     return ("…" if lo > 0 else "") + snippet + ("…" if hi < len(text) else "")
 
 

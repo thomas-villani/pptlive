@@ -172,9 +172,12 @@ class Chart:
 
         `categories` are the X-axis labels; `series` is a name->values mapping
         (e.g. `{"Revenue": [10, 20, 30]}`) or an ordered sequence of
-        `(name, values)` pairs. Every series must have exactly `len(categories)`
-        values. Raises `ValueError` for empty inputs or a length mismatch (before
-        any COM). Wrap in `deck.edit(...)` for the one-Ctrl-Z fence.
+        `(name, values)` pairs. Series are written — and plotted — in insertion
+        order (note bar charts render series bottom-to-top by Excel/PowerPoint
+        convention, so the first series sits at the bottom; this is a render
+        order, not a reorder of the data). Every series must have exactly
+        `len(categories)` values. Raises `ValueError` for empty inputs or a length
+        mismatch (before any COM). Wrap in `deck.edit(...)` for the one-Ctrl-Z fence.
 
         Drives the chart's embedded Excel workbook: activate it, clear stale
         values, write the corner / series names (row 1) / categories (column A) /

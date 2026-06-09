@@ -31,8 +31,10 @@ from .constants import (
     alignment_for,
     bullet_type_for,
     bullet_type_name,
+    color_hex,
     is_true,
     parse_color,
+    tristate_value,
 )
 from .exceptions import AnchorNotFoundError
 
@@ -44,6 +46,25 @@ if TYPE_CHECKING:
 def _tristate(value: bool) -> int:
     """Python bool -> `MsoTriState` int (`msoTrue` / `msoFalse`)."""
     return int(MsoTriState.TRUE) if value else int(MsoTriState.FALSE)
+
+
+#: The character PowerPoint renders as a *soft* line break (`<a:br>`) within one
+#: paragraph — a vertical tab. Callers embed it in `set_text` text when they want
+#: a line break that does NOT start a new, separately-addressable paragraph.
+SOFT_BREAK = "\v"
+
+
+def normalize_paragraph_breaks(text: str) -> str:
+    """Make `\\n` / `\\r\\n` / `\\r` all real paragraph breaks; keep `\\v` soft.
+
+    PowerPoint's COM `TextRange.Text` setter treats `\\r` as a paragraph break
+    (`<a:p>`) but `\\n` as a *soft* line break (`<a:br>`) inside one paragraph —
+    the opposite of what an LLM building a bullet list expects when it emits
+    `"a\\nb\\nc"`. We normalise every newline spelling to `\\r` so each line
+    becomes its own addressable `para:` paragraph, and leave `\\v` (`SOFT_BREAK`)
+    untouched as the explicit within-paragraph soft break.
+    """
+    return text.replace("\r\n", "\r").replace("\n", "\r")
 
 
 def _bullet_char(character: str | int) -> int:
@@ -157,14 +178,15 @@ class Anchor(ABC):
     def set_text(self, text: str) -> None:
         """Replace the anchor's text in place.
 
-        Embed `\\n` (or `\\r`) for multiple paragraphs — PowerPoint treats them
-        as paragraph breaks. Targets the text range directly, never the
-        Selection, so it doesn't move the user's view. Wrap in `deck.edit(...)`
-        to preserve the viewed slide and collapse the block to one Ctrl-Z
-        (see `EditScope`).
+        Embed `\\n` (or `\\r`) to start a new paragraph — each line becomes its
+        own addressable `para:S:N:P`. For a *soft* line break that stays within
+        one paragraph, embed `\\v` (`SOFT_BREAK`). Targets the text range
+        directly, never the Selection, so it doesn't move the user's view. Wrap
+        in `deck.edit(...)` to preserve the viewed slide and collapse the block
+        to one Ctrl-Z (see `EditScope`).
         """
         with _com.translate_com_errors():
-            self._text_range().Text = text
+            self._text_range().Text = normalize_paragraph_breaks(text)
 
     # -- text structure (v0.3) -------------------------------------------------
     #
@@ -267,8 +289,10 @@ class Anchor(ABC):
         """Insert `text` as a new paragraph immediately before this anchor's range.
 
         On a whole-shape anchor this prepends a first paragraph; on a `Paragraph`
-        it inserts just above that paragraph.
+        it inserts just above that paragraph. Embedded `\\n`/`\\r` in `text` add
+        further paragraphs; `\\v` (`SOFT_BREAK`) adds a soft line break.
         """
+        text = normalize_paragraph_breaks(text)
         with _com.translate_com_errors():
             tr = self._text_range()
             if str(tr.Text or "") == "":
@@ -283,7 +307,10 @@ class Anchor(ABC):
         bullet to the body" case); on a `Paragraph` it inserts just below it. The
         range includes its trailing break for a non-final paragraph, so we detect
         that to land a clean new paragraph either way (verified in the spike).
+        Embedded `\\n`/`\\r` in `text` add further paragraphs; `\\v` (`SOFT_BREAK`)
+        adds a soft line break.
         """
+        text = normalize_paragraph_breaks(text)
         with _com.translate_com_errors():
             tr = self._text_range()
             raw = str(tr.Text or "")
@@ -346,20 +373,74 @@ def _strip_break(text: str) -> str:
     return text.rstrip("\r\v\n")
 
 
+def _safe(fn: Any, default: Any) -> Any:
+    """Run `fn`, returning `default` if PowerPoint can't supply the value."""
+    try:
+        return fn()
+    except Exception:
+        return default
+
+
+def _font_color_hex(font: Any) -> str | None:
+    """`Font.Color` as `"#RRGGBB"`, or `None` for a non-literal (theme/auto) color.
+
+    A theme or automatic color isn't a literal RGB: COM returns the `0x80000000`
+    "automatic" sentinel from `.RGB` (which `color_hex` would mis-render as
+    `#000000`), and `Color.Type` reports scheme/mixed rather than RGB. We only
+    surface a hex when it's a genuine literal RGB (`0..0xFFFFFF`); otherwise the
+    color is inherited from the theme and we report `None`.
+    """
+    rgb = int(font.Color.RGB)
+    if rgb < 0 or rgb > 0xFFFFFF:  # 0x80000000 automatic sentinel / out of range
+        return None
+    return color_hex(rgb)
+
+
+def font_to_dict(text_range: Any) -> dict[str, Any]:
+    """The *effective* font of a text range, with tri-state fidelity (PPTLIVE-003).
+
+    Returns the resolved font attributes PowerPoint reports for the range —
+    `bold`/`italic`/`underline` as `True`/`False`/`"mixed"` (the `"mixed"` case is
+    a range spanning differing runs, the signal `is_true` used to discard),
+    `size` (points; `None` when mixed/unset), `font` (typeface name), and `color`
+    (`"#RRGGBB"`, or `None` for a theme/automatic color — see `_font_color_hex`).
+
+    Honest scope: these are *effective* values. COM resolves the master/layout
+    style cascade before we see them and exposes no general "directly set on the
+    run vs inherited" flag (only color carries a usable RGB-vs-theme distinction,
+    surfaced here as a literal hex vs `None`). So this is "what is rendered", not
+    "what was set on this run".
+    """
+    font = text_range.Font
+
+    def _size() -> float | None:
+        v = float(font.Size)
+        return v if v > 0 else None  # PowerPoint returns <=0 for a mixed/unset size
+
+    def _name() -> str | None:
+        n = str(font.Name or "")
+        return n or None
+
+    return {
+        "bold": _safe(lambda: tristate_value(font.Bold), False),
+        "italic": _safe(lambda: tristate_value(font.Italic), False),
+        "underline": _safe(lambda: tristate_value(font.Underline), False),
+        "size": _safe(_size, None),
+        "font": _safe(_name, None),
+        "color": _safe(lambda: _font_color_hex(font), None),
+    }
+
+
 def paragraph_to_dict(para_range: Any, anchor_id: str, index: int) -> dict[str, Any]:
     """Structured snapshot of one paragraph for `shape.paragraphs.list()`.
 
     Reads are defensive — a property PowerPoint can't supply for this range
-    degrades to a sensible default rather than failing the whole listing.
+    degrades to a sensible default rather than failing the whole listing. The
+    `font` sub-dict carries the full effective font (see `font_to_dict`); the
+    top-level `bold`/`size` are kept for back-compat.
     """
-
-    def _safe(fn: Any, default: Any) -> Any:
-        try:
-            return fn()
-        except Exception:
-            return default
-
     pf = para_range.ParagraphFormat
+    font = font_to_dict(para_range)
     return {
         "index": index,
         "anchor_id": anchor_id,
@@ -370,8 +451,9 @@ def paragraph_to_dict(para_range: Any, anchor_id: str, index: int) -> dict[str, 
             lambda: bullet_type_name(pf.Bullet.Type) if is_true(pf.Bullet.Visible) else "none",
             "none",
         ),
-        "bold": _safe(lambda: is_true(para_range.Font.Bold), False),
-        "size": _safe(lambda: float(para_range.Font.Size), None),
+        "bold": font["bold"],
+        "size": font["size"],
+        "font": font,
     }
 
 

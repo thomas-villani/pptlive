@@ -223,7 +223,7 @@ class Master:
     def format_text_style(
         self,
         style: str,
-        level: int,
+        level: int = 1,
         *,
         bold: bool | None = None,
         italic: bool | None = None,
@@ -234,10 +234,11 @@ class Master:
     ) -> None:
         """Set font formatting on a master text style + outline level (deck-wide).
 
-        `style` is `"title"`/`"body"`/`"default"`; `level` is 1-5. Only the kwargs
-        you pass are written (`size` in points; `color` `"#RRGGBB"` / tuple / int).
-        Re-renders every slide that inherits the style; wrap in `deck.edit(...)`.
-        Unknown style / out-of-range level -> `ValueError` before any COM.
+        `style` is `"title"`/`"body"`/`"default"`; `level` is 1-5 and defaults to
+        `1` (the natural choice for `title`, which has a single level). Only the
+        kwargs you pass are written (`size` in points; `color` `"#RRGGBB"` / tuple
+        / int). Re-renders every slide that inherits the style; wrap in
+        `deck.edit(...)`. Unknown style / out-of-range level -> `ValueError`.
         """
         if color is not None:
             parse_color(color)  # validate before any COM
@@ -255,7 +256,7 @@ class Master:
     def format_paragraph_style(
         self,
         style: str,
-        level: int,
+        level: int = 1,
         *,
         alignment: str | int | None = None,
         space_before: float | None = None,

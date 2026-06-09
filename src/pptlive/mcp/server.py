@@ -440,7 +440,7 @@ def _edit_core(deck: Presentation, op: str, p: dict[str, Any]) -> dict[str, Any]
     # -- master (deck-wide text styles + background) -----------------------
     if op in ("master_format_text_style", "master_format_paragraph_style"):
         _require(p.get("style") is not None, f"edit op={op!r} requires `style`")
-        _require(p.get("level") is not None, f"edit op={op!r} requires `level`")
+        level = 1 if p.get("level") is None else p["level"]  # default outline level
         if op == "master_format_text_style":
             style_font_opts = ("bold", "italic", "underline", "size", "font", "color")
             _require(
@@ -449,7 +449,7 @@ def _edit_core(deck: Presentation, op: str, p: dict[str, Any]) -> dict[str, Any]
             )
             deck.master.format_text_style(
                 p["style"],
-                p["level"],
+                level,
                 bold=p.get("bold"),
                 italic=p.get("italic"),
                 underline=p.get("underline"),
@@ -465,19 +465,32 @@ def _edit_core(deck: Presentation, op: str, p: dict[str, Any]) -> dict[str, Any]
             )
             deck.master.format_paragraph_style(
                 p["style"],
-                p["level"],
+                level,
                 alignment=p.get("alignment"),
                 space_before=p.get("space_before"),
                 space_after=p.get("space_after"),
                 line_spacing=p.get("line_spacing"),
             )
-        return {"ok": True, "style": p["style"], "level": p["level"]}
+        return {"ok": True, "style": p["style"], "level": level}
     if op == "master_set_background":
         _require(p.get("color") is not None, "edit op='master_set_background' requires `color`")
         deck.master.set_background(p["color"])
         return {"ok": True, "background": deck.master.read().get("background", {})}
 
     raise ToolError(f"invalid_args: unknown edit op {op!r}")
+
+
+#: Batch commands that deliberately move what the user sees — a `render navigate`
+#: or any `show` control verb (everything but the read-only `state`). When one of
+#: these runs inside an atomic batch, the scope must NOT snap the view back.
+_MOVING_SHOW_OPS = frozenset(
+    {"start", "end", "next", "previous", "goto", "black", "white", "resume"}
+)
+
+
+def _moves_view(tool: str, op: str | None) -> bool:
+    """True if a batch command intentionally changes the viewed slide / screen."""
+    return (tool == "render" and op == "navigate") or (tool == "show" and op in _MOVING_SHOW_OPS)
 
 
 def _render_core(ppt: Any, op: str, p: dict[str, Any]) -> dict[str, Any]:
@@ -555,7 +568,9 @@ def ppt_read(
     scope: str | None = None,
     doc: str | None = None,
 ) -> dict[str, Any]:
-    """Read the deck — always side-effect-free, never moves the user's view. `op`:
+    """Read the live PowerPoint deck — inspect slides, shapes, anchors, tables,
+    charts, SmartArt, theme/master, and the user's selection. Always
+    side-effect-free, never moves the user's view. `op`:
     - "status": open presentations, which is active, and the slide in view. Start here.
     - "slides": every slide — index (1-based), id, layout, title, shape count, has-notes.
     - "outline": each slide's title + body bullets (the fastest read of the deck's text).
@@ -565,7 +580,11 @@ def ppt_read(
     - "anchor": the text of any text anchor (`anchor_id`): `ph:S:KIND` (placeholder,
       e.g. ph:2:title), `shape:S:N` (Nth shape by z-order), `para:S:N:P`,
       `cell:S:N:R:C` (table cell), `notes:S`, or `here:` (the user's selection).
-      Returns text plus, for multi-paragraph anchors, a `paragraphs` breakdown.
+      Returns text plus a `paragraphs` breakdown — each paragraph carries its
+      effective `font` (`bold`/`italic`/`underline` as true/false/"mixed", `size`,
+      `font` name, `color` `#RRGGBB` or null for a theme/auto color). These are
+      *rendered* values; COM doesn't expose a per-run "directly set vs inherited"
+      flag (only color distinguishes a literal RGB from an inherited theme color).
     - "selection": what the user currently has selected, resolved to anchors.
     - "find": every fuzzy occurrence of `text` (smart-quote / whitespace tolerant)
       across the deck — each hit a `{anchor_id, start, length, text, context}`,
@@ -662,12 +681,16 @@ def ppt_edit(
     level: int | None = None,
     doc: str | None = None,
 ) -> dict[str, Any]:
-    """Mutate the deck. Every call is ONE undo entry and preserves the user's view.
+    """Edit the live PowerPoint deck — write/format text, add or arrange slides
+    and shapes, find-and-replace, and apply theme/master styling. Every call is
+    ONE undo entry and preserves the user's view.
     Geometry is in points (1 inch = 72 pt). `op`:
 
     Text & formatting (target a text anchor via `anchor_id`):
-    - "write": write `text`. mode="set" replaces the whole anchor (embed `\\n` for
-      multiple paragraphs); "insert_after"/"insert_before" add a paragraph instead.
+    - "write": write `text`. mode="set" replaces the whole anchor; embed `\\n` (or
+      `\\r`) to start a new paragraph (each line becomes its own addressable
+      `para:S:N:P`), or `\\v` for a soft line break within one paragraph.
+      "insert_after"/"insert_before" add a paragraph relative to the anchor instead.
     - "find_replace": fuzzy-locate `find` across the deck and rewrite the matched
       spans with `text` (only the span changes, so run formatting is preserved).
       Scope with `scope` (a `slide:S` / anchor id). One match auto-applies; for
@@ -700,6 +723,9 @@ def ppt_edit(
     - "table_delete_row": delete 1-based `row`.
     - "chart_set_type": change chart kind to `chart_type` (e.g. "line"/"pie"/"bar").
     - "chart_set_data": replace `categories` + `series` (a {name:[values]} map).
+      Series are plotted in insertion order; note bar charts render series
+      bottom-to-top, so the first series sits at the bottom (Excel/PowerPoint
+      convention, not a reorder).
     - "smartart_set_nodes": replace the diagram's `nodes` — a list of strings
       (flat) and/or {text, children} objects (nested; tree layouts take one root).
 
@@ -710,9 +736,10 @@ def ppt_edit(
     - "theme_set_font": set the `which`="major" (headings) or "minor" (body) typeface
       to `name` (optional `script`, default "latin").
     - "master_format_text_style": font (`bold`/`italic`/`underline`/`size`/`font`/`color`)
-      on master text `style` ("title"/"body"/"default") + outline `level` (1-5).
+      on master text `style` ("title"/"body"/"default") + outline `level` (1-5,
+      default 1 — the natural choice for `title`).
     - "master_format_paragraph_style": paragraph (`alignment`/`space_before`/
-      `space_after`/`line_spacing`) on `style` + `level`.
+      `space_after`/`line_spacing`) on `style` + `level` (1-5, default 1).
     - "master_set_background": set the master background to solid `color`.
 
     `doc` targets a presentation by name (default: the active one)."""
@@ -783,7 +810,8 @@ def ppt_render(
     embed: bool = True,
     doc: str | None = None,
 ) -> Any:
-    """Render to an image, or move the user's view. `op`:
+    """Render a PowerPoint slide or shape to an image a vision model can see, or
+    move the user's view to a slide/shape. `op`:
     - "slide_image": render slide `slide` (1-based) to an image and return it BOTH
       as an inline image the vision model can *see* (render -> look -> iterate) AND
       as an absolute file `path` in the structured result — so it works whether you
@@ -831,7 +859,8 @@ def ppt_show(
     slide: int | None = None,
     doc: str | None = None,
 ) -> dict[str, Any]:
-    """Drive a live slide show — the presenter's clicker. Unlike every other
+    """Drive a live PowerPoint slide show — the presenter's clicker (start, next,
+    previous, goto, black/white, end). Unlike every other
     mutating tool, this deliberately controls what's on the user's screen. `op`:
     - "state": is a show running, and which slide is on screen (read-only).
     - "start": begin the show (optional 1-based `slide` to start on).
@@ -894,7 +923,7 @@ def ppt_batch(
             else nullcontext()
         )
         results: list[dict[str, Any]] = []
-        with scope:
+        with scope as edit_scope:
             for i, cmd in enumerate(commands):
                 tool = cmd.get("tool", "edit")
                 op = cmd.get("op")
@@ -926,6 +955,13 @@ def ppt_batch(
                         result = _show_core(deck, op, p)
                     else:
                         raise ToolError(f"invalid_args: command #{i} unknown tool {tool!r}")
+                    # A deliberate view-move inside an atomic batch must survive the
+                    # scope's restore — otherwise a `navigate`/`show` is snapped back
+                    # to the pre-batch slide on exit. Opt the whole scope out of the
+                    # view restore once such a command runs (mirrors how a bare
+                    # `go_to` requires `allow_view_move()` inside a `deck.edit`).
+                    if _moves_view(tool, op) and edit_scope is not None:
+                        edit_scope.allow_view_move()
                     entry.update(ok=True, result=result)
                 except (PptliveError, ToolError) as exc:
                     code = _error_code(exc) if isinstance(exc, PptliveError) else "invalid_args"

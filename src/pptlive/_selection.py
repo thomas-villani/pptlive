@@ -20,10 +20,30 @@ unselecting.
 
 from __future__ import annotations
 
+import os
+import sys
+import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from .constants import PpSelectionType
+
+
+def _dbg(msg: str) -> None:
+    """Emit a politeness-tracing line to stderr when `PPTLIVE_VIEW_DEBUG` is set.
+
+    Off by default (zero overhead). Set the env var in the MCP host config to
+    trace what `snapshot`/`restore` capture — the fastest way to diagnose a
+    "view jumps back to slide 1" report in a host we can't attach a debugger to.
+    The thread name confirms the COM apartment stays on one consistent thread.
+    """
+    if os.environ.get("PPTLIVE_VIEW_DEBUG"):
+        print(
+            f"[view-debug] [{threading.current_thread().name}] {msg}",
+            file=sys.stderr,
+            flush=True,
+        )
+
 
 if TYPE_CHECKING:
     from ._app import PowerPoint
@@ -57,8 +77,10 @@ def snapshot(ppt: PowerPoint) -> SelectionSnapshot:
     slide_index: int | None = None
     try:
         slide_index = int(win.View.Slide.SlideIndex)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
         slide_index = None
+        _dbg(f"snapshot: View.Slide.SlideIndex raised: {exc!r}")
+    _dbg(f"snapshot: slide_index={slide_index}")
 
     selection_type = int(PpSelectionType.NONE)
     shape_names: tuple[str, ...] = ()
@@ -88,8 +110,11 @@ def restore(ppt: PowerPoint, snap: SelectionSnapshot) -> None:
     if snap.slide_index is not None:
         try:
             win.View.GotoSlide(snap.slide_index)
-        except Exception:
-            pass
+            _dbg(f"restore: GotoSlide({snap.slide_index}) ok")
+        except Exception as exc:  # noqa: BLE001
+            _dbg(f"restore: GotoSlide({snap.slide_index}) raised: {exc!r}")
+    else:
+        _dbg("restore: snap.slide_index is None — no GotoSlide")
 
     # 2. Restore the Selection. A shape selection is re-selected by name on the
     #    restored slide; anything else (None/Slides, or a text selection we

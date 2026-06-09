@@ -2,9 +2,34 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
-from pptlive.exceptions import PowerPointBusyError, SlideNotFoundError
+from pptlive._slides import Slide
+from pptlive.exceptions import (
+    AmbiguousMatchError,
+    AnchorNotFoundError,
+    PowerPointBusyError,
+    SlideNotFoundError,
+)
+
+_MSO_PLACEHOLDER = 14
+_PH_TITLE, _PH_BODY, _PH_OBJECT = 1, 2, 7
+
+
+def _ph_shape(name: str, shape_id: int, ph_type: int) -> SimpleNamespace:
+    """A minimal duck-typed placeholder COM shape for `_find_placeholder`."""
+    return SimpleNamespace(
+        Name=name,
+        Id=shape_id,
+        Type=_MSO_PLACEHOLDER,
+        PlaceholderFormat=SimpleNamespace(Type=ph_type),
+    )
+
+
+def _slide_with(*shapes: SimpleNamespace, index: int = 5) -> Slide:
+    return Slide(None, SimpleNamespace(Shapes=list(shapes), SlideIndex=index))  # type: ignore[arg-type]
 
 
 class _Boom:
@@ -47,6 +72,50 @@ def test_layout_name_surfaces_busy_instead_of_none(deck) -> None:  # type: ignor
     slide.com.CustomLayout = _Boom()
     with pytest.raises(PowerPointBusyError):
         _ = slide.layout_name
+
+
+# -- placeholder resolution + ambiguity guard (PPTLIVE-004) -------------------
+
+
+def test_find_placeholder_single_object_resolves() -> None:
+    slide = _slide_with(
+        _ph_shape("Title 1", 2, _PH_TITLE),
+        _ph_shape("Content Placeholder 2", 3, _PH_OBJECT),
+    )
+    sh, idx = slide._find_placeholder("body")
+    assert (sh.Name, idx) == ("Content Placeholder 2", 2)
+
+
+def test_find_placeholder_prefers_body_over_object_by_rank() -> None:
+    # A real BODY (rank 0) wins over a generic OBJECT (rank 1) — different ranks,
+    # so it is NOT ambiguous.
+    slide = _slide_with(
+        _ph_shape("Body 1", 2, _PH_BODY),
+        _ph_shape("Content Placeholder 2", 3, _PH_OBJECT),
+    )
+    sh, idx = slide._find_placeholder("body")
+    assert (sh.Name, idx) == ("Body 1", 1)
+
+
+def test_find_placeholder_two_objects_is_ambiguous() -> None:
+    # Two Content layout: two OBJECT placeholders share the best rank → ambiguous.
+    slide = _slide_with(
+        _ph_shape("Title 1", 2, _PH_TITLE),
+        _ph_shape("Content Placeholder 2", 3, _PH_OBJECT),
+        _ph_shape("Content Placeholder 3", 4, _PH_OBJECT),
+    )
+    with pytest.raises(AmbiguousMatchError) as exc:
+        slide._find_placeholder("body")
+    # The error lists the candidate shape anchors so the caller can pick one.
+    anchors = {m["anchor_id"] for m in exc.value.matches}
+    assert anchors == {"shape:5:2", "shape:5:3"}
+    assert "shape:5:2" in str(exc.value) and "shape:5:3" in str(exc.value)
+
+
+def test_find_placeholder_missing_raises_not_found() -> None:
+    slide = _slide_with(_ph_shape("Title 1", 2, _PH_TITLE))
+    with pytest.raises(AnchorNotFoundError):
+        slide._find_placeholder("body")
 
 
 def test_has_notes_surfaces_busy_instead_of_false(deck) -> None:  # type: ignore[no-untyped-def]

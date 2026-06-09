@@ -129,6 +129,16 @@ def test_read_anchor_includes_paragraphs(fake_powerpoint: Any) -> None:
     assert out["paragraphs"][0]["anchor_id"] == "para:2:2:1"
 
 
+def test_read_anchor_paragraph_has_effective_font(fake_powerpoint: Any) -> None:
+    # PPTLIVE-003: each paragraph carries the full effective font, not just bold.
+    ppt_edit("format", anchor_id="para:2:2:1", bold=True, italic=True, font="Georgia", size=28)
+    para = ppt_read("anchor", anchor_id="ph:2:body")["paragraphs"][0]
+    font = para["font"]
+    assert font["bold"] is True and font["italic"] is True
+    assert font["font"] == "Georgia" and font["size"] == 28.0
+    assert set(font) == {"bold", "italic", "underline", "size", "font", "color"}
+
+
 def test_read_notes_has_no_paragraphs_key(fake_powerpoint: Any) -> None:
     out = ppt_read("anchor", anchor_id="notes:1")
     assert out["text"] == "Lead with the vision."
@@ -169,6 +179,29 @@ def test_write_multiple_paragraphs(fake_powerpoint: Any) -> None:
     ppt_edit("write", anchor_id="ph:2:body", text="One\rTwo")
     out = ppt_read("anchor", anchor_id="ph:2:body")
     assert [p["text"] for p in out["paragraphs"]] == ["One", "Two"]
+
+
+def test_write_newline_splits_into_addressable_paragraphs(fake_powerpoint: Any) -> None:
+    # PPTLIVE-001: `\n` must create real paragraphs (not soft breaks), so each
+    # line is its own addressable `para:S:N:P`.
+    ppt_edit("write", anchor_id="ph:2:body", text="A\nB\nC\nD")
+    out = ppt_read("anchor", anchor_id="ph:2:body")
+    assert [p["text"] for p in out["paragraphs"]] == ["A", "B", "C", "D"]
+    assert ppt_read("anchor", anchor_id="para:2:2:2")["text"] == "B"
+
+
+def test_write_crlf_collapses_to_one_paragraph_break(fake_powerpoint: Any) -> None:
+    ppt_edit("write", anchor_id="ph:2:body", text="A\r\nB")
+    out = ppt_read("anchor", anchor_id="ph:2:body")
+    assert [p["text"] for p in out["paragraphs"]] == ["A", "B"]
+
+
+def test_write_soft_break_stays_one_paragraph(fake_powerpoint: Any) -> None:
+    # `\v` (SOFT_BREAK) is a within-paragraph soft line break — NOT a new paragraph.
+    ppt_edit("write", anchor_id="ph:2:body", text="A\vB")
+    out = ppt_read("anchor", anchor_id="ph:2:body")
+    assert len(out["paragraphs"]) == 1
+    assert out["paragraphs"][0]["text"] == "A\vB"
 
 
 def test_write_insert_after_adds_paragraph(fake_powerpoint: Any) -> None:
@@ -543,6 +576,13 @@ def test_master_format_text_style(fake_powerpoint: Any) -> None:
     assert ppt_read("master")["text_styles"]["body"]["levels"][0]["font"] == "Georgia"
 
 
+def test_master_format_text_style_level_defaults_to_one(fake_powerpoint: Any) -> None:
+    # `level` is optional; omitting it targets level 1 (natural for `title`).
+    out = ppt_edit("master_format_text_style", style="title", color="#156082")
+    assert out["ok"] is True and out["level"] == 1
+    assert ppt_read("master")["text_styles"]["title"]["levels"][0]["color"] == "#156082"
+
+
 def test_master_format_text_style_requires_an_option(fake_powerpoint: Any) -> None:
     with pytest.raises(ToolError) as exc:
         ppt_edit("master_format_text_style", style="body", level=1)
@@ -824,6 +864,57 @@ def test_batch_empty_list_is_tool_error(fake_powerpoint: Any) -> None:
     with pytest.raises(ToolError) as exc:
         ppt_batch([])
     assert "invalid_args" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# Tool discoverability (PPTLIVE-002): a search for the product name must surface
+# every tool, so each tool's description carries the word "PowerPoint".
+# ---------------------------------------------------------------------------
+
+
+def test_every_tool_description_mentions_powerpoint() -> None:
+    for tool in (ppt_read, ppt_edit, ppt_render, ppt_show, ppt_batch):
+        assert "PowerPoint" in (tool.__doc__ or ""), f"{tool.__name__} omits 'PowerPoint'"
+
+
+# ---------------------------------------------------------------------------
+# View preservation (the politeness guarantee) across batches — regression
+# coverage for the "jumps back to slide 1 after an action" report.
+# ---------------------------------------------------------------------------
+
+
+def test_batch_atomic_preserves_viewed_slide(fake_powerpoint: Any) -> None:
+    # User is parked on slide 3; an atomic batch of edits must leave them there.
+    fake_powerpoint._viewed = 3
+    out = ppt_batch(
+        [
+            {"op": "write", "anchor_id": "ph:2:title", "text": "Q3"},
+            {"op": "write", "anchor_id": "ph:2:body", "text": "up"},
+        ]
+    )
+    assert out["ok"] is True
+    assert fake_powerpoint._viewed == 3
+
+
+def test_batch_navigate_is_not_snapped_back(fake_powerpoint: Any) -> None:
+    # A deliberate `navigate` inside an atomic batch (which opens one EditScope)
+    # must survive the scope's view restore — not be reverted to the pre-batch
+    # slide. Without the allow_view_move opt-out it would snap back to slide 3.
+    fake_powerpoint._viewed = 3
+    out = ppt_batch(
+        [
+            {"tool": "edit", "op": "write", "anchor_id": "ph:2:title", "text": "Q3"},
+            {"tool": "render", "op": "navigate", "anchor_id": "shape:2:1"},
+        ]
+    )
+    assert out["ok"] is True
+    assert fake_powerpoint._viewed == 2  # navigate target, not snapped back to 3
+
+
+def test_single_edit_preserves_viewed_slide(fake_powerpoint: Any) -> None:
+    fake_powerpoint._viewed = 4
+    ppt_edit("write", anchor_id="ph:2:title", text="hello")
+    assert fake_powerpoint._viewed == 4
 
 
 # ---------------------------------------------------------------------------

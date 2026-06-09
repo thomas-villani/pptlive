@@ -44,7 +44,7 @@ explicit "end" fence, so always edit inside a block rather than bare.
 ```python
 with deck.edit("Revise the agenda slide"):
     deck.anchor_by_id("ph:2:title").set_text("Agenda")
-    deck.anchor_by_id("ph:2:body").set_text("Intro\nDemo\nQ&A")   # newlines = paragraphs
+    deck.anchor_by_id("ph:2:body").set_text("Intro\nDemo\nQ&A")   # \n (or \r) = new paragraph; \v = soft break
 ```
 
 ## Find / replace — fuzzy, deck-wide
@@ -80,6 +80,12 @@ deck-wide `range:`.
 | `cell:S:N:R:C` | cell (row R, col C) of the table in shape N on slide S — a `Cell` *is* an anchor |
 | `notes:S`      | speaker-notes body of slide S |
 | `here:`        | whatever the user has selected right now (opt-in) |
+
+`body` also matches the generic **content** placeholder, which reads back with
+`placeholder: "object"` (e.g. "Content Placeholder N"). On a **Two Content** /
+**Comparison** layout there are *two* such placeholders, so `ph:S:body` is
+ambiguous and raises an error listing the candidate `shape:S:N` anchors — address
+each column by its `shape:S:N` (or `.Name`) instead.
 
 z-order **drifts** as shapes are added/removed, so `shape:S:N` resolves live and
 is never cached; listings emit `name` (`Shape.Name`) and `id` (`Shape.Id`, stable

@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`write` (`set_text`) now treats `\n` as a real paragraph break** (PPTLIVE-001).
+  An LLM building a bullet body with `"a\nb\nc"` previously got **one** paragraph
+  full of soft line breaks (`<a:br>`), so the lines were not individually
+  addressable as `para:S:N:P`. `\n` / `\r\n` / `\r` are now all normalized to a
+  paragraph break, so each line is its own addressable paragraph. A within-paragraph
+  soft line break is still available — embed `\v` (`pptlive._anchors.SOFT_BREAK`).
+  Docs across the MCP `write` op, the CLI `--text` help, and both SKILL guides were
+  corrected (they previously mislabeled `\n` as "paragraphs").
+
+### Added
+
+- **Placeholder ambiguity guard** (PPTLIVE-004). On Two Content / Comparison
+  layouts (two generic `object` content placeholders), `ph:S:body` used to silently
+  resolve to the *first* one. It now raises `AmbiguousMatchError` (exit 5 / MCP
+  `ambiguous`) listing the candidate `shape:S:N` anchors, consistent with
+  `find_replace`'s guard. A more-preferred placeholder type still wins over a
+  less-preferred one (so a real `body` beats a generic `object`); only an *equal*
+  best-rank tie is ambiguous.
+- **Richer effective font in `ppt_read` op `anchor`** (PPTLIVE-003). Each paragraph
+  now carries a `font` block — `bold`/`italic`/`underline` as `true`/`false`/
+  `"mixed"` (the `msoTriStateMixed` signal `is_true` used to discard), `size`,
+  `font` name, and `color` (`#RRGGBB`, or `null` for an inherited theme/automatic
+  color). These are *effective* (rendered) values; COM exposes no general per-run
+  "directly set vs inherited" flag (only color distinguishes a literal RGB from a
+  theme color) — documented honestly, validated by `scripts/inherit_probe.py`.
+- **`PPTLIVE_VIEW_DEBUG` env var** traces what `snapshot`/`restore` capture (with
+  the thread name) to stderr — a zero-overhead diagnostic for "view jumps to slide
+  1" reports in MCP hosts we can't attach a debugger to.
+
+### Fixed
+
+- **A deliberate `navigate` / `show` inside an atomic `ppt_batch` is no longer
+  snapped back** to the pre-batch slide on scope exit (the batch's single
+  `EditScope` now opts out of the view restore once a view-moving command runs).
+  Standalone `ppt_render navigate` was already correct (no enclosing scope).
+- **`find` `context` snippet** now renders paragraph/line separators as visible
+  glyphs (`⏎` / `↵`) instead of flattening them to spaces (PPTLIVE-006); offsets
+  are unaffected.
+
+### Changed (ergonomics)
+
+- **`master_format_text_style` / `master_format_paragraph_style` `level` now
+  defaults to `1`** (library, CLI, and MCP) — the natural choice for `title`, which
+  has a single level. Previously omitting it was an error.
+- **Ambiguity error wording is surface-neutral** (PPTLIVE-005): it names both the
+  MCP params (`occurrence=N` / `replace_all=true`) and the CLI flags
+  (`--occurrence` / `--all`), instead of only the CLI flags.
+- **Every MCP tool description now contains "PowerPoint"** plus its action verbs
+  (PPTLIVE-002), so a `tool_search("powerpoint")` surfaces all five tools (it used
+  to find only `ppt_edit` / `ppt_batch`).
+
+### Docs
+
+- Documented the generic `object` content placeholder kind and the `body`→`object`
+  alias (CLAUDE.md anchor table + both SKILL guides), and the chart series ordering
+  rule (insertion order; bar charts render bottom-to-top by Excel convention — not
+  a reorder).
+
+> **Note on the recurring "view jumps to slide 1" report:** the fix that landed in
+> 0.1.3 (COM apartment held open) is intact, and the current source preserves the
+> view under every tested path (in-process and the real `pptlive-mcp` stdio server
+> — see `scripts/view_repro.py` / `scripts/view_stdio_repro.py`). If a Claude
+> Desktop install still snaps to slide 1 on every action, it is running a **stale
+> bundle environment** predating 0.1.3 — `uv cache clean pptlive` and reinstall the
+> extension (a version bump forces a fresh resolve).
+
 ## [0.2.0] — 2026-06-08
 
 ### Added

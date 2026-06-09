@@ -104,24 +104,40 @@ class SlideShowNotRunningError(PptliveError):
 
 
 class AmbiguousMatchError(PptliveError):
-    """A find/replace pattern matched more than one occurrence without disambiguation.
+    """A query matched more than one candidate without a disambiguator.
 
-    Carries the list of matches so callers (notably LLM drivers) can pick an
-    `occurrence` index and retry.
-
-    Reserved: nothing in `src/` raises this yet — it belongs to the not-yet-built
-    `find()` / `find_replace()` surface (`_findreplace.py` in `spec.md`). The exit
-    code (5) and the MCP `ambiguous` token are wired through the error maps ahead
-    of that feature so the contract is stable when it lands; until then this is
-    forward-compatibility scaffolding, not a live code path.
+    Raised by `find_replace` (more than one fuzzy match and neither `occurrence`
+    nor `replace_all` given) and by `ph:S:KIND` placeholder resolution (a kind
+    that matches two equally-preferred placeholders, e.g. the two bodies of a
+    Two Content layout). Carries `matches` so callers (notably LLM drivers) can
+    pick a candidate and retry. Maps to exit 5 / the MCP `ambiguous` token.
     """
 
-    def __init__(self, find: str, matches: list[dict[str, Any]]) -> None:
-        super().__init__(
-            f"{len(matches)} matches for {find!r}; pass --all or --occurrence N to disambiguate"
-        )
+    def __init__(
+        self, find: str, matches: list[dict[str, Any]], *, message: str | None = None
+    ) -> None:
+        if message is None:
+            # Surface-neutral: name the MCP params AND the CLI flags, so the hint
+            # is actionable whether the caller drives pptlive over MCP or the CLI.
+            message = (
+                f"{len(matches)} matches for {find!r}; set occurrence=N or "
+                "replace_all=true (CLI: --occurrence N / --all) to disambiguate"
+            )
+        super().__init__(message)
         self.find = find
         self.matches = matches
+
+    @classmethod
+    def for_placeholder(
+        cls, anchor_id: str, candidates: list[dict[str, Any]]
+    ) -> AmbiguousMatchError:
+        """Build the placeholder-ambiguity variant, listing the candidate shapes."""
+        anchors = ", ".join(str(c["anchor_id"]) for c in candidates)
+        message = (
+            f"{anchor_id!r} matches {len(candidates)} placeholders ({anchors}); "
+            "target one by its shape anchor (shape:S:N) or .Name"
+        )
+        return cls(anchor_id, candidates, message=message)
 
 
 class PowerPointBusyError(PptliveError):
