@@ -31,7 +31,7 @@ from .constants import (
     alignment_for,
     bullet_type_for,
     bullet_type_name,
-    color_hex,
+    color_hex_or_none,
     is_true,
     parse_color,
     tristate_value,
@@ -388,12 +388,9 @@ def _font_color_hex(font: Any) -> str | None:
     "automatic" sentinel from `.RGB` (which `color_hex` would mis-render as
     `#000000`), and `Color.Type` reports scheme/mixed rather than RGB. We only
     surface a hex when it's a genuine literal RGB (`0..0xFFFFFF`); otherwise the
-    color is inherited from the theme and we report `None`.
+    color is inherited from the theme and we report `None` (`color_hex_or_none`).
     """
-    rgb = int(font.Color.RGB)
-    if rgb < 0 or rgb > 0xFFFFFF:  # 0x80000000 automatic sentinel / out of range
-        return None
-    return color_hex(rgb)
+    return color_hex_or_none(font.Color.RGB)
 
 
 def font_to_dict(text_range: Any) -> dict[str, Any]:

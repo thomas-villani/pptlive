@@ -438,6 +438,60 @@ def autoshape_type_for(name: str | int) -> int:
     return int(found)
 
 
+class MsoZOrderCmd(IntEnum):
+    """`Shape.ZOrder(cmd)` — how to restack a shape relative to its siblings.
+
+    Only the four that move a shape within the slide's z-stack; the
+    in-front-of/behind-text variants aren't named (added as a feature needs them).
+    """
+
+    BRING_TO_FRONT = 0
+    SEND_TO_BACK = 1
+    BRING_FORWARD = 2
+    SEND_BACKWARD = 3
+
+
+# Friendly token (normalized) -> the z-order command. The short forms
+# ("front"/"back"/"forward"/"backward") are the discoverable names; the verbose
+# Office spellings ("bringtofront", …) resolve too.
+_ZORDER_NAMES: dict[str, MsoZOrderCmd] = {
+    "front": MsoZOrderCmd.BRING_TO_FRONT,
+    "bringtofront": MsoZOrderCmd.BRING_TO_FRONT,
+    "tofront": MsoZOrderCmd.BRING_TO_FRONT,
+    "back": MsoZOrderCmd.SEND_TO_BACK,
+    "sendtoback": MsoZOrderCmd.SEND_TO_BACK,
+    "toback": MsoZOrderCmd.SEND_TO_BACK,
+    "forward": MsoZOrderCmd.BRING_FORWARD,
+    "bringforward": MsoZOrderCmd.BRING_FORWARD,
+    "forwards": MsoZOrderCmd.BRING_FORWARD,
+    "backward": MsoZOrderCmd.SEND_BACKWARD,
+    "sendbackward": MsoZOrderCmd.SEND_BACKWARD,
+    "backwards": MsoZOrderCmd.SEND_BACKWARD,
+}
+
+# The canonical names the CLI/MCP advertise (a `--to` menu).
+ZORDER_CHOICES: tuple[str, ...] = ("front", "back", "forward", "backward")
+
+
+def zorder_cmd_for(name: str | int) -> int:
+    """Friendly z-order name (or a raw `MsoZOrderCmd` int) -> the int.
+
+    `"front"`/`"back"`/`"forward"`/`"backward"` (and the verbose `"bring_to_front"`
+    etc.) match case/separator-insensitively. A raw int passes through. Raises
+    `ValueError` (listing the friendly names) for an unknown name — symmetric with
+    `autoshape_type_for`.
+    """
+    if isinstance(name, bool):
+        raise ValueError(f"invalid z-order command: {name!r}")
+    if isinstance(name, int):
+        return int(name)
+    found = _ZORDER_NAMES.get(_normalize_name(name))
+    if found is None:
+        choices = ", ".join(ZORDER_CHOICES)
+        raise ValueError(f"unknown z-order command {name!r}; expected one of: {choices}")
+    return int(found)
+
+
 # ---------------------------------------------------------------------------
 # Text structure (v0.3): paragraph alignment, bullets, font color
 # ---------------------------------------------------------------------------
@@ -572,6 +626,24 @@ def color_hex(value: Any) -> str:
     n = int(value)
     r, g, b = n & 0xFF, (n >> 8) & 0xFF, (n >> 16) & 0xFF
     return f"#{r:02X}{g:02X}{b:02X}"
+
+
+def color_hex_or_none(value: Any) -> str | None:
+    """`color_hex`, but `None` for a non-literal (theme/automatic) color.
+
+    A theme or automatic color isn't a literal RGB: COM returns the `0x80000000`
+    "automatic" sentinel (which `color_hex` would mis-render as `#000000`), and
+    anything outside `0..0xFFFFFF` is likewise not a real RGB. Shared by the font
+    (`_anchors._font_color_hex`) and shape fill/line readbacks so a theme-driven
+    color reports honestly as `None` rather than a wrong black.
+    """
+    try:
+        rgb = int(value)
+    except (TypeError, ValueError):
+        return None
+    if rgb < 0 or rgb > 0xFFFFFF:
+        return None
+    return color_hex(rgb)
 
 
 # ---------------------------------------------------------------------------

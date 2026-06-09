@@ -31,12 +31,15 @@ from .constants import (
     MsoTriState,
     autoshape_type_for,
     chart_type_for,
+    color_hex_or_none,
     is_true,
+    parse_color,
     placeholder_kind_name,
     placeholder_types_for,
     shape_image_filter_for,
     shape_type_name,
     smartart_layout_for,
+    zorder_cmd_for,
 )
 from .exceptions import AnchorNotFoundError, NoTextFrameError
 
@@ -143,6 +146,90 @@ def _geometry_of(com_shape: Any) -> dict[str, float] | None:
         return None
 
 
+def _is_none_token(value: Any) -> bool:
+    """True iff `value` is the string `"none"` (the transparent-fill / no-line token)."""
+    return isinstance(value, str) and value.strip().lower() == "none"
+
+
+def _precheck_fill(fill: Any, line: Any) -> None:
+    """Validate fill/line color args **before any COM** (the wordlive rule).
+
+    A `None` (unchanged) or the `"none"` token (transparent / no border) needs no
+    color; anything else must `parse_color` cleanly, so a bad hex raises a clean
+    `ValueError` before a shape is created or mutated.
+    """
+    if fill is not None and not _is_none_token(fill):
+        parse_color(fill)
+    if line is not None and not _is_none_token(line):
+        parse_color(line)
+
+
+def apply_shape_fill(
+    com_shape: Any,
+    *,
+    fill: str | int | tuple[int, int, int] | None = None,
+    line: str | int | tuple[int, int, int] | None = None,
+    line_width: float | None = None,
+) -> None:
+    """Write fill / line (border) formatting onto a COM `Shape` — only the kwargs passed.
+
+    `fill`/`line` take a color (`"#RRGGBB"`, an `(r, g, b)` tuple, or a raw RGB
+    int) for a solid fill / line of that color, or the string `"none"` to make
+    the fill transparent / remove the border. `line_width` is the border weight
+    in points. Colors are validated up front (so a bad hex raises before any COM
+    mutation). Caller wraps this in `translate_com_errors()`.
+    """
+    _precheck_fill(fill, line)  # ValueError before any COM mutation
+    if fill is not None:
+        if _is_none_token(fill):
+            com_shape.Fill.Visible = int(MsoTriState.FALSE)
+        else:
+            com_shape.Fill.Visible = int(MsoTriState.TRUE)
+            com_shape.Fill.Solid()
+            com_shape.Fill.ForeColor.RGB = parse_color(fill)
+    if line is not None:
+        if _is_none_token(line):
+            com_shape.Line.Visible = int(MsoTriState.FALSE)
+        else:
+            com_shape.Line.Visible = int(MsoTriState.TRUE)
+            com_shape.Line.ForeColor.RGB = parse_color(line)
+    if line_width is not None:
+        com_shape.Line.Weight = float(line_width)
+
+
+def _fill_to_dict(com_shape: Any) -> dict[str, Any] | None:
+    """`{color, visible}` for the shape's fill, or None when it has no fill object.
+
+    `color` is the literal `"#RRGGBB"`, or `None` for a theme/automatic fill (the
+    `0x80000000` sentinel — same honest guard as font color, `color_hex_or_none`).
+    """
+    try:
+        fill = com_shape.Fill
+        return {
+            "color": color_hex_or_none(fill.ForeColor.RGB),
+            "visible": is_true(fill.Visible),
+        }
+    except Exception:
+        return None
+
+
+def _line_to_dict(com_shape: Any) -> dict[str, Any] | None:
+    """`{color, weight, visible}` for the shape's line (border), or None when absent."""
+    try:
+        line = com_shape.Line
+    except Exception:
+        return None
+    try:
+        weight: float | None = float(line.Weight)
+    except Exception:
+        weight = None
+    return {
+        "color": color_hex_or_none(line.ForeColor.RGB),
+        "weight": weight,
+        "visible": is_true(line.Visible),
+    }
+
+
 def shape_to_dict(com_shape: Any, slide_index: int, z_index: int) -> dict[str, Any]:
     """Structured snapshot of one shape for `slide.read()` / `shapes.list()`.
 
@@ -158,6 +245,8 @@ def shape_to_dict(com_shape: Any, slide_index: int, z_index: int) -> dict[str, A
         "type": shape_type_name(com_shape.Type),
         "alt_text": _alt_text_of(com_shape),
         "geometry": _geometry_of(com_shape),
+        "fill": _fill_to_dict(com_shape),
+        "line": _line_to_dict(com_shape),
     }
     if is_placeholder(com_shape):
         try:
@@ -388,6 +477,44 @@ class Shape(Anchor):
         with _com.translate_com_errors():
             self._com_shape().AlternativeText = str(value)
 
+    def set_fill(
+        self,
+        *,
+        fill: str | int | tuple[int, int, int] | None = None,
+        line: str | int | tuple[int, int, int] | None = None,
+        line_width: float | None = None,
+    ) -> None:
+        """Set the shape's **fill** and/or **line** (border). Only the kwargs passed.
+
+        `fill`/`line` take a color (`"#RRGGBB"`, an `(r, g, b)` tuple, or a raw RGB
+        int) for a solid fill / line of that color, or the string `"none"` to make
+        the fill transparent / remove the border. `line_width` is the border weight
+        in points. Distinct from `format_text`'s `color`, which is *font* color.
+        Raises `ValueError` for a bad color (before any COM) or if nothing is
+        passed. A mutation: wrap in `deck.edit(...)`.
+        """
+        if fill is None and line is None and line_width is None:
+            raise ValueError("set_fill() requires at least one of fill=, line=, or line_width=")
+        with _com.translate_com_errors():
+            apply_shape_fill(self._com_shape(), fill=fill, line=line, line_width=line_width)
+
+    def reorder(self, to: str | int) -> int:
+        """Restack this shape in the slide's z-order; return its new 1-based position.
+
+        `to` is `"front"` / `"back"` / `"forward"` / `"backward"` (or a raw
+        `MsoZOrderCmd` int) — bring to front, send to back, or step one level
+        (`constants.ZORDER_CHOICES`). Lets a freshly added background panel slide
+        *behind* existing content (otherwise it always lands on top). Note this
+        shifts the `shape:S:N` indices of the shapes it passes — re-read after, or
+        address by `shapeid:S:ID` / `.Name`. Raises `ValueError` for an unknown
+        command (before any COM). A mutation: wrap in `deck.edit(...)`.
+        """
+        cmd = zorder_cmd_for(to)  # ValueError before any COM
+        with _com.translate_com_errors():
+            sh = self._com_shape()  # raw ref tracks the shape across the restack
+            sh.ZOrder(cmd)
+            return int(sh.ZOrderPosition)
+
     def delete(self) -> None:
         """Delete this shape from its slide (`Shape.Delete`).
 
@@ -491,6 +618,54 @@ class PlaceholderShape(Shape):
             return shape_to_dict(shape, self._slide.index, idx)
 
 
+class ShapeById(Shape):
+    """A shape addressed by its stable `Shape.Id` — `shapeid:S:ID`.
+
+    The **delete-proof** handle (PPTLIVE-010): `Shape.Id` is assigned once and is
+    never renumbered or reused, so unlike `shape:S:N` — a z-order index that
+    shifts down when a lower shape is deleted or restacked — a `shapeid` keeps
+    pointing at the same shape across structural edits. Resolves by scanning the
+    slide's shapes for the matching `.Id` on every access (so z-order drift on the
+    host slide is handled). The `id` emitted in every shape listing *is* this
+    value, so an agent can build `shapeid:S:ID` straight from a read.
+    """
+
+    kind = "shape"
+
+    def __init__(self, slide: Slide, shape_id: int) -> None:
+        super().__init__(slide, index=0)
+        self._shape_id = int(shape_id)
+
+    @property
+    def target_id(self) -> int:
+        """The `Shape.Id` this handle resolves by."""
+        return self._shape_id
+
+    @property
+    def anchor_id(self) -> str:
+        return f"shapeid:{self._slide.index}:{self._shape_id}"
+
+    def _com_shape(self) -> Any:
+        """Resolve the COM `Shape` live by stable `.Id`. Never cached."""
+        shapes = self._slide.com.Shapes
+        for i in range(1, int(shapes.Count) + 1):
+            sh = shapes(i)
+            if int(sh.Id) == self._shape_id:
+                return sh
+        raise AnchorNotFoundError("shape", self.anchor_id)
+
+    @property
+    def index(self) -> int:
+        """Current 1-based z-order index of the resolved shape."""
+        with _com.translate_com_errors():
+            return int(self._com_shape().ZOrderPosition)
+
+    def to_dict(self) -> dict[str, Any]:
+        with _com.translate_com_errors():
+            sh = self._com_shape()
+            return shape_to_dict(sh, self._slide.index, int(sh.ZOrderPosition))
+
+
 # ---------------------------------------------------------------------------
 # ShapeCollection
 # ---------------------------------------------------------------------------
@@ -545,6 +720,19 @@ class ShapeCollection:
         for idx in range(1, count + 1):
             yield Shape(self._slide, idx)
 
+    def by_id(self, shape_id: int) -> ShapeById:
+        """A shape addressed by its stable `Shape.Id` (`shapeid:S:ID`) — delete-proof.
+
+        Unlike `slide.shapes[N]` (z-order index) or `slide.shapes["Name"]`, the id
+        survives a delete/restack that renumbers indices (PPTLIVE-010). Verifies
+        the id exists now (raising `AnchorNotFoundError` if not), then returns a
+        `ShapeById` that re-resolves live on each use.
+        """
+        handle = ShapeById(self._slide, shape_id)
+        with _com.translate_com_errors():
+            handle._com_shape()  # eager existence check (clean exit-2 if absent)
+        return handle
+
     # -- creators (v0.2; wrap in deck.edit(...) for view + one-Ctrl-Z) ---------
     #
     # PowerPoint adds a new shape at the top of the z-order, i.e. the last slot
@@ -563,12 +751,20 @@ class ShapeCollection:
         top: float | None = None,
         width: float | None = None,
         height: float | None = None,
+        fill: str | int | tuple[int, int, int] | None = None,
+        line: str | int | tuple[int, int, int] | None = None,
+        line_width: float | None = None,
     ) -> Shape:
         """Add a horizontal text box and return it (`Shapes.AddTextbox`).
 
         Geometry is in points; omitted values default to a 4×1 in box near the
-        top-left. `text`, if given, is written into the new frame.
+        top-left. `text`, if given, is written into the new frame. `fill`/`line`
+        set a solid fill / border color (or `"none"` for transparent / no border)
+        and `line_width` the border weight in points — see `Shape.set_fill`. A
+        text box defaults to no fill and no line. Raises `ValueError` for a bad
+        color before any COM.
         """
+        _precheck_fill(fill, line)  # ValueError before any COM
         left = _DEFAULT_LEFT if left is None else float(left)
         top = _DEFAULT_TOP if top is None else float(top)
         width = _DEFAULT_TEXTBOX_WIDTH if width is None else float(width)
@@ -579,6 +775,8 @@ class ShapeCollection:
             )
             if text:
                 com_shape.TextFrame.TextRange.Text = text
+            if fill is not None or line is not None or line_width is not None:
+                apply_shape_fill(com_shape, fill=fill, line=line, line_width=line_width)
             return self._added()
 
     def add_shape(
@@ -589,21 +787,31 @@ class ShapeCollection:
         top: float | None = None,
         width: float | None = None,
         height: float | None = None,
+        fill: str | int | tuple[int, int, int] | None = None,
+        line: str | int | tuple[int, int, int] | None = None,
+        line_width: float | None = None,
     ) -> Shape:
         """Add an autoshape and return it (`Shapes.AddShape`).
 
         `shape_type` is a friendly name (`"rectangle"`, `"oval"`, `"arrow"`, …;
         see `constants.AUTOSHAPE_CHOICES`) or a raw `MsoAutoShapeType` int.
         Geometry is in points; omitted values default to a 2×2 in box near the
-        top-left. Raises `ValueError` for an unknown shape name (before any COM).
+        top-left. `fill`/`line` set a solid fill / border color (or `"none"` for
+        transparent / no border) and `line_width` the border weight in points —
+        see `Shape.set_fill`; omitted, the shape takes the theme's default accent
+        fill. Raises `ValueError` for an unknown shape name or bad color (before
+        any COM).
         """
         type_int = autoshape_type_for(shape_type)  # ValueError before COM
+        _precheck_fill(fill, line)  # ValueError before COM
         left = _DEFAULT_LEFT if left is None else float(left)
         top = _DEFAULT_TOP if top is None else float(top)
         width = _DEFAULT_SHAPE_WIDTH if width is None else float(width)
         height = _DEFAULT_SHAPE_HEIGHT if height is None else float(height)
         with _com.translate_com_errors():
-            self._com_collection.AddShape(type_int, left, top, width, height)
+            com_shape = self._com_collection.AddShape(type_int, left, top, width, height)
+            if fill is not None or line is not None or line_width is not None:
+                apply_shape_fill(com_shape, fill=fill, line=line, line_width=line_width)
             return self._added()
 
     def add_picture(

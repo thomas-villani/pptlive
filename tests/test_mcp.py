@@ -390,6 +390,55 @@ def test_shape_image_export(fake_powerpoint: Any, tmp_path: Any) -> None:
     assert out_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
 
+# -- fill / line (PPTLIVE-007), z-order (008), shapeid (010) -----------------
+
+
+def test_format_sets_shape_fill(fake_powerpoint: Any) -> None:
+    out = ppt_edit("format", anchor_id="shape:2:1", fill_color="#FF0000", line_color="none")
+    assert out["ok"] is True
+    d = ppt_read("slide", slide=2)["shapes"][0]
+    assert d["fill"] == {"color": "#FF0000", "visible": True}
+    assert d["line"]["visible"] is False
+
+
+def test_format_fill_on_non_shape_anchor_errors(fake_powerpoint: Any) -> None:
+    # A paragraph anchor has no fill — should be a clean invalid_args, not a 500.
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("format", anchor_id="para:2:2:1", fill_color="#FF0000")
+    assert "invalid_args" in str(exc.value)
+
+
+def test_shape_add_with_fill(fake_powerpoint: Any) -> None:
+    out = ppt_edit("shape_add", slide=3, kind="shape", shape_type="rectangle", fill_color="#102030")
+    assert out["fill"] == {"color": "#102030", "visible": True}
+
+
+def test_shape_order_send_to_back(fake_powerpoint: Any) -> None:
+    out = ppt_edit("shape_order", anchor_id="shape:2:3", order="back")
+    assert out["ok"] is True
+    assert out["index"] == 1
+    assert ppt_read("slide", slide=2)["shapes"][0]["name"] == "Picture 3"
+
+
+def test_shape_order_requires_order(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("shape_order", anchor_id="shape:2:1")
+    assert "invalid_args" in str(exc.value)
+
+
+def test_shapeid_anchor_resolves_in_read(fake_powerpoint: Any) -> None:
+    out = ppt_read("anchor", anchor_id="shapeid:2:3")  # Content Placeholder 2
+    assert out["anchor_id"] == "shapeid:2:3"
+    assert out["text"] == "Intro\rDemo\rQ&A"
+
+
+def test_shapeid_format_survives_a_delete(fake_powerpoint: Any) -> None:
+    # Style Picture 3 by its stable id after a delete that shifts z-order indices.
+    ppt_edit("shape_delete", anchor_id="shape:2:1")  # delete Title 1
+    out = ppt_edit("format", anchor_id="shapeid:2:4", fill_color="#345678")
+    assert out["ok"] is True
+
+
 # ---------------------------------------------------------------------------
 # Tables — addressed by the table shape's anchor_id (shape:S:N) + cell anchors
 # ---------------------------------------------------------------------------

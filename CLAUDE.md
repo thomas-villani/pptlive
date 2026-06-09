@@ -50,7 +50,7 @@ src/pptlive/
   _app.py            PowerPoint handle + attach() / connect()
   _presentation.py   Presentation (the wordlive Document analog) + PresentationCollection
   _slides.py         SlideCollection / Slide  (add/delete/duplicate/move_to/set_layout, notes, read())
-  _shapes.py         ShapeCollection / Shape  (a Shape IS an Anchor when it has a text frame; geometry verbs)
+  _shapes.py         ShapeCollection / Shape / ShapeById  (a Shape IS an Anchor when it has a text frame; geometry + fill/line + z-order verbs)
   _anchors.py        Anchor base + Paragraph, Cell, Notes
   _tables.py         Table / Cell  (a table is a shape; cell:S:N:R:C anchors)         [v0.5]
   _charts.py         Chart       (a chart is a shape; data via embedded Excel)         [v0.7]
@@ -127,6 +127,7 @@ them to `.agents/skills/`, and `install-mcp` / the `mcpb/` bundle wire up MCP.
    | ---------------- | ----------- |
    | `slide:S`        | slide S (1-based) — a **container**, not a text anchor; use `deck.slides[S]`, not `anchor_by_id` |
    | `shape:S:N`      | Nth shape (1-based z-order) on slide S — canonical handle; an `Anchor` if it has a text frame |
+   | `shapeid:S:ID`   | shape with stable `Shape.Id` ID on slide S — the **delete-proof** handle (the `id` in every shape listing); survives a delete/restack that shifts `shape:S:N` |
    | `ph:S:KIND`      | placeholder of semantic KIND (`title`/`ctrtitle`/`subtitle`/`body`/`footer`/`date`/`slidenum`) — the LLM-preferred form |
    | `para:S:N:P`     | paragraph P in shape N on slide S |
    | `cell:S:N:R:C`   | cell (row R, col C) of the table in shape N on slide S |
@@ -141,11 +142,21 @@ them to `.agents/skills/`, and `install-mcp` / the `mcpb/` bundle wire up MCP.
 
    `shape:` is int-only (z-order) to avoid index-vs-name ambiguity; expose shape
    `.Name` separately (`slide.shapes["Title 1"]`). **z-order drifts** when shapes
-   are added/removed: resolve `shape:S:N` **live** (never cache it), and have
-   every shape listing emit `name` + `id` (`Shape.Id`, stable across reorder) so
-   an agent can re-identify after drift. Steer toward `ph:S:KIND` and `.Name` as
-   the drift-proof forms; document the hazard honestly rather than building
-   re-resolution machinery. (Resolved Open Q #3 — symbolic `exec` binding deferred.)
+   are added/removed *or restacked* (`Shape.reorder`): resolve `shape:S:N` **live**
+   (never cache it), and have every shape listing emit `name` + `id` (`Shape.Id`,
+   stable across reorder). The drift-proof forms are `ph:S:KIND`, `.Name`, and
+   `shapeid:S:ID` (`ShapeById`, resolves by stable `Shape.Id` — the delete-proof
+   handle that PPTLIVE-010 asked for; built in the pt3 styling round). (Resolved
+   Open Q #3 — symbolic `exec` binding deferred.)
+
+   **Shape styling (pt3 round):** `Shape.set_fill(fill=/line=/line_width=)` sets the
+   fill / border (a color, or `"none"` for transparent / no border) — distinct from
+   `format_text`'s font `color`; `fill=`/`line=` also ride on `add_shape`/`add_textbox`.
+   `Shape.reorder("front"|"back"|"forward"|"backward")` restacks via `Shape.ZOrder`.
+   Every shape listing now carries `fill`/`line` (`{color, visible[, weight]}`), with
+   the same theme-sentinel guard as font color (`color_hex_or_none` → `None`, never a
+   wrong `#000000`). Still **unaddressable**: SmartArt-node / chart-internal text
+   color (PPTLIVE-009, deferred — rebuild from primitives for now).
 
 ## Politeness model (the whole point)
 
