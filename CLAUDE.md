@@ -32,9 +32,10 @@ uv run mypy
 uv run pptlive status                     # exercise the CLI
 ```
 
-Dev pins Python 3.13 (`.python-version`), but the **library targets 3.10+** to
-match wordlive — do not use 3.11+ syntax. `ruff` and `mypy` are configured for
-`py310` in `pyproject.toml`.
+Dev pins Python 3.13 (`.python-version`); the **library targets 3.11+**. wordlive
+is being bumped to the same floor in lockstep, so the sibling parity holds — 3.11+
+syntax (`StrEnum`, `assert_never`, …) is fair game. `ruff` and `mypy` are
+configured for `py311` in `pyproject.toml`.
 
 ## Module layout (built through v0.9 — see IMPLEMENTATION.md)
 

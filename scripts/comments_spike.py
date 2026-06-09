@@ -42,8 +42,13 @@ def _err(exc: Exception) -> str:
 # Candidate identity/state props on a modern Comment — dumped to learn which
 # exist and what ProviderID/UserID the modern threaded API wants.
 _ID_PROPS = (
-    "ProviderID", "ProviderId", "UserID", "UserId", "AuthorIndex",
-    "Status", "Resolved",
+    "ProviderID",
+    "ProviderId",
+    "UserID",
+    "UserId",
+    "AuthorIndex",
+    "Status",
+    "Resolved",
 )
 
 
@@ -64,8 +69,7 @@ def _read_comment(c: Any, *, recurse: bool = True, props: bool = False) -> dict[
         d["replies_count"] = rc
         if recurse and rc:
             d["replies"] = [
-                _read_comment(replies.Item(i), recurse=False, props=props)
-                for i in range(1, rc + 1)
+                _read_comment(replies.Item(i), recurse=False, props=props) for i in range(1, rc + 1)
             ]
     except Exception:
         d["has_replies_attr"] = False
@@ -86,9 +90,7 @@ def probe_existing(deck: pl.Presentation) -> list[dict[str, Any]]:
         try:
             comments = deck.slides[s].com.Comments
             cnt = int(comments.Count)
-            items = [
-                _read_comment(comments.Item(i), props=True) for i in range(1, cnt + 1)
-            ]
+            items = [_read_comment(comments.Item(i), props=True) for i in range(1, cnt + 1)]
             rows.append({"slide": s, "count": cnt, "comments": items})
         except Exception as exc:
             rows.append({"slide": s, "error": _err(exc)})
@@ -139,12 +141,18 @@ def probe_add(slide: pl.Slide, identity: dict[str, Any]) -> dict[str, Any]:
         # Reply: try a few plausible signatures, report which lands.
         replies = _safe(added, "Replies")
         reply_attempts = [
-            ("Replies.Add2(Author,Init,Text,Prov,User)",
-             lambda: replies.Add2("Spike Author", "SA", "Spike reply", provider, user)),
-            ("Replies.Add2(L,T,Author,Init,Text,Prov,User)",
-             lambda: replies.Add2(0.0, 0.0, "Spike Author", "SA", "Spike reply", provider, user)),
-            ("Replies.Add(Author,Init,Text)",
-             lambda: replies.Add("Spike Author", "SA", "Spike reply")),
+            (
+                "Replies.Add2(Author,Init,Text,Prov,User)",
+                lambda: replies.Add2("Spike Author", "SA", "Spike reply", provider, user),
+            ),
+            (
+                "Replies.Add2(L,T,Author,Init,Text,Prov,User)",
+                lambda: replies.Add2(0.0, 0.0, "Spike Author", "SA", "Spike reply", provider, user),
+            ),
+            (
+                "Replies.Add(Author,Init,Text)",
+                lambda: replies.Add("Spike Author", "SA", "Spike reply"),
+            ),
         ]
         out["reply"] = {"ok": False}
         for label, fn in reply_attempts:

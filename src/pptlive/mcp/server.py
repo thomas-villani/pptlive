@@ -637,9 +637,7 @@ def _render_core(ppt: Any, op: str, p: dict[str, Any]) -> dict[str, Any]:
         _require(p.get("out") is not None, "render op='save_as' requires `out` (the .pptx path)")
         fmt = str(p.get("save_format", "pptx"))
         try:
-            written = deck.save_as(
-                p["out"], fmt=fmt, overwrite=bool(p.get("overwrite", False))
-            )
+            written = deck.save_as(p["out"], fmt=fmt, overwrite=bool(p.get("overwrite", False)))
         except (FileExistsError, ValueError) as exc:
             raise ToolError(f"invalid_args: {exc}") from exc
         return {"ok": True, "path": written, "format": fmt}

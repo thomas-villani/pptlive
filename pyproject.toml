@@ -8,16 +8,16 @@ license-files = ["LICENSE"]
 authors = [
     { name = "Thomas.Villani", email = "thomas.villani@gmail.com" }
 ]
-# Dev pins 3.13 (.python-version), but the library stays 3.10-compatible to
-# match its sibling `wordlive`. Don't reach for 3.11+ syntax.
-requires-python = ">=3.10"
+# Dev pins 3.13 (.python-version); the library targets 3.11+. Sibling `wordlive`
+# is being bumped to the same floor in lockstep, so the parity holds — 3.11+
+# syntax (StrEnum, assert_never, …) is now fair game.
+requires-python = ">=3.11"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Win32 (MS Windows)",
     "Intended Audience :: Developers",
     "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -75,7 +75,7 @@ addopts = "-m 'not smoke'"
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 extend-exclude = ["site", "dist"]
 
 [tool.ruff.lint]
@@ -91,7 +91,7 @@ ignore = ["E501"]
 "tests/**" = ["B018"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 files = ["src/pptlive"]
 warn_redundant_casts = true
 warn_unused_ignores = false
