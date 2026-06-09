@@ -23,7 +23,13 @@ from ._show import SlideShow
 from ._slides import Slide, SlideCollection, _paragraphs
 from ._snapshot import Snapshot
 from ._theme import Master, Theme
-from .constants import DEFAULT_LAYOUT_ALIAS, image_filter_for, match_layout_name
+from .constants import (
+    DEFAULT_LAYOUT_ALIAS,
+    PpSaveAsFileType,
+    image_filter_for,
+    match_layout_name,
+    save_format_for,
+)
 from .exceptions import (
     AmbiguousMatchError,
     AnchorNotFoundError,
@@ -31,6 +37,7 @@ from .exceptions import (
     NoTextFrameError,
     PowerPointBusyError,
     PresentationNotFoundError,
+    UnsavedPresentationError,
 )
 
 #: Chars of context shown on each side of a `find` match in its `context` snippet.
@@ -76,6 +83,84 @@ class Presentation:
         """Full path, or just the name for a never-saved deck."""
         with _com.translate_com_errors():
             return str(self._pres.FullName)
+
+    @property
+    def saved(self) -> bool:
+        """Whether the deck has no unsaved changes (PowerPoint's `Presentation.Saved`).
+
+        `True` right after a save; `False` once an edit dirties it, and `False`
+        for a brand-new never-saved deck. The same flag `pptlive status` reports
+        per open deck — how an agent sees there's unsaved work before deciding to
+        `save()`. (PowerPoint's COM value is an `MsoTriState`, `-1`/`0`; both
+        coerce to the right bool.)
+        """
+        with _com.translate_com_errors():
+            return bool(self._pres.Saved)
+
+    def save(self) -> str:
+        """Save the deck to its existing file; return the absolute path written.
+
+        The **explicit, never-implicit** persist verb (pptlive never auto-saves).
+        Raises [`UnsavedPresentationError`][pptlive.UnsavedPresentationError] if
+        the deck has never been saved — it has no path yet, so call
+        [`save_as`][pptlive.Presentation.save_as] with a destination first.
+
+        The never-saved guard is in Python on purpose: the 2026-06-09 spike found
+        PowerPoint's `Save()` does *not* raise on a path-less deck — on a
+        OneDrive/SharePoint build it silently uploads to the user's default cloud
+        folder — so relying on COM to refuse would let the deck escape somewhere
+        the caller didn't choose.
+        """
+        with _com.translate_com_errors():
+            folder = str(self._pres.Path)
+            if not folder:
+                raise UnsavedPresentationError(self.name)
+            self._pres.Save()
+            return str(self._pres.FullName)
+
+    def save_as(
+        self, path: str | os.PathLike[str], *, fmt: str = "pptx", overwrite: bool = False
+    ) -> str:
+        """Save the deck to `path`, returning the absolute path written.
+
+        `fmt` is `"pptx"` (the modern Open XML format). For PDF use
+        [`export_pdf`][pptlive.Presentation.export_pdf] — same COM call, but a read
+        (it doesn't rebind the working file). **Rebinds** the working file: after
+        this, the open deck *is* the new file (its `name`/`path` follow), matching
+        PowerPoint's own Save-As. By default refuses to clobber an existing file —
+        pass `overwrite=True` to allow it. Explicit-only, like
+        [`save`][pptlive.Presentation.save].
+        """
+        file_format, _ext = save_format_for(fmt)  # validates; rejects "pdf"
+        target = Path(os.fspath(path)).expanduser()
+        if not overwrite and target.exists():
+            raise FileExistsError(
+                f"refusing to overwrite existing file {str(target)!r}; pass overwrite=True"
+            )
+        abspath = str(target.resolve())
+        with _com.translate_com_errors():
+            self._pres.SaveAs(abspath, file_format)
+        return abspath
+
+    def export_pdf(self, path: str | os.PathLike[str]) -> str:
+        """Export the deck to a PDF at `path`; return the absolute path written.
+
+        The recommended "hand back a deliverable" path — a pixel-faithful render
+        of the deck's current (unsaved) state via PowerPoint's PDF engine. A
+        **read**: unlike [`save_as`][pptlive.Presentation.save_as] it neither
+        rebinds the working file nor clears its dirty flag (verified 2026-06-09),
+        so the user's `.pptx` is untouched and no `edit()` fence is needed.
+        Overwrites an existing PDF.
+
+        Goes through `Presentation.SaveAs(path, ppSaveAsPDF=32)`:
+        `ExportAsFixedFormat` is the nominal PDF API but won't marshal under
+        pptlive's late-bound COM dispatch, and `SaveAs`-to-PDF produces the same
+        faithful PDF while behaving as a pure export.
+        """
+        abspath = str(Path(os.fspath(path)).expanduser().resolve())
+        with _com.translate_com_errors():
+            self._pres.SaveAs(abspath, int(PpSaveAsFileType.PDF))
+        return abspath
 
     @property
     def slides(self) -> SlideCollection:
@@ -658,7 +743,12 @@ class PresentationCollection:
             return int(self._com_collection.Count)
 
     def list(self) -> list[dict[str, Any]]:
-        """`[{name, path, is_active}, ...]` — used by `pptlive status`."""
+        """`[{name, path, saved, is_active}, ...]` — used by `pptlive status`.
+
+        `saved` is `Presentation.Saved` (False = unsaved changes / never saved),
+        so an agent sees dirty state before deciding to `save()`; `path` is the
+        full path (just the name for a never-saved deck).
+        """
         out: list[dict[str, Any]] = []
         with _com.translate_com_errors():
             active_name: str | None
@@ -672,6 +762,7 @@ class PresentationCollection:
                     {
                         "name": name,
                         "path": str(pres.FullName),
+                        "saved": bool(pres.Saved),
                         "is_active": name == active_name,
                     }
                 )

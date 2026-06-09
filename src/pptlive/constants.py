@@ -782,6 +782,59 @@ def shape_image_filter_for(fmt: str) -> tuple[int, str]:
 
 
 # ---------------------------------------------------------------------------
+# Save / export (v1.1): Presentation.SaveAs file-format enum
+# ---------------------------------------------------------------------------
+
+
+class PpSaveAsFileType(IntEnum):
+    """`Presentation.SaveAs(FileFormat=...)` values the save/export verbs expose.
+
+    A deliberately narrow slice of PowerPoint's full `PpSaveAsFileType`: the
+    modern Open XML `.pptx` (`OPEN_XML_PRESENTATION`, what `save_as(fmt="pptx")`
+    writes) and `PDF` (what `export_pdf` writes). The 2026-06-09 spike found
+    `Presentation.ExportAsFixedFormat` won't marshal under pptlive's late-bound
+    dispatch (a trailing object-typed param raises `TypeError`), but
+    `SaveAs(path, ppSaveAsPDF=32)` produces a faithful PDF *without* rebinding the
+    working file or touching its dirty flag — so PDF export rides `SaveAs` too.
+    Legacy `.ppt`, image, and slide-show formats are deferred until a use case
+    needs them (the wordlive "add only as needed" rule).
+    """
+
+    OPEN_XML_PRESENTATION = 24
+    PDF = 32
+
+
+#: Friendly save-format token -> (PpSaveAsFileType int, file extension), match order.
+_SAVE_FILE_FORMATS: dict[str, tuple[int, str]] = {
+    "pptx": (int(PpSaveAsFileType.OPEN_XML_PRESENTATION), "pptx"),
+    "pdf": (int(PpSaveAsFileType.PDF), "pdf"),
+}
+
+SAVE_FORMAT_CHOICES: tuple[str, ...] = ("pptx",)
+
+
+def save_format_for(fmt: str) -> tuple[int, str]:
+    """Resolve a `save_as` format token to its `(PpSaveAsFileType, extension)`.
+
+    Accepts `"pptx"` (case-insensitive, a leading dot tolerated). `"pdf"` is
+    rejected with a pointer to `export_pdf` — PDF goes through the same `SaveAs`
+    COM call but is a *read* (it neither rebinds the working file nor clears the
+    dirty flag), so it's a separate verb. Raises `ValueError` for anything else —
+    symmetric with `image_filter_for` / `shape_image_filter_for`.
+    """
+    key = str(fmt).strip().lower().lstrip(".")
+    if key == "pdf":
+        raise ValueError("save_as does not write PDF; use export_pdf(path) instead")
+    found = _SAVE_FILE_FORMATS.get(key)
+    if found is None:
+        choices = ", ".join(SAVE_FORMAT_CHOICES)
+        raise ValueError(
+            f"unsupported save format {fmt!r}; supported: {choices} (PDF via export_pdf)"
+        )
+    return found
+
+
+# ---------------------------------------------------------------------------
 # Charts (v0.7): XlChartType (the chart kind passed to Shapes.AddChart2)
 # ---------------------------------------------------------------------------
 

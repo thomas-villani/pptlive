@@ -190,7 +190,11 @@ def _render_reply(results: list[dict[str, Any]], structured: dict[str, Any]) -> 
     for r in results:
         if not isinstance(r, dict):
             continue
-        if r.get("path"):
+        # Only embed paths whose format is an actual image — a deck_pdf / save /
+        # save_as result also carries `path`, but its `format` ("pdf"/"pptx") is
+        # not an image, so it's reported in the structured content only, never
+        # read back and mis-encoded as an image block.
+        if r.get("path") and r.get("format", "png").lower() in _MIME_BY_FMT:
             blocks.append(_image_block(r["path"], r.get("format", "png")))
         for img in r.get("images") or []:
             if not (isinstance(img, dict) and img.get("path")):
@@ -621,6 +625,21 @@ def _render_core(ppt: Any, op: str, p: dict[str, Any]) -> dict[str, Any]:
         sh = _resolve_shape(deck, p.get("anchor_id"))
         path = sh.export_image(p.get("out"), fmt=fmt)
         return {"ok": True, "anchor_id": sh.anchor_id, "path": str(path), "format": fmt}
+    if op == "deck_pdf":
+        _require(p.get("out") is not None, "render op='deck_pdf' requires `out` (the PDF path)")
+        written = deck.export_pdf(p["out"])
+        # `format: "pdf"` keeps _render_reply from mis-embedding the PDF as an image.
+        return {"ok": True, "path": written, "format": "pdf"}
+    if op == "save":
+        saved_path = deck.save()
+        return {"ok": True, "path": saved_path, "saved": True, "format": "pptx"}
+    if op == "save_as":
+        _require(p.get("out") is not None, "render op='save_as' requires `out` (the .pptx path)")
+        try:
+            written = deck.save_as(p["out"], overwrite=bool(p.get("overwrite", False)))
+        except FileExistsError as exc:
+            raise ToolError(f"invalid_args: {exc}") from exc
+        return {"ok": True, "path": written, "format": "pptx"}
     if op == "navigate":
         _require(p.get("anchor_id") is not None, "render op='navigate' requires `anchor_id`")
         anchor = deck.anchor_by_id(p["anchor_id"])
@@ -963,7 +982,9 @@ def ppt_edit(
 
 
 def ppt_render(
-    op: Literal["slide_image", "deck_snapshot", "shape_image", "navigate"],
+    op: Literal[
+        "slide_image", "deck_snapshot", "shape_image", "deck_pdf", "save", "save_as", "navigate"
+    ],
     slide: int | None = None,
     anchor_id: str | None = None,
     out: str | None = None,
@@ -975,6 +996,7 @@ def ppt_render(
     doc: str | None = None,
     slides: str | None = None,
     max_dim: int | None = None,
+    overwrite: bool = False,
 ) -> Any:
     """Render a PowerPoint slide or shape to an image a vision model can see, or
     move the user's view to a slide/shape. `op`:
@@ -998,6 +1020,15 @@ def ppt_render(
     - "shape_image": render *just* the shape at `anchor_id` (cropped to its bounds,
       native pixel size) — so a vision model can see one picture/diagram alone.
       Same dual return (inline image + `path`). Polite. `out` defaults to a temp file.
+    - "deck_pdf": export the whole deck to a PDF at `out` (required) — the "hand
+      back a deliverable" path. A read: a pixel-faithful render of the current
+      unsaved state that does NOT rebind the working file or clear its dirty flag.
+      Overwrites an existing PDF. Returns the written `path` (no inline image).
+    - "save": save the deck to its existing file (explicit; pptlive never
+      auto-saves). Errors if the deck has never been saved — use "save_as" first.
+    - "save_as": save the deck to `out` (required, a .pptx path) and REBIND the
+      working file to it (the open deck becomes that file). Refuses to clobber an
+      existing file unless `overwrite=True`. For PDF use "deck_pdf" (a read).
     - "navigate": move the user's view to `anchor_id`'s slide — a deliberate,
       opt-in view move (every other tool leaves the view alone). With `select=True`
       (default), also selects the target shape. Use only when asked to be taken
@@ -1023,6 +1054,7 @@ def ppt_render(
         "doc": doc,
         "slides": slides,
         "max_dim": max_dim,
+        "overwrite": overwrite,
     }
     with _mcp_errors(), attach() as ppt:
         result = _render_core(ppt, op, params)

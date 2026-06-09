@@ -103,6 +103,26 @@ class SlideShowNotRunningError(PptliveError):
         super().__init__("no slide show is running; start one with show.start() first")
 
 
+class UnsavedPresentationError(PptliveError):
+    """`deck.save()` was called on a deck that has never been saved (no path yet).
+
+    A precondition failure, not a missing anchor, so it maps to the general exit
+    code (1). The 2026-06-09 spike found PowerPoint's `Presentation.Save()` does
+    *not* raise on a never-saved deck — on a OneDrive/SharePoint-backed build it
+    silently uploads to the user's default cloud location. So `save()` guards in
+    Python on an empty `Presentation.Path` and raises this instead of letting the
+    deck escape somewhere the caller didn't choose. Fix: call
+    `save_as(path)` (or `export_pdf(path)`) with an explicit destination first.
+    """
+
+    def __init__(self, name: str | None = None) -> None:
+        target = f": {name}" if name else ""
+        super().__init__(
+            f"presentation has never been saved{target}; use save_as(path) to choose a destination"
+        )
+        self.name = name
+
+
 class AmbiguousMatchError(PptliveError):
     """A query matched more than one candidate without a disambiguator.
 

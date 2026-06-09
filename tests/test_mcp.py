@@ -69,7 +69,7 @@ def test_tool_schema_marks_required_args() -> None:
     write_mode = tools["ppt_edit"].inputSchema["properties"]["mode"]
     assert write_mode["enum"] == ["set", "insert_after", "insert_before"]
     render_ops = set(tools["ppt_render"].inputSchema["properties"]["op"]["enum"])
-    assert "deck_snapshot" in render_ops
+    assert {"deck_snapshot", "deck_pdf", "save", "save_as"} <= render_ops
 
 
 def test_structured_output_not_wrapped_under_result(fake_powerpoint: Any) -> None:
@@ -877,6 +877,81 @@ def test_navigate_moves_the_view(fake_powerpoint: Any) -> None:
     out = ppt_render("navigate", anchor_id="shape:2:1")
     assert out["ok"] is True
     assert fake_powerpoint._viewed == 2
+
+
+# ---------------------------------------------------------------------------
+# Save / export (ppt_render op=deck_pdf|save|save_as)
+# ---------------------------------------------------------------------------
+
+
+def test_deck_pdf_writes_and_never_embeds(fake_powerpoint: Any, tmp_path: Any) -> None:
+    # A PDF carries `path` like an image op, but its format is "pdf" — it must NOT
+    # be read back and mis-encoded as an inline image block.
+    out = tmp_path / "deck.pdf"
+    res = ppt_render("deck_pdf", out=str(out))
+    assert not isinstance(res, CallToolResult)  # plain dict, no image embedding
+    assert res["ok"] is True
+    assert res["path"] == str(out.resolve())
+    assert out.read_bytes().startswith(b"%PDF-")
+
+
+def test_deck_pdf_requires_out(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError, match="requires `out`"):
+        ppt_render("deck_pdf")
+
+
+def test_save_clears_dirty_flag(fake_powerpoint: Any) -> None:
+    fake_powerpoint.ActivePresentation.Saved = 0
+    out = ppt_render("save")
+    assert out["ok"] is True and out["saved"] is True
+    assert fake_powerpoint.ActivePresentation.Saved == -1
+
+
+def test_save_never_saved_is_error(fake_powerpoint: Any) -> None:
+    fake_powerpoint.ActivePresentation.FullName = "Presentation1"
+    with pytest.raises(ToolError, match="never been saved"):
+        ppt_render("save")
+
+
+def test_save_as_writes_pptx_and_rebinds(fake_powerpoint: Any, tmp_path: Any) -> None:
+    out = tmp_path / "copy.pptx"
+    res = ppt_render("save_as", out=str(out))
+    assert res["ok"] is True
+    assert res["path"] == str(out.resolve())
+    assert out.read_bytes().startswith(b"PK\x03\x04")
+    assert fake_powerpoint.ActivePresentation.FullName == str(out.resolve())
+
+
+def test_save_as_refuses_overwrite(fake_powerpoint: Any, tmp_path: Any) -> None:
+    out = tmp_path / "copy.pptx"
+    out.write_bytes(b"old")
+    with pytest.raises(ToolError, match="invalid_args"):
+        ppt_render("save_as", out=str(out))
+    assert out.read_bytes() == b"old"
+    res = ppt_render("save_as", out=str(out), overwrite=True)
+    assert res["ok"] is True
+    assert out.read_bytes().startswith(b"PK\x03\x04")
+
+
+def test_deck_pdf_in_batch_does_not_break_image_embedding(
+    fake_powerpoint: Any, tmp_path: Any
+) -> None:
+    # A batch mixing a slide_image (embeds) with a deck_pdf (no image): the PDF's
+    # path must be skipped by _render_reply, the slide image still embedded.
+    out_png = tmp_path / "s.png"
+    out_pdf = tmp_path / "d.pdf"
+    res = ppt_batch(
+        [
+            {"tool": "render", "op": "slide_image", "slide": 1, "out": str(out_png)},
+            {"tool": "render", "op": "deck_pdf", "out": str(out_pdf)},
+        ]
+    )
+    assert isinstance(res, CallToolResult)
+    images = [c for c in res.content if isinstance(c, ImageContent)]
+    assert len(images) == 1  # only the PNG, not the PDF
+    assert out_pdf.read_bytes().startswith(b"%PDF-")
+    assert res.structuredContent is not None
+    assert all(r["ok"] for r in res.structuredContent["results"])
 
 
 # ---------------------------------------------------------------------------

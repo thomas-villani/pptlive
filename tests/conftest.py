@@ -16,6 +16,7 @@ same object, the way the real COM property does.
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
@@ -1663,11 +1664,51 @@ class _FakePresentation:
     ) -> None:
         self.Name = name
         self.FullName = full_name
+        # MsoTriState: -1 (msoTrue) = no unsaved changes, 0 (msoFalse) = dirty.
+        # A freshly-opened deck is clean; tests dirty it via `pres.Saved = 0`.
+        self.Saved = -1
         self.Slides = _FakeSlides(slides)
         self.PageSetup = SimpleNamespace(SlideWidth=slide_width, SlideHeight=slide_height)
         self.SlideMaster = _FakeSlideMaster(layout_names)
         self._show_settings = _FakeSlideShowSettings(self)
         self._show_window: _FakeSlideShowWindow | None = None
+
+    @property
+    def Path(self) -> str:
+        """The deck's folder — `""` for a never-saved deck (bare `FullName`).
+
+        Mirrors real COM: `Presentation.Path` is the directory of `FullName`, or
+        empty when the deck has never been saved (its `FullName` is just a name
+        like ``"Presentation1"``). `save()` reads this to refuse a path-less save.
+        """
+        full = str(self.FullName)
+        return os.path.dirname(full) if (os.sep in full or "/" in full) else ""
+
+    def Save(self) -> None:
+        """Persist to the existing file — here, just clear the dirty flag.
+
+        The wrapper guards on an empty `Path` before calling this, so a fake
+        never-saved `Save()` is never exercised through `deck.save()`.
+        """
+        self.Saved = -1
+
+    def SaveAs(self, FileName: str, FileFormat: int = 24) -> None:  # noqa: N803 (COM name)
+        """Write a stand-in file at `FileName`; rebind for pptx, export for PDF.
+
+        Mirrors the 2026-06-09 spike's verified behavior: SaveAs to the Open XML
+        format (24) rebinds the working file (`FullName`/`Path` follow) and marks
+        the deck clean; SaveAs to PDF (32) writes the PDF but leaves `FullName`,
+        `Path`, and the dirty flag untouched (a pure export).
+        """
+        fmt = int(FileFormat)
+        if fmt == 32:  # ppSaveAsPDF — export, no rebind, dirty flag preserved
+            with open(FileName, "wb") as fh:
+                fh.write(b"%PDF-1.4\n%fake pptlive pdf\n")
+            return
+        with open(FileName, "wb") as fh:  # pptx-family — a zip signature
+            fh.write(b"PK\x03\x04fake pptlive pptx")
+        self.FullName = str(FileName)
+        self.Saved = -1
 
     @property
     def SlideShowSettings(self) -> _FakeSlideShowSettings:
