@@ -198,8 +198,18 @@ def test_shape_add_autoshape_with_text(fake_powerpoint) -> None:  # type: ignore
     # the textbox branch passed it through, while MCP shape_add did set it).
     result = CliRunner().invoke(
         main,
-        ["shape", "add", "--slide", "3", "--kind", "shape", "--shape-type", "rectangle",
-         "--text", "Hello"],
+        [
+            "shape",
+            "add",
+            "--slide",
+            "3",
+            "--kind",
+            "shape",
+            "--shape-type",
+            "rectangle",
+            "--text",
+            "Hello",
+        ],
     )
     assert result.exit_code == 0
     new = fake_powerpoint.ActivePresentation.Slides(3).Shapes(3)

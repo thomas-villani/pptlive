@@ -18,9 +18,11 @@ find/replace arrives in a later stage.
 from __future__ import annotations
 
 import base64
+import functools
 import json
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +55,35 @@ def _pick_deck(ppt: Any, doc_name: str | None) -> Presentation:
     if doc_name is None:
         return ppt.presentations.active
     return ppt.presentations[doc_name]
+
+
+def _deck_command(fn: Callable[..., None]) -> Callable[..., None]:
+    """Wrap a command body ``fn(ctx, deck, **opts)`` in the standard scaffold.
+
+    Owns the envelope every deck command repeats: open PowerPoint (``attach``),
+    pick the ``--doc`` deck (``_pick_deck``), and route ``PptliveError`` through
+    the ``_run`` error boundary (stderr + exit code). The body receives the
+    resolved ``deck`` and opens its own ``with deck.edit(label):`` fence for
+    mutations — those labels are hand-tuned/dynamic and the read-before-fence /
+    emit-after-fence shape is the meaningful part, so the fence stays in the body.
+
+    Replaces the per-command ``def go(): with attach() as ppt: deck =
+    _pick_deck(...); ...; _run(ctx, go)`` boilerplate. Apply it as the innermost
+    decorator (directly above ``def``); ``@click.option``s stay above it.
+    Commands that don't pick a deck (``status``, the offline ``llm-help`` /
+    ``install-*``) stay un-decorated.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(ctx: click.Context, **kwargs: Any) -> None:
+        def go() -> None:
+            with attach() as ppt:
+                deck = _pick_deck(ppt, ctx.obj["doc_name"])
+                fn(ctx, deck, **kwargs)
+
+        _run(ctx, go)
+
+    return click.pass_context(wrapper)
 
 
 # ---------------------------------------------------------------------------
@@ -412,9 +443,10 @@ def _parse_slides_range(
     show_default=True,
     help="Image format.",
 )
-@click.pass_context
+@_deck_command
 def snapshot_cmd(
     ctx: click.Context,
+    deck: Presentation,
     slide: int | None,
     slides_range: str | None,
     out: Path | None,
@@ -435,48 +467,42 @@ def snapshot_cmd(
     except ValueError as exc:
         click.echo(f"error: {exc}", err=True)
         sys.exit(1)
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            snaps = deck.snapshot(out, slides=selector, fmt=fmt, max_dim=max_dim)
-            images = [
-                {
-                    "slide": s.slide,
-                    "bytes": len(s.png),
-                    **(
-                        {"path": str(s.path)}
-                        if s.path is not None
-                        else {"base64": base64.b64encode(s.png).decode("ascii")}
-                    ),
-                }
-                for s in snaps
-            ]
-            sel_text = (
-                f"slide {slide}"
-                if slide is not None
-                else (f"slides {slides_range}" if slides_range else "all slides")
-            )
-            payload = {
-                "ok": True,
-                "selector": sel_text,
-                "count": len(snaps),
-                "format": fmt,
-                "max_dim": max_dim,
-                "images": images,
-            }
-            written = [str(s.path) for s in snaps if s.path is not None]
-            emit(
-                payload,
-                as_text=not ctx.obj["as_json"],
-                text=(
-                    f"snapshot: {len(snaps)} slide(s) -> " + ", ".join(written)
-                    if written
-                    else f"snapshot: {len(snaps)} slide(s) (base64 inline)"
-                ),
-            )
-
-    _run(ctx, go)
+    snaps = deck.snapshot(out, slides=selector, fmt=fmt, max_dim=max_dim)
+    images = [
+        {
+            "slide": s.slide,
+            "bytes": len(s.png),
+            **(
+                {"path": str(s.path)}
+                if s.path is not None
+                else {"base64": base64.b64encode(s.png).decode("ascii")}
+            ),
+        }
+        for s in snaps
+    ]
+    sel_text = (
+        f"slide {slide}"
+        if slide is not None
+        else (f"slides {slides_range}" if slides_range else "all slides")
+    )
+    payload = {
+        "ok": True,
+        "selector": sel_text,
+        "count": len(snaps),
+        "format": fmt,
+        "max_dim": max_dim,
+        "images": images,
+    }
+    written = [str(s.path) for s in snaps if s.path is not None]
+    emit(
+        payload,
+        as_text=not ctx.obj["as_json"],
+        text=(
+            f"snapshot: {len(snaps)} slide(s) -> " + ", ".join(written)
+            if written
+            else f"snapshot: {len(snaps)} slide(s) (base64 inline)"
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -487,24 +513,18 @@ def snapshot_cmd(
 
 
 @click.command(name="save")
-@click.pass_context
-def save_cmd(ctx: click.Context) -> None:
+@_deck_command
+def save_cmd(ctx: click.Context, deck: Presentation) -> None:
     """Save the deck to its existing file (explicit; pptlive never auto-saves).
 
     Fails (exit 1) if the deck has never been saved — use `save-as PATH` first.
     """
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            path = deck.save()
-            emit(
-                {"ok": True, "path": path, "saved": True},
-                as_text=not ctx.obj["as_json"],
-                text=f"saved {path}",
-            )
-
-    _run(ctx, go)
+    path = deck.save()
+    emit(
+        {"ok": True, "path": path, "saved": True},
+        as_text=not ctx.obj["as_json"],
+        text=f"saved {path}",
+    )
 
 
 @click.command(name="save-as")
@@ -523,54 +543,44 @@ def save_cmd(ctx: click.Context) -> None:
     default=False,
     help="Allow overwriting an existing file (default: refuse).",
 )
-@click.pass_context
-def save_as_cmd(ctx: click.Context, path: Path, fmt: str, overwrite: bool) -> None:
+@_deck_command
+def save_as_cmd(
+    ctx: click.Context, deck: Presentation, path: Path, fmt: str, overwrite: bool
+) -> None:
     """Save the deck to PATH and rebind the working file to it (explicit).
 
     After this the open deck *is* PATH (its name/path follow), matching
     PowerPoint's Save-As. Refuses to clobber an existing file unless `--overwrite`.
     For PDF, use `export-pdf` (a read — it doesn't rebind the working file).
     """
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            written = deck.save_as(path, fmt=fmt, overwrite=overwrite)
-            emit(
-                {"ok": True, "path": written, "format": fmt},
-                as_text=not ctx.obj["as_json"],
-                text=f"saved {written}",
-            )
-
     try:
-        _run(ctx, go)
+        written = deck.save_as(path, fmt=fmt, overwrite=overwrite)
     except FileExistsError as exc:
         click.echo(f"error: {exc}", err=True)
         sys.exit(1)
+    emit(
+        {"ok": True, "path": written, "format": fmt},
+        as_text=not ctx.obj["as_json"],
+        text=f"saved {written}",
+    )
 
 
 @click.command(name="export-pdf")
 @click.argument("path", type=click.Path(dir_okay=False, path_type=Path))
-@click.pass_context
-def export_pdf_cmd(ctx: click.Context, path: Path) -> None:
+@_deck_command
+def export_pdf_cmd(ctx: click.Context, deck: Presentation, path: Path) -> None:
     """Export the deck to a PDF at PATH (the "hand back a deliverable" path).
 
     A pixel-faithful render of the deck's current (unsaved) state via PowerPoint's
     PDF engine. A read: it neither rebinds the working file nor clears its dirty
     flag, so your `.pptx` is untouched. Overwrites an existing PDF.
     """
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            written = deck.export_pdf(path)
-            emit(
-                {"ok": True, "path": written},
-                as_text=not ctx.obj["as_json"],
-                text=f"exported {written}",
-            )
-
-    _run(ctx, go)
+    written = deck.export_pdf(path)
+    emit(
+        {"ok": True, "path": written},
+        as_text=not ctx.obj["as_json"],
+        text=f"exported {written}",
+    )
 
 
 def register(group: click.Group) -> None:
@@ -639,17 +649,11 @@ def status(ctx: click.Context) -> None:
 
 
 @click.command(name="slides")
-@click.pass_context
-def slides_cmd(ctx: click.Context) -> None:
+@_deck_command
+def slides_cmd(ctx: click.Context, deck: Presentation) -> None:
     """List every slide: index, id, layout, title, shape count, has-notes."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            rows = deck.slides.list()
-            emit(rows, as_text=not ctx.obj["as_json"], text=_fmt_slides(rows))
-
-    _run(ctx, go)
+    rows = deck.slides.list()
+    emit(rows, as_text=not ctx.obj["as_json"], text=_fmt_slides(rows))
 
 
 # ---------------------------------------------------------------------------
@@ -658,17 +662,11 @@ def slides_cmd(ctx: click.Context) -> None:
 
 
 @click.command(name="outline")
-@click.pass_context
-def outline(ctx: click.Context) -> None:
+@_deck_command
+def outline(ctx: click.Context, deck: Presentation) -> None:
     """Print the title + body bullets of every slide (the Outline-view analog)."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            items = deck.outline()
-            emit(items, as_text=not ctx.obj["as_json"], text=_fmt_outline(items))
-
-    _run(ctx, go)
+    items = deck.outline()
+    emit(items, as_text=not ctx.obj["as_json"], text=_fmt_outline(items))
 
 
 # ---------------------------------------------------------------------------
@@ -683,31 +681,19 @@ def slide() -> None:
 
 @slide.command(name="read")
 @click.argument("index", type=int)
-@click.pass_context
-def slide_read(ctx: click.Context, index: int) -> None:
+@_deck_command
+def slide_read(ctx: click.Context, deck: Presentation, index: int) -> None:
     """Read every shape on slide INDEX: anchor_id, name, type, geometry, text."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            grid = deck.slides[index].read()
-            emit(grid, as_text=not ctx.obj["as_json"], text=_fmt_slide_read(grid))
-
-    _run(ctx, go)
+    grid = deck.slides[index].read()
+    emit(grid, as_text=not ctx.obj["as_json"], text=_fmt_slide_read(grid))
 
 
 @slide.command(name="layouts")
-@click.pass_context
-def slide_layouts(ctx: click.Context) -> None:
+@_deck_command
+def slide_layouts(ctx: click.Context, deck: Presentation) -> None:
     """List the deck's slide layouts (the names `add`/`set-layout` accept)."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            rows = deck.layouts()
-            emit(rows, as_text=not ctx.obj["as_json"], text=_fmt_layouts(rows))
-
-    _run(ctx, go)
+    rows = deck.layouts()
+    emit(rows, as_text=not ctx.obj["as_json"], text=_fmt_layouts(rows))
 
 
 @slide.command(name="export")
@@ -729,9 +715,10 @@ def slide_layouts(ctx: click.Context) -> None:
     show_default=True,
     help="Image format.",
 )
-@click.pass_context
+@_deck_command
 def slide_export(
     ctx: click.Context,
+    deck: Presentation,
     slide_index: int,
     out: str | None,
     width: int | None,
@@ -744,26 +731,20 @@ def slide_export(
     Prints the absolute path; pass `--width`/`--height` for a specific pixel size
     (one is enough — the other follows the slide's aspect ratio).
     """
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            path = deck.slides[slide_index].export_image(out, width=width, height=height, fmt=fmt)
-            payload = {
-                "ok": True,
-                "slide": slide_index,
-                "path": str(path),
-                "format": fmt,
-                "width": width,
-                "height": height,
-            }
-            emit(
-                payload,
-                as_text=not ctx.obj["as_json"],
-                text=f"exported slide {slide_index} -> {path}",
-            )
-
-    _run(ctx, go)
+    path = deck.slides[slide_index].export_image(out, width=width, height=height, fmt=fmt)
+    payload = {
+        "ok": True,
+        "slide": slide_index,
+        "path": str(path),
+        "format": fmt,
+        "width": width,
+        "height": height,
+    }
+    emit(
+        payload,
+        as_text=not ctx.obj["as_json"],
+        text=f"exported slide {slide_index} -> {path}",
+    )
 
 
 @slide.command(name="add")
@@ -775,70 +756,54 @@ def slide_export(
 @click.option(
     "--index", "index", type=int, default=None, help="1-based insertion position (default: end)."
 )
-@click.pass_context
-def slide_add(ctx: click.Context, layout: str | None, index: int | None) -> None:
+@_deck_command
+def slide_add(
+    ctx: click.Context, deck: Presentation, layout: str | None, index: int | None
+) -> None:
     """Add a slide; print its index, id, and layout."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            with deck.edit(f"CLI: add slide ({layout or 'default'})"):
-                new = deck.slides.add(layout=layout, index=index)
-            payload = {"ok": True, "index": new.index, "id": new.id, "layout": new.layout_name}
-            emit(
-                payload,
-                as_text=not ctx.obj["as_json"],
-                text=f"added slide {new.index} ({new.layout_name})",
-            )
-
-    _run(ctx, go)
+    with deck.edit(f"CLI: add slide ({layout or 'default'})"):
+        new = deck.slides.add(layout=layout, index=index)
+    payload = {"ok": True, "index": new.index, "id": new.id, "layout": new.layout_name}
+    emit(
+        payload,
+        as_text=not ctx.obj["as_json"],
+        text=f"added slide {new.index} ({new.layout_name})",
+    )
 
 
 @slide.command(name="delete")
 @click.option(
     "--slide", "slide_index", type=int, required=True, help="1-based slide index to delete."
 )
-@click.pass_context
-def slide_delete(ctx: click.Context, slide_index: int) -> None:
+@_deck_command
+def slide_delete(ctx: click.Context, deck: Presentation, slide_index: int) -> None:
     """Delete a slide."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            target = deck.slides[slide_index]  # exit 2 here if out of range
-            with deck.edit(f"CLI: delete slide {slide_index}"):
-                target.delete()
-            emit(
-                {"ok": True, "deleted": slide_index},
-                as_text=not ctx.obj["as_json"],
-                text=f"deleted slide {slide_index}",
-            )
-
-    _run(ctx, go)
+    target = deck.slides[slide_index]  # exit 2 here if out of range
+    with deck.edit(f"CLI: delete slide {slide_index}"):
+        target.delete()
+    emit(
+        {"ok": True, "deleted": slide_index},
+        as_text=not ctx.obj["as_json"],
+        text=f"deleted slide {slide_index}",
+    )
 
 
 @slide.command(name="duplicate")
 @click.option(
     "--slide", "slide_index", type=int, required=True, help="1-based slide index to duplicate."
 )
-@click.pass_context
-def slide_duplicate(ctx: click.Context, slide_index: int) -> None:
+@_deck_command
+def slide_duplicate(ctx: click.Context, deck: Presentation, slide_index: int) -> None:
     """Duplicate a slide; print the copy's index and id."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            target = deck.slides[slide_index]
-            with deck.edit(f"CLI: duplicate slide {slide_index}"):
-                new = target.duplicate()
-            payload = {"ok": True, "index": new.index, "id": new.id, "from": slide_index}
-            emit(
-                payload,
-                as_text=not ctx.obj["as_json"],
-                text=f"duplicated slide {slide_index} -> {new.index}",
-            )
-
-    _run(ctx, go)
+    target = deck.slides[slide_index]
+    with deck.edit(f"CLI: duplicate slide {slide_index}"):
+        new = target.duplicate()
+    payload = {"ok": True, "index": new.index, "id": new.id, "from": slide_index}
+    emit(
+        payload,
+        as_text=not ctx.obj["as_json"],
+        text=f"duplicated slide {slide_index} -> {new.index}",
+    )
 
 
 @slide.command(name="move")
@@ -846,24 +811,18 @@ def slide_duplicate(ctx: click.Context, slide_index: int) -> None:
     "--slide", "slide_index", type=int, required=True, help="1-based slide index to move."
 )
 @click.option("--to", "to_index", type=int, required=True, help="1-based destination position.")
-@click.pass_context
-def slide_move(ctx: click.Context, slide_index: int, to_index: int) -> None:
+@_deck_command
+def slide_move(ctx: click.Context, deck: Presentation, slide_index: int, to_index: int) -> None:
     """Move a slide to a new position."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            target = deck.slides[slide_index]
-            with deck.edit(f"CLI: move slide {slide_index} -> {to_index}"):
-                moved = target.move_to(to_index)
-            payload = {"ok": True, "index": moved.index, "id": moved.id}
-            emit(
-                payload,
-                as_text=not ctx.obj["as_json"],
-                text=f"moved slide to position {moved.index}",
-            )
-
-    _run(ctx, go)
+    target = deck.slides[slide_index]
+    with deck.edit(f"CLI: move slide {slide_index} -> {to_index}"):
+        moved = target.move_to(to_index)
+    payload = {"ok": True, "index": moved.index, "id": moved.id}
+    emit(
+        payload,
+        as_text=not ctx.obj["as_json"],
+        text=f"moved slide to position {moved.index}",
+    )
 
 
 @slide.command(name="set-layout")
@@ -871,24 +830,18 @@ def slide_move(ctx: click.Context, slide_index: int, to_index: int) -> None:
 @click.option(
     "--layout", required=True, help="Layout name to apply. See `slide layouts` for names."
 )
-@click.pass_context
-def slide_set_layout(ctx: click.Context, slide_index: int, layout: str) -> None:
+@_deck_command
+def slide_set_layout(ctx: click.Context, deck: Presentation, slide_index: int, layout: str) -> None:
     """Re-apply a slide's layout by name."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            target = deck.slides[slide_index]
-            with deck.edit(f"CLI: set layout of slide {slide_index}"):
-                target.set_layout(layout)
-            payload = {"ok": True, "index": slide_index, "layout": target.layout_name}
-            emit(
-                payload,
-                as_text=not ctx.obj["as_json"],
-                text=f"slide {slide_index} layout -> {target.layout_name}",
-            )
-
-    _run(ctx, go)
+    target = deck.slides[slide_index]
+    with deck.edit(f"CLI: set layout of slide {slide_index}"):
+        target.set_layout(layout)
+    payload = {"ok": True, "index": slide_index, "layout": target.layout_name}
+    emit(
+        payload,
+        as_text=not ctx.obj["as_json"],
+        text=f"slide {slide_index} layout -> {target.layout_name}",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -898,17 +851,11 @@ def slide_set_layout(ctx: click.Context, slide_index: int, layout: str) -> None:
 
 @click.command(name="shapes")
 @click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
-@click.pass_context
-def shapes_cmd(ctx: click.Context, slide_index: int) -> None:
+@_deck_command
+def shapes_cmd(ctx: click.Context, deck: Presentation, slide_index: int) -> None:
     """List the shapes on a slide (anchor_id, name, id, type, geometry, text)."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            rows = deck.slides[slide_index].shapes.list()
-            emit(rows, as_text=not ctx.obj["as_json"], text=_fmt_shapes(rows))
-
-    _run(ctx, go)
+    rows = deck.slides[slide_index].shapes.list()
+    emit(rows, as_text=not ctx.obj["as_json"], text=_fmt_shapes(rows))
 
 
 # ---------------------------------------------------------------------------
@@ -1016,9 +963,10 @@ def _resolve_shape(deck: Presentation, anchor_id: str) -> Shape:
     default=None,
     help="Alternative text for a picture (a drift-proof re-identification handle).",
 )
-@click.pass_context
+@_deck_command
 def shape_add(
     ctx: click.Context,
+    deck: Presentation,
     slide_index: int,
     kind: str,
     text: str | None,
@@ -1041,71 +989,63 @@ def shape_add(
     alt_text: str | None,
 ) -> None:
     """Add a shape to a slide; print its anchor_id, name, type, and geometry."""
-
-    def go() -> None:
-        if kind == "picture" and not path:
-            raise click.UsageError("shape add --kind picture requires --path")
-        if kind == "table" and (rows is None or cols is None):
-            raise click.UsageError("shape add --kind table requires --rows and --cols")
-        cats = _parse_categories(categories)
-        ser = _parse_series(series)
-        if (cats is None) != (ser is None):
-            raise click.UsageError("shape add --kind chart needs both --categories and --series")
-        sa_nodes = _parse_nodes(nodes)
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            shapes = deck.slides[slide_index].shapes  # exit 2 if slide out of range
-            with deck.edit(f"CLI: add {kind} on slide {slide_index}"):
-                if kind == "textbox":
-                    new = shapes.add_textbox(
-                        text or "",
-                        left=left,
-                        top=top,
-                        width=width,
-                        height=height,
-                        fill=fill,
-                        line=line,
-                        line_width=line_width,
-                    )
-                elif kind == "shape":
-                    new = shapes.add_shape(
-                        shape_type,
-                        left=left,
-                        top=top,
-                        width=width,
-                        height=height,
-                        fill=fill,
-                        line=line,
-                        line_width=line_width,
-                    )
-                    if text:
-                        new.set_text(text)
-                elif kind == "table":
-                    assert rows is not None and cols is not None  # guarded above
-                    new = shapes.add_table(
-                        rows, cols, left=left, top=top, width=width, height=height
-                    )
-                elif kind == "chart":
-                    new = shapes.add_chart(
-                        chart_type, cats, ser, left=left, top=top, width=width, height=height
-                    )
-                elif kind == "smartart":
-                    new = shapes.add_smartart(
-                        smartart_kind, sa_nodes, left=left, top=top, width=width, height=height
-                    )
-                else:  # picture
-                    assert path is not None  # guarded above
-                    new = shapes.add_picture(
-                        path, left=left, top=top, width=width, height=height, alt_text=alt_text
-                    )
-            payload = {"ok": True, **new.to_dict()}
-            emit(
-                payload,
-                as_text=not ctx.obj["as_json"],
-                text=f"added {payload['type']} {payload['name']!r} at {payload['anchor_id']}",
+    if kind == "picture" and not path:
+        raise click.UsageError("shape add --kind picture requires --path")
+    if kind == "table" and (rows is None or cols is None):
+        raise click.UsageError("shape add --kind table requires --rows and --cols")
+    cats = _parse_categories(categories)
+    ser = _parse_series(series)
+    if (cats is None) != (ser is None):
+        raise click.UsageError("shape add --kind chart needs both --categories and --series")
+    sa_nodes = _parse_nodes(nodes)
+    shapes = deck.slides[slide_index].shapes  # exit 2 if slide out of range
+    with deck.edit(f"CLI: add {kind} on slide {slide_index}"):
+        if kind == "textbox":
+            new = shapes.add_textbox(
+                text or "",
+                left=left,
+                top=top,
+                width=width,
+                height=height,
+                fill=fill,
+                line=line,
+                line_width=line_width,
             )
-
-    _run(ctx, go)
+        elif kind == "shape":
+            new = shapes.add_shape(
+                shape_type,
+                left=left,
+                top=top,
+                width=width,
+                height=height,
+                fill=fill,
+                line=line,
+                line_width=line_width,
+            )
+            if text:
+                new.set_text(text)
+        elif kind == "table":
+            assert rows is not None and cols is not None  # guarded above
+            new = shapes.add_table(rows, cols, left=left, top=top, width=width, height=height)
+        elif kind == "chart":
+            new = shapes.add_chart(
+                chart_type, cats, ser, left=left, top=top, width=width, height=height
+            )
+        elif kind == "smartart":
+            new = shapes.add_smartart(
+                smartart_kind, sa_nodes, left=left, top=top, width=width, height=height
+            )
+        else:  # picture
+            assert path is not None  # guarded above
+            new = shapes.add_picture(
+                path, left=left, top=top, width=width, height=height, alt_text=alt_text
+            )
+    payload = {"ok": True, **new.to_dict()}
+    emit(
+        payload,
+        as_text=not ctx.obj["as_json"],
+        text=f"added {payload['type']} {payload['name']!r} at {payload['anchor_id']}",
+    )
 
 
 @shape.command(name="move")
@@ -1114,26 +1054,22 @@ def shape_add(
 )
 @click.option("--left", type=float, default=None, help="New left edge (points).")
 @click.option("--top", type=float, default=None, help="New top edge (points).")
-@click.pass_context
-def shape_move(ctx: click.Context, anchor_id: str, left: float | None, top: float | None) -> None:
+@_deck_command
+def shape_move(
+    ctx: click.Context, deck: Presentation, anchor_id: str, left: float | None, top: float | None
+) -> None:
     """Move a shape to an absolute position (points)."""
-
-    def go() -> None:
-        if left is None and top is None:
-            raise click.UsageError("shape move requires --left and/or --top")
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            sh = _resolve_shape(deck, anchor_id)  # exit 2 if missing / not a shape
-            with deck.edit(f"CLI: move {anchor_id}"):
-                sh.move(left=left, top=top)
-            geo = sh.geometry()
-            emit(
-                {"ok": True, "anchor_id": sh.anchor_id, "geometry": geo},
-                as_text=not ctx.obj["as_json"],
-                text=f"moved {sh.anchor_id}: {_fmt_geometry(geo)}",
-            )
-
-    _run(ctx, go)
+    if left is None and top is None:
+        raise click.UsageError("shape move requires --left and/or --top")
+    sh = _resolve_shape(deck, anchor_id)  # exit 2 if missing / not a shape
+    with deck.edit(f"CLI: move {anchor_id}"):
+        sh.move(left=left, top=top)
+    geo = sh.geometry()
+    emit(
+        {"ok": True, "anchor_id": sh.anchor_id, "geometry": geo},
+        as_text=not ctx.obj["as_json"],
+        text=f"moved {sh.anchor_id}: {_fmt_geometry(geo)}",
+    )
 
 
 @shape.command(name="resize")
@@ -1142,52 +1078,44 @@ def shape_move(ctx: click.Context, anchor_id: str, left: float | None, top: floa
 )
 @click.option("--width", type=float, default=None, help="New width (points).")
 @click.option("--height", type=float, default=None, help="New height (points).")
-@click.pass_context
+@_deck_command
 def shape_resize(
-    ctx: click.Context, anchor_id: str, width: float | None, height: float | None
+    ctx: click.Context,
+    deck: Presentation,
+    anchor_id: str,
+    width: float | None,
+    height: float | None,
 ) -> None:
     """Set a shape's size (points)."""
-
-    def go() -> None:
-        if width is None and height is None:
-            raise click.UsageError("shape resize requires --width and/or --height")
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            sh = _resolve_shape(deck, anchor_id)
-            with deck.edit(f"CLI: resize {anchor_id}"):
-                sh.resize(width=width, height=height)
-            geo = sh.geometry()
-            emit(
-                {"ok": True, "anchor_id": sh.anchor_id, "geometry": geo},
-                as_text=not ctx.obj["as_json"],
-                text=f"resized {sh.anchor_id}: {_fmt_geometry(geo)}",
-            )
-
-    _run(ctx, go)
+    if width is None and height is None:
+        raise click.UsageError("shape resize requires --width and/or --height")
+    sh = _resolve_shape(deck, anchor_id)
+    with deck.edit(f"CLI: resize {anchor_id}"):
+        sh.resize(width=width, height=height)
+    geo = sh.geometry()
+    emit(
+        {"ok": True, "anchor_id": sh.anchor_id, "geometry": geo},
+        as_text=not ctx.obj["as_json"],
+        text=f"resized {sh.anchor_id}: {_fmt_geometry(geo)}",
+    )
 
 
 @shape.command(name="delete")
 @click.option(
     "--anchor-id", "anchor_id", required=True, help="Shape to delete (shape:S:N or ph:S:KIND)."
 )
-@click.pass_context
-def shape_delete(ctx: click.Context, anchor_id: str) -> None:
+@_deck_command
+def shape_delete(ctx: click.Context, deck: Presentation, anchor_id: str) -> None:
     """Delete a shape from its slide."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            sh = _resolve_shape(deck, anchor_id)
-            info = {"anchor_id": sh.anchor_id, "name": sh.name, "id": sh.shape_id}
-            with deck.edit(f"CLI: delete {anchor_id}"):
-                sh.delete()
-            emit(
-                {"ok": True, **info},
-                as_text=not ctx.obj["as_json"],
-                text=f"deleted {info['anchor_id']} ({info['name']!r})",
-            )
-
-    _run(ctx, go)
+    sh = _resolve_shape(deck, anchor_id)
+    info = {"anchor_id": sh.anchor_id, "name": sh.name, "id": sh.shape_id}
+    with deck.edit(f"CLI: delete {anchor_id}"):
+        sh.delete()
+    emit(
+        {"ok": True, **info},
+        as_text=not ctx.obj["as_json"],
+        text=f"deleted {info['anchor_id']} ({info['name']!r})",
+    )
 
 
 @shape.command(name="export")
@@ -1209,28 +1137,24 @@ def shape_delete(ctx: click.Context, anchor_id: str) -> None:
     show_default=True,
     help="Image format.",
 )
-@click.pass_context
-def shape_export(ctx: click.Context, anchor_id: str, out: str | None, fmt: str) -> None:
+@_deck_command
+def shape_export(
+    ctx: click.Context, deck: Presentation, anchor_id: str, out: str | None, fmt: str
+) -> None:
     """Render a single shape to an image file — so a vision model can *see* it.
 
     The per-shape complement to `slide export`: crops to the shape's bounds at
     its native pixel size (no size override — `Shape.Export` doesn't honor one
     reliably). Polite (doesn't move the view). Prints the absolute path.
     """
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            sh = _resolve_shape(deck, anchor_id)
-            path = sh.export_image(out, fmt=fmt)
-            payload = {"ok": True, "anchor_id": sh.anchor_id, "path": str(path), "format": fmt}
-            emit(
-                payload,
-                as_text=not ctx.obj["as_json"],
-                text=f"exported {sh.anchor_id} -> {path}",
-            )
-
-    _run(ctx, go)
+    sh = _resolve_shape(deck, anchor_id)
+    path = sh.export_image(out, fmt=fmt)
+    payload = {"ok": True, "anchor_id": sh.anchor_id, "path": str(path), "format": fmt}
+    emit(
+        payload,
+        as_text=not ctx.obj["as_json"],
+        text=f"exported {sh.anchor_id} -> {path}",
+    )
 
 
 @shape.command(name="set-alt")
@@ -1238,23 +1162,17 @@ def shape_export(ctx: click.Context, anchor_id: str, out: str | None, fmt: str) 
     "--anchor-id", "anchor_id", required=True, help="Shape to tag (shape:S:N or ph:S:KIND)."
 )
 @click.option("--alt-text", "alt_text", required=True, help="Alternative (accessibility) text.")
-@click.pass_context
-def shape_set_alt(ctx: click.Context, anchor_id: str, alt_text: str) -> None:
+@_deck_command
+def shape_set_alt(ctx: click.Context, deck: Presentation, anchor_id: str, alt_text: str) -> None:
     """Set a shape's alternative text — a drift-proof re-identification handle."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            sh = _resolve_shape(deck, anchor_id)
-            with deck.edit(f"CLI: set alt-text {anchor_id}"):
-                sh.set_alt_text(alt_text)
-            emit(
-                {"ok": True, "anchor_id": sh.anchor_id, "alt_text": sh.alt_text},
-                as_text=not ctx.obj["as_json"],
-                text=f"set alt-text on {sh.anchor_id}: {alt_text!r}",
-            )
-
-    _run(ctx, go)
+    sh = _resolve_shape(deck, anchor_id)
+    with deck.edit(f"CLI: set alt-text {anchor_id}"):
+        sh.set_alt_text(alt_text)
+    emit(
+        {"ok": True, "anchor_id": sh.anchor_id, "alt_text": sh.alt_text},
+        as_text=not ctx.obj["as_json"],
+        text=f"set alt-text on {sh.anchor_id}: {alt_text!r}",
+    )
 
 
 @shape.command(name="fill")
@@ -1273,32 +1191,27 @@ def shape_set_alt(ctx: click.Context, anchor_id: str, alt_text: str) -> None:
 @click.option(
     "--line-width", "line_width", type=float, default=None, help="Border weight in points."
 )
-@click.pass_context
+@_deck_command
 def shape_fill(
     ctx: click.Context,
+    deck: Presentation,
     anchor_id: str,
     fill: str | None,
     line: str | None,
     line_width: float | None,
 ) -> None:
     """Set a shape's fill and/or line (border) color — distinct from font color."""
-
-    def go() -> None:
-        if fill is None and line is None and line_width is None:
-            raise click.UsageError("shape fill requires --fill, --line, and/or --line-width")
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            sh = _resolve_shape(deck, anchor_id)
-            with deck.edit(f"CLI: fill {anchor_id}"):
-                sh.set_fill(fill=fill, line=line, line_width=line_width)
-            payload = {"ok": True, **sh.to_dict()}
-            emit(
-                payload,
-                as_text=not ctx.obj["as_json"],
-                text=f"styled {sh.anchor_id} (fill={payload['fill']}, line={payload['line']})",
-            )
-
-    _run(ctx, go)
+    if fill is None and line is None and line_width is None:
+        raise click.UsageError("shape fill requires --fill, --line, and/or --line-width")
+    sh = _resolve_shape(deck, anchor_id)
+    with deck.edit(f"CLI: fill {anchor_id}"):
+        sh.set_fill(fill=fill, line=line, line_width=line_width)
+    payload = {"ok": True, **sh.to_dict()}
+    emit(
+        payload,
+        as_text=not ctx.obj["as_json"],
+        text=f"styled {sh.anchor_id} (fill={payload['fill']}, line={payload['line']})",
+    )
 
 
 @shape.command(name="order")
@@ -1315,23 +1228,17 @@ def shape_fill(
     required=True,
     help="front / back / forward / backward.",
 )
-@click.pass_context
-def shape_order(ctx: click.Context, anchor_id: str, to: str) -> None:
+@_deck_command
+def shape_order(ctx: click.Context, deck: Presentation, anchor_id: str, to: str) -> None:
     """Restack a shape in the slide z-order; print its new 1-based position."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            sh = _resolve_shape(deck, anchor_id)
-            with deck.edit(f"CLI: order {anchor_id} {to}"):
-                new_index = sh.reorder(to)
-            emit(
-                {"ok": True, "anchor_id": sh.anchor_id, "name": sh.name, "index": new_index},
-                as_text=not ctx.obj["as_json"],
-                text=f"sent {sh.anchor_id} to {to} (now z-index {new_index})",
-            )
-
-    _run(ctx, go)
+    sh = _resolve_shape(deck, anchor_id)
+    with deck.edit(f"CLI: order {anchor_id} {to}"):
+        new_index = sh.reorder(to)
+    emit(
+        {"ok": True, "anchor_id": sh.anchor_id, "name": sh.name, "index": new_index},
+        as_text=not ctx.obj["as_json"],
+        text=f"sent {sh.anchor_id} to {to} (now z-index {new_index})",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1343,18 +1250,12 @@ def shape_order(ctx: click.Context, anchor_id: str, to: str) -> None:
 @click.option(
     "--anchor-id", "anchor_id", required=True, help="Shape whose paragraphs to list (shape:/ph:)."
 )
-@click.pass_context
-def paragraphs_cmd(ctx: click.Context, anchor_id: str) -> None:
+@_deck_command
+def paragraphs_cmd(ctx: click.Context, deck: Presentation, anchor_id: str) -> None:
     """List a shape's paragraphs: anchor_id (para:S:N:P), text, indent, bullet."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            sh = _resolve_shape(deck, anchor_id)
-            rows = sh.paragraphs.list()
-            emit(rows, as_text=not ctx.obj["as_json"], text=_fmt_paragraphs(rows))
-
-    _run(ctx, go)
+    sh = _resolve_shape(deck, anchor_id)
+    rows = sh.paragraphs.list()
+    emit(rows, as_text=not ctx.obj["as_json"], text=_fmt_paragraphs(rows))
 
 
 @click.command(name="insert")
@@ -1367,30 +1268,24 @@ def paragraphs_cmd(ctx: click.Context, anchor_id: str) -> None:
     show_default=True,
     help="Insert the new paragraph after (default) or before the anchor.",
 )
-@click.pass_context
-def insert(ctx: click.Context, anchor_id: str, text: str, after: bool) -> None:
+@_deck_command
+def insert(ctx: click.Context, deck: Presentation, anchor_id: str, text: str, after: bool) -> None:
     """Insert a new paragraph before/after a text anchor (para:/ph:/shape:/notes:)."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            anchor = deck.anchor_by_id(anchor_id)
-            with deck.edit(f"CLI: insert paragraph at {anchor_id}"):
-                if after:
-                    anchor.insert_paragraph_after(text)
-                else:
-                    anchor.insert_paragraph_before(text)
-            emit(
-                {
-                    "ok": True,
-                    "anchor_id": anchor.anchor_id,
-                    "where": "after" if after else "before",
-                },
-                as_text=not ctx.obj["as_json"],
-                text=f"inserted paragraph {'after' if after else 'before'} {anchor.anchor_id}",
-            )
-
-    _run(ctx, go)
+    anchor = deck.anchor_by_id(anchor_id)
+    with deck.edit(f"CLI: insert paragraph at {anchor_id}"):
+        if after:
+            anchor.insert_paragraph_after(text)
+        else:
+            anchor.insert_paragraph_before(text)
+    emit(
+        {
+            "ok": True,
+            "anchor_id": anchor.anchor_id,
+            "where": "after" if after else "before",
+        },
+        as_text=not ctx.obj["as_json"],
+        text=f"inserted paragraph {'after' if after else 'before'} {anchor.anchor_id}",
+    )
 
 
 @click.command(name="format-paragraph")
@@ -1402,9 +1297,10 @@ def insert(ctx: click.Context, anchor_id: str, text: str, after: bool) -> None:
 @click.option(
     "--indent-level", type=click.IntRange(1, 5), default=None, help="Outline/bullet level (1-5)."
 )
-@click.pass_context
+@_deck_command
 def format_paragraph(
     ctx: click.Context,
+    deck: Presentation,
     anchor_id: str,
     alignment: str | None,
     space_before: float | None,
@@ -1413,30 +1309,22 @@ def format_paragraph(
     indent_level: int | None,
 ) -> None:
     """Set paragraph formatting (alignment, spacing, indent level) on a text anchor."""
-
-    def go() -> None:
-        if all(
-            v is None for v in (alignment, space_before, space_after, line_spacing, indent_level)
-        ):
-            raise click.UsageError("format-paragraph requires at least one formatting option")
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            anchor = deck.anchor_by_id(anchor_id)
-            with deck.edit(f"CLI: format paragraph {anchor_id}"):
-                anchor.format_paragraph(
-                    alignment=alignment,
-                    space_before=space_before,
-                    space_after=space_after,
-                    line_spacing=line_spacing,
-                    indent_level=indent_level,
-                )
-            emit(
-                {"ok": True, "anchor_id": anchor.anchor_id},
-                as_text=not ctx.obj["as_json"],
-                text=f"formatted {anchor.anchor_id}",
-            )
-
-    _run(ctx, go)
+    if all(v is None for v in (alignment, space_before, space_after, line_spacing, indent_level)):
+        raise click.UsageError("format-paragraph requires at least one formatting option")
+    anchor = deck.anchor_by_id(anchor_id)
+    with deck.edit(f"CLI: format paragraph {anchor_id}"):
+        anchor.format_paragraph(
+            alignment=alignment,
+            space_before=space_before,
+            space_after=space_after,
+            line_spacing=line_spacing,
+            indent_level=indent_level,
+        )
+    emit(
+        {"ok": True, "anchor_id": anchor.anchor_id},
+        as_text=not ctx.obj["as_json"],
+        text=f"formatted {anchor.anchor_id}",
+    )
 
 
 @click.command(name="format-text")
@@ -1447,9 +1335,10 @@ def format_paragraph(
 @click.option("--size", type=float, default=None, help="Font size (points).")
 @click.option("--font", "font", default=None, help="Font name (e.g. 'Arial').")
 @click.option("--color", "color", default=None, help="Font color, '#RRGGBB'.")
-@click.pass_context
+@_deck_command
 def format_text(
     ctx: click.Context,
+    deck: Presentation,
     anchor_id: str,
     bold: bool | None,
     italic: bool | None,
@@ -1463,29 +1352,23 @@ def format_text(
     PowerPoint's analog of `style apply` — it has no named paragraph styles, so
     styling is direct font formatting.
     """
-
-    def go() -> None:
-        if all(v is None for v in (bold, italic, underline, size, font, color)):
-            raise click.UsageError("format-text requires at least one formatting option")
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            anchor = deck.anchor_by_id(anchor_id)
-            with deck.edit(f"CLI: format text {anchor_id}"):
-                anchor.format_text(
-                    bold=bold,
-                    italic=italic,
-                    underline=underline,
-                    size=size,
-                    font=font,
-                    color=color,
-                )
-            emit(
-                {"ok": True, "anchor_id": anchor.anchor_id},
-                as_text=not ctx.obj["as_json"],
-                text=f"formatted text of {anchor.anchor_id}",
-            )
-
-    _run(ctx, go)
+    if all(v is None for v in (bold, italic, underline, size, font, color)):
+        raise click.UsageError("format-text requires at least one formatting option")
+    anchor = deck.anchor_by_id(anchor_id)
+    with deck.edit(f"CLI: format text {anchor_id}"):
+        anchor.format_text(
+            bold=bold,
+            italic=italic,
+            underline=underline,
+            size=size,
+            font=font,
+            color=color,
+        )
+    emit(
+        {"ok": True, "anchor_id": anchor.anchor_id},
+        as_text=not ctx.obj["as_json"],
+        text=f"formatted text of {anchor.anchor_id}",
+    )
 
 
 @click.group(name="list")
@@ -1504,46 +1387,36 @@ def list_cmd() -> None:
     help="List type.",
 )
 @click.option("--char", "char", default=None, help="Custom bullet character (bulleted only).")
-@click.pass_context
-def list_apply(ctx: click.Context, anchor_id: str, list_type: str, char: str | None) -> None:
+@_deck_command
+def list_apply(
+    ctx: click.Context, deck: Presentation, anchor_id: str, list_type: str, char: str | None
+) -> None:
     """Turn a text anchor's paragraphs into a bulleted or numbered list."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            anchor = deck.anchor_by_id(anchor_id)
-            with deck.edit(f"CLI: apply {list_type} list to {anchor_id}"):
-                anchor.apply_list(list_type, character=char)
-            emit(
-                {"ok": True, "anchor_id": anchor.anchor_id, "type": list_type},
-                as_text=not ctx.obj["as_json"],
-                text=f"applied {list_type} list to {anchor.anchor_id}",
-            )
-
-    _run(ctx, go)
+    anchor = deck.anchor_by_id(anchor_id)
+    with deck.edit(f"CLI: apply {list_type} list to {anchor_id}"):
+        anchor.apply_list(list_type, character=char)
+    emit(
+        {"ok": True, "anchor_id": anchor.anchor_id, "type": list_type},
+        as_text=not ctx.obj["as_json"],
+        text=f"applied {list_type} list to {anchor.anchor_id}",
+    )
 
 
 @list_cmd.command(name="remove")
 @click.option(
     "--anchor-id", "anchor_id", required=True, help="Text anchor to strip list formatting."
 )
-@click.pass_context
-def list_remove(ctx: click.Context, anchor_id: str) -> None:
+@_deck_command
+def list_remove(ctx: click.Context, deck: Presentation, anchor_id: str) -> None:
     """Strip bullets / numbering from a text anchor's paragraphs."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            anchor = deck.anchor_by_id(anchor_id)
-            with deck.edit(f"CLI: remove list from {anchor_id}"):
-                anchor.remove_list()
-            emit(
-                {"ok": True, "anchor_id": anchor.anchor_id},
-                as_text=not ctx.obj["as_json"],
-                text=f"removed list from {anchor.anchor_id}",
-            )
-
-    _run(ctx, go)
+    anchor = deck.anchor_by_id(anchor_id)
+    with deck.edit(f"CLI: remove list from {anchor_id}"):
+        anchor.remove_list()
+    emit(
+        {"ok": True, "anchor_id": anchor.anchor_id},
+        as_text=not ctx.obj["as_json"],
+        text=f"removed list from {anchor.anchor_id}",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1566,17 +1439,11 @@ def _resolve_table(deck: Presentation, slide_index: int, shape_index: int) -> An
 @click.option(
     "--shape", "shape_index", type=int, required=True, help="1-based shape z-order index."
 )
-@click.pass_context
-def table_read(ctx: click.Context, slide_index: int, shape_index: int) -> None:
+@_deck_command
+def table_read(ctx: click.Context, deck: Presentation, slide_index: int, shape_index: int) -> None:
     """Read a table as a grid of cells, each carrying its cell:S:N:R:C anchor."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            grid = _resolve_table(deck, slide_index, shape_index).read()
-            emit(grid, as_text=not ctx.obj["as_json"], text=_fmt_table_read(grid))
-
-    _run(ctx, go)
+    grid = _resolve_table(deck, slide_index, shape_index).read()
+    emit(grid, as_text=not ctx.obj["as_json"], text=_fmt_table_read(grid))
 
 
 @table.command(name="add-row")
@@ -1587,9 +1454,9 @@ def table_read(ctx: click.Context, slide_index: int, shape_index: int) -> None:
 @click.option(
     "--values", "values", default=None, help="Optional JSON array of cell values for the new row."
 )
-@click.pass_context
+@_deck_command
 def table_add_row(
-    ctx: click.Context, slide_index: int, shape_index: int, values: str | None
+    ctx: click.Context, deck: Presentation, slide_index: int, shape_index: int, values: str | None
 ) -> None:
     """Append a row to a table (one Ctrl-Z)."""
     parsed: list[Any] | None = None
@@ -1600,20 +1467,14 @@ def table_add_row(
             raise click.UsageError(f"--values must be a JSON array: {e}") from e
         if not isinstance(parsed, list):
             raise click.UsageError("--values must be a JSON array")
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            t = _resolve_table(deck, slide_index, shape_index)
-            with deck.edit(f"CLI: add row to table shape:{slide_index}:{shape_index}"):
-                t.add_row(parsed)
-            emit(
-                {"ok": True, "anchor_id": t.shape.anchor_id, "rows": t.row_count},
-                as_text=not ctx.obj["as_json"],
-                text=f"added row to {t.shape.anchor_id} (now {t.row_count} rows)",
-            )
-
-    _run(ctx, go)
+    t = _resolve_table(deck, slide_index, shape_index)
+    with deck.edit(f"CLI: add row to table shape:{slide_index}:{shape_index}"):
+        t.add_row(parsed)
+    emit(
+        {"ok": True, "anchor_id": t.shape.anchor_id, "rows": t.row_count},
+        as_text=not ctx.obj["as_json"],
+        text=f"added row to {t.shape.anchor_id} (now {t.row_count} rows)",
+    )
 
 
 @table.command(name="delete-row")
@@ -1622,23 +1483,19 @@ def table_add_row(
     "--shape", "shape_index", type=int, required=True, help="1-based shape z-order index."
 )
 @click.option("--row", "row", type=int, required=True, help="1-based row to delete.")
-@click.pass_context
-def table_delete_row(ctx: click.Context, slide_index: int, shape_index: int, row: int) -> None:
+@_deck_command
+def table_delete_row(
+    ctx: click.Context, deck: Presentation, slide_index: int, shape_index: int, row: int
+) -> None:
     """Delete a row from a table (one Ctrl-Z)."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            t = _resolve_table(deck, slide_index, shape_index)
-            with deck.edit(f"CLI: delete row {row} from table shape:{slide_index}:{shape_index}"):
-                t.delete_row(row)
-            emit(
-                {"ok": True, "anchor_id": t.shape.anchor_id, "rows": t.row_count},
-                as_text=not ctx.obj["as_json"],
-                text=f"deleted row {row} from {t.shape.anchor_id} (now {t.row_count} rows)",
-            )
-
-    _run(ctx, go)
+    t = _resolve_table(deck, slide_index, shape_index)
+    with deck.edit(f"CLI: delete row {row} from table shape:{slide_index}:{shape_index}"):
+        t.delete_row(row)
+    emit(
+        {"ok": True, "anchor_id": t.shape.anchor_id, "rows": t.row_count},
+        as_text=not ctx.obj["as_json"],
+        text=f"deleted row {row} from {t.shape.anchor_id} (now {t.row_count} rows)",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1661,17 +1518,11 @@ def _resolve_chart(deck: Presentation, slide_index: int, shape_index: int) -> An
 @click.option(
     "--shape", "shape_index", type=int, required=True, help="1-based shape z-order index."
 )
-@click.pass_context
-def chart_read(ctx: click.Context, slide_index: int, shape_index: int) -> None:
+@_deck_command
+def chart_read(ctx: click.Context, deck: Presentation, slide_index: int, shape_index: int) -> None:
     """Read a chart: type, categories, and series (name + values)."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            info = _resolve_chart(deck, slide_index, shape_index).read()
-            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_chart_read(info))
-
-    _run(ctx, go)
+    info = _resolve_chart(deck, slide_index, shape_index).read()
+    emit(info, as_text=not ctx.obj["as_json"], text=_fmt_chart_read(info))
 
 
 @chart.command(name="set-type")
@@ -1686,23 +1537,19 @@ def chart_read(ctx: click.Context, slide_index: int, shape_index: int) -> None:
     required=True,
     help="New chart kind.",
 )
-@click.pass_context
-def chart_set_type(ctx: click.Context, slide_index: int, shape_index: int, chart_type: str) -> None:
+@_deck_command
+def chart_set_type(
+    ctx: click.Context, deck: Presentation, slide_index: int, shape_index: int, chart_type: str
+) -> None:
     """Change a chart's kind (one Ctrl-Z)."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            ch = _resolve_chart(deck, slide_index, shape_index)
-            with deck.edit(f"CLI: set chart type shape:{slide_index}:{shape_index}"):
-                ch.set_type(chart_type)
-            emit(
-                {"ok": True, "anchor_id": ch.shape.anchor_id, "chart_type": ch.chart_type},
-                as_text=not ctx.obj["as_json"],
-                text=f"set {ch.shape.anchor_id} to {ch.chart_type}",
-            )
-
-    _run(ctx, go)
+    ch = _resolve_chart(deck, slide_index, shape_index)
+    with deck.edit(f"CLI: set chart type shape:{slide_index}:{shape_index}"):
+        ch.set_type(chart_type)
+    emit(
+        {"ok": True, "anchor_id": ch.shape.anchor_id, "chart_type": ch.chart_type},
+        as_text=not ctx.obj["as_json"],
+        text=f"set {ch.shape.anchor_id} to {ch.chart_type}",
+    )
 
 
 @chart.command(name="set-data")
@@ -1722,24 +1569,23 @@ def chart_set_type(ctx: click.Context, slide_index: int, shape_index: int, chart
     required=True,
     help='Series as a JSON object {"name":[values]} or array of [name,[values]].',
 )
-@click.pass_context
+@_deck_command
 def chart_set_data(
-    ctx: click.Context, slide_index: int, shape_index: int, categories: str, series: str
+    ctx: click.Context,
+    deck: Presentation,
+    slide_index: int,
+    shape_index: int,
+    categories: str,
+    series: str,
 ) -> None:
     """Replace a chart's data (categories × series; one Ctrl-Z)."""
     cats = _parse_categories(categories)
     ser = _parse_series(series)
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            ch = _resolve_chart(deck, slide_index, shape_index)
-            with deck.edit(f"CLI: set chart data shape:{slide_index}:{shape_index}"):
-                ch.set_data(cats or [], ser)
-            info = ch.read()
-            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_chart_read(info))
-
-    _run(ctx, go)
+    ch = _resolve_chart(deck, slide_index, shape_index)
+    with deck.edit(f"CLI: set chart data shape:{slide_index}:{shape_index}"):
+        ch.set_data(cats or [], ser)
+    info = ch.read()
+    emit(info, as_text=not ctx.obj["as_json"], text=_fmt_chart_read(info))
 
 
 @chart.command(name="recolor-text")
@@ -1754,28 +1600,24 @@ def chart_set_data(
     help='Text color as "#RRGGBB" (or "RRGGBB"). Recolors every shown chart text '
     "element: legend, axis tick labels, title, data labels.",
 )
-@click.pass_context
-def chart_recolor_text(ctx: click.Context, slide_index: int, shape_index: int, color: str) -> None:
+@_deck_command
+def chart_recolor_text(
+    ctx: click.Context, deck: Presentation, slide_index: int, shape_index: int, color: str
+) -> None:
     """Recolor ALL of a chart's text (legend/axes/title/data labels; one Ctrl-Z).
 
     The coarse fix for a chart whose inherited (black) axis/legend text is
     invisible on a custom background — no rebuild from primitives needed.
     """
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            ch = _resolve_chart(deck, slide_index, shape_index)
-            with deck.edit(f"CLI: recolor chart text shape:{slide_index}:{shape_index}"):
-                info = ch.recolor_text(color)
-            emit(
-                info,
-                as_text=not ctx.obj["as_json"],
-                text=f"recolored {info['anchor_id']} text -> {info['color']} "
-                f"({', '.join(info['recolored'])})",
-            )
-
-    _run(ctx, go)
+    ch = _resolve_chart(deck, slide_index, shape_index)
+    with deck.edit(f"CLI: recolor chart text shape:{slide_index}:{shape_index}"):
+        info = ch.recolor_text(color)
+    emit(
+        info,
+        as_text=not ctx.obj["as_json"],
+        text=f"recolored {info['anchor_id']} text -> {info['color']} "
+        f"({', '.join(info['recolored'])})",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1798,17 +1640,13 @@ def _resolve_smartart(deck: Presentation, slide_index: int, shape_index: int) ->
 @click.option(
     "--shape", "shape_index", type=int, required=True, help="1-based shape z-order index."
 )
-@click.pass_context
-def smartart_read(ctx: click.Context, slide_index: int, shape_index: int) -> None:
+@_deck_command
+def smartart_read(
+    ctx: click.Context, deck: Presentation, slide_index: int, shape_index: int
+) -> None:
     """Read a SmartArt diagram: layout + the nested node tree (text + level)."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            info = _resolve_smartart(deck, slide_index, shape_index).read()
-            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_smartart_read(info))
-
-    _run(ctx, go)
+    info = _resolve_smartart(deck, slide_index, shape_index).read()
+    emit(info, as_text=not ctx.obj["as_json"], text=_fmt_smartart_read(info))
 
 
 @smartart.command(name="set-nodes")
@@ -1822,21 +1660,17 @@ def smartart_read(ctx: click.Context, slide_index: int, shape_index: int) -> Non
     required=True,
     help="A JSON array of strings and/or {text, children} objects (flat or nested).",
 )
-@click.pass_context
-def smartart_set_nodes(ctx: click.Context, slide_index: int, shape_index: int, nodes: str) -> None:
+@_deck_command
+def smartart_set_nodes(
+    ctx: click.Context, deck: Presentation, slide_index: int, shape_index: int, nodes: str
+) -> None:
     """Replace a SmartArt diagram's nodes (flat list or nested tree; one Ctrl-Z)."""
     parsed = _parse_nodes(nodes)
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            sa = _resolve_smartart(deck, slide_index, shape_index)
-            with deck.edit(f"CLI: set smartart nodes shape:{slide_index}:{shape_index}"):
-                sa.set_nodes(parsed or [])
-            info = sa.read()
-            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_smartart_read(info))
-
-    _run(ctx, go)
+    sa = _resolve_smartart(deck, slide_index, shape_index)
+    with deck.edit(f"CLI: set smartart nodes shape:{slide_index}:{shape_index}"):
+        sa.set_nodes(parsed or [])
+    info = sa.read()
+    emit(info, as_text=not ctx.obj["as_json"], text=_fmt_smartart_read(info))
 
 
 @smartart.command(name="recolor-text")
@@ -1850,30 +1684,24 @@ def smartart_set_nodes(ctx: click.Context, slide_index: int, shape_index: int, n
     required=True,
     help='Text color as "#RRGGBB" (or "RRGGBB"). Recolors every node label.',
 )
-@click.pass_context
+@_deck_command
 def smartart_recolor_text(
-    ctx: click.Context, slide_index: int, shape_index: int, color: str
+    ctx: click.Context, deck: Presentation, slide_index: int, shape_index: int, color: str
 ) -> None:
     """Recolor ALL of a SmartArt diagram's node text (one Ctrl-Z).
 
     The coarse fix for a diagram whose inherited (black) node labels are
     invisible on a custom background — no rebuild from primitives needed.
     """
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            sa = _resolve_smartart(deck, slide_index, shape_index)
-            with deck.edit(f"CLI: recolor smartart text shape:{slide_index}:{shape_index}"):
-                info = sa.recolor_text(color)
-            emit(
-                info,
-                as_text=not ctx.obj["as_json"],
-                text=f"recolored {info['anchor_id']} text -> {info['color']} "
-                f"({info['nodes_recolored']} nodes)",
-            )
-
-    _run(ctx, go)
+    sa = _resolve_smartart(deck, slide_index, shape_index)
+    with deck.edit(f"CLI: recolor smartart text shape:{slide_index}:{shape_index}"):
+        info = sa.recolor_text(color)
+    emit(
+        info,
+        as_text=not ctx.obj["as_json"],
+        text=f"recolored {info['anchor_id']} text -> {info['color']} "
+        f"({info['nodes_recolored']} nodes)",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1899,21 +1727,13 @@ def comment() -> None:
     default=None,
     help="1-based slide index. Omit for a deck-wide roll-up of every comment.",
 )
-@click.pass_context
-def comment_list(ctx: click.Context, slide_index: int | None) -> None:
+@_deck_command
+def comment_list(ctx: click.Context, deck: Presentation, slide_index: int | None) -> None:
     """List comments on a slide (`--slide S`) or across the whole deck."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            payload: Any = (
-                deck.slides[slide_index].comments.list()
-                if slide_index is not None
-                else deck.comments()
-            )
-            emit(payload, as_text=not ctx.obj["as_json"], text=_fmt_comment_list(payload))
-
-    _run(ctx, go)
+    payload: Any = (
+        deck.slides[slide_index].comments.list() if slide_index is not None else deck.comments()
+    )
+    emit(payload, as_text=not ctx.obj["as_json"], text=_fmt_comment_list(payload))
 
 
 @comment.command(name="add")
@@ -1933,9 +1753,10 @@ def comment_list(ctx: click.Context, slide_index: int | None) -> None:
     default=None,
     help="Author initials (best-effort; modern Office binds to the signed-in account).",
 )
-@click.pass_context
+@_deck_command
 def comment_add(
     ctx: click.Context,
+    deck: Presentation,
     slide_index: int,
     text: str,
     left: float | None,
@@ -1944,26 +1765,20 @@ def comment_add(
     initials: str | None,
 ) -> None:
     """Add a comment to slide S (one Ctrl-Z). Binds to the signed-in account."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            kwargs: dict[str, Any] = {"author": author, "initials": initials}
-            if left is not None:
-                kwargs["left"] = left
-            if top is not None:
-                kwargs["top"] = top
-            with deck.edit(f"CLI: add comment on slide {slide_index}"):
-                c = deck.slides[slide_index].comments.add(text, **kwargs)
-                info = c.to_dict()
-            info = {"ok": True, "slide": slide_index, "comment": info}
-            emit(
-                info,
-                as_text=not ctx.obj["as_json"],
-                text=f"added comment {info['comment']['index']} on slide {slide_index}",
-            )
-
-    _run(ctx, go)
+    kwargs: dict[str, Any] = {"author": author, "initials": initials}
+    if left is not None:
+        kwargs["left"] = left
+    if top is not None:
+        kwargs["top"] = top
+    with deck.edit(f"CLI: add comment on slide {slide_index}"):
+        c = deck.slides[slide_index].comments.add(text, **kwargs)
+        info = c.to_dict()
+    info = {"ok": True, "slide": slide_index, "comment": info}
+    emit(
+        info,
+        as_text=not ctx.obj["as_json"],
+        text=f"added comment {info['comment']['index']} on slide {slide_index}",
+    )
 
 
 @comment.command(name="reply")
@@ -1972,23 +1787,19 @@ def comment_add(
     "--index", "index", type=int, required=True, help="1-based comment index (see `comment list`)."
 )
 @click.option("--text", "text", required=True, help="The reply body.")
-@click.pass_context
-def comment_reply(ctx: click.Context, slide_index: int, index: int, text: str) -> None:
+@_deck_command
+def comment_reply(
+    ctx: click.Context, deck: Presentation, slide_index: int, index: int, text: str
+) -> None:
     """Reply to comment INDEX on slide S (threaded; one Ctrl-Z)."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            with deck.edit(f"CLI: reply to comment {slide_index}:{index}"):
-                rep = deck.slides[slide_index].comments[index].reply(text)
-                info = rep.to_dict()
-            emit(
-                {"ok": True, "slide": slide_index, "parent": index, "reply": info},
-                as_text=not ctx.obj["as_json"],
-                text=f"replied to comment {index} on slide {slide_index}",
-            )
-
-    _run(ctx, go)
+    with deck.edit(f"CLI: reply to comment {slide_index}:{index}"):
+        rep = deck.slides[slide_index].comments[index].reply(text)
+        info = rep.to_dict()
+    emit(
+        {"ok": True, "slide": slide_index, "parent": index, "reply": info},
+        as_text=not ctx.obj["as_json"],
+        text=f"replied to comment {index} on slide {slide_index}",
+    )
 
 
 @comment.command(name="delete")
@@ -1996,22 +1807,16 @@ def comment_reply(ctx: click.Context, slide_index: int, index: int, text: str) -
 @click.option(
     "--index", "index", type=int, required=True, help="1-based comment index (see `comment list`)."
 )
-@click.pass_context
-def comment_delete(ctx: click.Context, slide_index: int, index: int) -> None:
+@_deck_command
+def comment_delete(ctx: click.Context, deck: Presentation, slide_index: int, index: int) -> None:
     """Delete comment INDEX on slide S (takes its replies; one Ctrl-Z)."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            with deck.edit(f"CLI: delete comment {slide_index}:{index}"):
-                deck.slides[slide_index].comments[index].delete()
-            emit(
-                {"ok": True, "slide": slide_index, "index": index},
-                as_text=not ctx.obj["as_json"],
-                text=f"deleted comment {index} on slide {slide_index}",
-            )
-
-    _run(ctx, go)
+    with deck.edit(f"CLI: delete comment {slide_index}:{index}"):
+        deck.slides[slide_index].comments[index].delete()
+    emit(
+        {"ok": True, "slide": slide_index, "index": index},
+        as_text=not ctx.obj["as_json"],
+        text=f"deleted comment {index} on slide {slide_index}",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2028,17 +1833,11 @@ def theme() -> None:
 
 
 @theme.command(name="read")
-@click.pass_context
-def theme_read(ctx: click.Context) -> None:
+@_deck_command
+def theme_read(ctx: click.Context, deck: Presentation) -> None:
     """Read the theme palette (12 slots) + the major/minor typefaces."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            info = deck.theme.read()
-            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_theme_read(info))
-
-    _run(ctx, go)
+    info = deck.theme.read()
+    emit(info, as_text=not ctx.obj["as_json"], text=_fmt_theme_read(info))
 
 
 @theme.command(name="set-color")
@@ -2046,19 +1845,13 @@ def theme_read(ctx: click.Context) -> None:
     "--slot", type=click.Choice(THEME_COLOR_CHOICES), required=True, help="Palette slot to set."
 )
 @click.option("--color", required=True, help="Color, '#RRGGBB' (or an (r,g,b)/int via the API).")
-@click.pass_context
-def theme_set_color(ctx: click.Context, slot: str, color: str) -> None:
+@_deck_command
+def theme_set_color(ctx: click.Context, deck: Presentation, slot: str, color: str) -> None:
     """Set one theme palette slot (e.g. accent1) — recolors the whole deck."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            with deck.edit(f"CLI: set theme color {slot}"):
-                deck.theme.set_color(slot, color)
-            info = deck.theme.read()
-            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_theme_read(info))
-
-    _run(ctx, go)
+    with deck.edit(f"CLI: set theme color {slot}"):
+        deck.theme.set_color(slot, color)
+    info = deck.theme.read()
+    emit(info, as_text=not ctx.obj["as_json"], text=_fmt_theme_read(info))
 
 
 @theme.command(name="set-font")
@@ -2076,19 +1869,15 @@ def theme_set_color(ctx: click.Context, slot: str, color: str) -> None:
     show_default=True,
     help="Which script sub-typeface to set.",
 )
-@click.pass_context
-def theme_set_font(ctx: click.Context, which: str, name: str, script: str) -> None:
+@_deck_command
+def theme_set_font(
+    ctx: click.Context, deck: Presentation, which: str, name: str, script: str
+) -> None:
     """Set the major (headings) or minor (body) theme typeface."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            with deck.edit(f"CLI: set theme {which} font"):
-                deck.theme.set_font(which, name, script=script)
-            info = deck.theme.read()
-            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_theme_read(info))
-
-    _run(ctx, go)
+    with deck.edit(f"CLI: set theme {which} font"):
+        deck.theme.set_font(which, name, script=script)
+    info = deck.theme.read()
+    emit(info, as_text=not ctx.obj["as_json"], text=_fmt_theme_read(info))
 
 
 # ---------------------------------------------------------------------------
@@ -2105,17 +1894,11 @@ def master() -> None:
 
 
 @master.command(name="read")
-@click.pass_context
-def master_read(ctx: click.Context) -> None:
+@_deck_command
+def master_read(ctx: click.Context, deck: Presentation) -> None:
     """Read the three master text styles (5 levels each) + the background fill."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            info = deck.master.read()
-            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_master_read(info))
-
-    _run(ctx, go)
+    info = deck.master.read()
+    emit(info, as_text=not ctx.obj["as_json"], text=_fmt_master_read(info))
 
 
 @master.command(name="format-text-style")
@@ -2131,9 +1914,10 @@ def master_read(ctx: click.Context) -> None:
 @click.option("--size", type=float, default=None, help="Font size (points).")
 @click.option("--font", "font", default=None, help="Font name (e.g. 'Georgia').")
 @click.option("--color", "color", default=None, help="Font color, '#RRGGBB'.")
-@click.pass_context
+@_deck_command
 def master_format_text_style(
     ctx: click.Context,
+    deck: Presentation,
     style: str,
     level: int,
     bold: bool | None,
@@ -2144,27 +1928,21 @@ def master_format_text_style(
     color: str | None,
 ) -> None:
     """Set font formatting on a master text style + level (deck-wide)."""
-
-    def go() -> None:
-        if all(v is None for v in (bold, italic, underline, size, font, color)):
-            raise click.UsageError("format-text-style requires at least one formatting option")
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            with deck.edit(f"CLI: format master {style} L{level}"):
-                deck.master.format_text_style(
-                    style,
-                    level,
-                    bold=bold,
-                    italic=italic,
-                    underline=underline,
-                    size=size,
-                    font=font,
-                    color=color,
-                )
-            info = deck.master.read()
-            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_master_read(info))
-
-    _run(ctx, go)
+    if all(v is None for v in (bold, italic, underline, size, font, color)):
+        raise click.UsageError("format-text-style requires at least one formatting option")
+    with deck.edit(f"CLI: format master {style} L{level}"):
+        deck.master.format_text_style(
+            style,
+            level,
+            bold=bold,
+            italic=italic,
+            underline=underline,
+            size=size,
+            font=font,
+            color=color,
+        )
+    info = deck.master.read()
+    emit(info, as_text=not ctx.obj["as_json"], text=_fmt_master_read(info))
 
 
 @master.command(name="format-paragraph-style")
@@ -2178,9 +1956,10 @@ def master_format_text_style(
 @click.option("--space-before", type=float, default=None, help="Space before (points).")
 @click.option("--space-after", type=float, default=None, help="Space after (points).")
 @click.option("--line-spacing", type=float, default=None, help="Line spacing (multiple, e.g. 1.5).")
-@click.pass_context
+@_deck_command
 def master_format_paragraph_style(
     ctx: click.Context,
+    deck: Presentation,
     style: str,
     level: int,
     alignment: str | None,
@@ -2189,42 +1968,30 @@ def master_format_paragraph_style(
     line_spacing: float | None,
 ) -> None:
     """Set paragraph formatting on a master text style + level (deck-wide)."""
-
-    def go() -> None:
-        if all(v is None for v in (alignment, space_before, space_after, line_spacing)):
-            raise click.UsageError("format-paragraph-style requires at least one option")
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            with deck.edit(f"CLI: format master paragraph {style} L{level}"):
-                deck.master.format_paragraph_style(
-                    style,
-                    level,
-                    alignment=alignment,
-                    space_before=space_before,
-                    space_after=space_after,
-                    line_spacing=line_spacing,
-                )
-            info = deck.master.read()
-            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_master_read(info))
-
-    _run(ctx, go)
+    if all(v is None for v in (alignment, space_before, space_after, line_spacing)):
+        raise click.UsageError("format-paragraph-style requires at least one option")
+    with deck.edit(f"CLI: format master paragraph {style} L{level}"):
+        deck.master.format_paragraph_style(
+            style,
+            level,
+            alignment=alignment,
+            space_before=space_before,
+            space_after=space_after,
+            line_spacing=line_spacing,
+        )
+    info = deck.master.read()
+    emit(info, as_text=not ctx.obj["as_json"], text=_fmt_master_read(info))
 
 
 @master.command(name="set-background")
 @click.option("--color", required=True, help="Background color, '#RRGGBB' (solid fill).")
-@click.pass_context
-def master_set_background(ctx: click.Context, color: str) -> None:
+@_deck_command
+def master_set_background(ctx: click.Context, deck: Presentation, color: str) -> None:
     """Set the master background to a solid color (deck-wide)."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            with deck.edit("CLI: set master background"):
-                deck.master.set_background(color)
-            info = deck.master.read()
-            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_master_read(info))
-
-    _run(ctx, go)
+    with deck.edit("CLI: set master background"):
+        deck.master.set_background(color)
+    info = deck.master.read()
+    emit(info, as_text=not ctx.obj["as_json"], text=_fmt_master_read(info))
 
 
 # ---------------------------------------------------------------------------
@@ -2245,42 +2012,30 @@ def read() -> None:
     required=True,
     help="Anchor to read (e.g. ph:3:title, shape:3:2, notes:3).",
 )
-@click.pass_context
-def read_anchor(ctx: click.Context, anchor_id: str) -> None:
+@_deck_command
+def read_anchor(ctx: click.Context, deck: Presentation, anchor_id: str) -> None:
     """Read the text of any text anchor."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            anchor = deck.anchor_by_id(anchor_id)
-            text = anchor.text
-            emit(
-                {"anchor_id": anchor.anchor_id, "kind": anchor.kind, "text": text},
-                as_text=not ctx.obj["as_json"],
-                text=text,
-            )
-
-    _run(ctx, go)
+    anchor = deck.anchor_by_id(anchor_id)
+    text = anchor.text
+    emit(
+        {"anchor_id": anchor.anchor_id, "kind": anchor.kind, "text": text},
+        as_text=not ctx.obj["as_json"],
+        text=text,
+    )
 
 
 @read.command(name="notes")
 @click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
-@click.pass_context
-def read_notes(ctx: click.Context, slide_index: int) -> None:
+@_deck_command
+def read_notes(ctx: click.Context, deck: Presentation, slide_index: int) -> None:
     """Read the speaker notes of slide INDEX."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            notes = deck.slides[slide_index].notes
-            text = notes.text
-            emit(
-                {"anchor_id": notes.anchor_id, "kind": notes.kind, "text": text},
-                as_text=not ctx.obj["as_json"],
-                text=text,
-            )
-
-    _run(ctx, go)
+    notes = deck.slides[slide_index].notes
+    text = notes.text
+    emit(
+        {"anchor_id": notes.anchor_id, "kind": notes.kind, "text": text},
+        as_text=not ctx.obj["as_json"],
+        text=text,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2335,21 +2090,15 @@ def write(ctx: click.Context, anchor_id: str, text: str) -> None:
     default=None,
     help="Scope: slide:S, shape:S:N, ph:S:KIND, cell:S:N:R:C, or notes:S (default: whole deck).",
 )
-@click.pass_context
-def find(ctx: click.Context, text: str, in_: str | None) -> None:
+@_deck_command
+def find(ctx: click.Context, deck: Presentation, text: str, in_: str | None) -> None:
     """Locate every fuzzy occurrence of TEXT (read-only; preserves the view).
 
     Emits a JSON array of `{anchor_id, start, length, text, context}` hits in
     document order — an empty array (exit 0) when nothing matches.
     """
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            matches = deck.find(text, scope=in_)
-            emit(matches, as_text=not ctx.obj["as_json"], text=_fmt_find(matches))
-
-    _run(ctx, go)
+    matches = deck.find(text, scope=in_)
+    emit(matches, as_text=not ctx.obj["as_json"], text=_fmt_find(matches))
 
 
 # ---------------------------------------------------------------------------
@@ -2444,22 +2193,16 @@ def replace(
 
 
 @click.command(name="selection")
-@click.pass_context
-def selection_cmd(ctx: click.Context) -> None:
+@_deck_command
+def selection_cmd(ctx: click.Context, deck: Presentation) -> None:
     """Report the user's current selection, resolved to anchors.
 
     A polite read (it doesn't change the selection): the selected shapes as
     `shape:S:N`, or a text caret as `para:S:N:P`, with the single targetable
     `anchor_id` that `--anchor-id here:` resolves to.
     """
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            info = deck.selection().to_dict()
-            emit(info, as_text=not ctx.obj["as_json"], text=_fmt_selection(info))
-
-    _run(ctx, go)
+    info = deck.selection().to_dict()
+    emit(info, as_text=not ctx.obj["as_json"], text=_fmt_selection(info))
 
 
 # ---------------------------------------------------------------------------
@@ -2574,22 +2317,16 @@ def show_state(ctx: click.Context) -> None:
     show_default=True,
     help="Select the target shape after jumping to its slide.",
 )
-@click.pass_context
-def go_to(ctx: click.Context, anchor_id: str, select: bool) -> None:
+@_deck_command
+def go_to(ctx: click.Context, deck: Presentation, anchor_id: str, select: bool) -> None:
     """Move the user's view to an anchor's slide (deliberate, opt-in view move)."""
-
-    def go() -> None:
-        with attach() as ppt:
-            deck = _pick_deck(ppt, ctx.obj["doc_name"])
-            anchor = deck.anchor_by_id(anchor_id)
-            deck.go_to(anchor, select=select)
-            emit(
-                {"ok": True, "anchor_id": anchor.anchor_id, "kind": anchor.kind},
-                as_text=not ctx.obj["as_json"],
-                text=f"moved view to {anchor.anchor_id}",
-            )
-
-    _run(ctx, go)
+    anchor = deck.anchor_by_id(anchor_id)
+    deck.go_to(anchor, select=select)
+    emit(
+        {"ok": True, "anchor_id": anchor.anchor_id, "kind": anchor.kind},
+        as_text=not ctx.obj["as_json"],
+        text=f"moved view to {anchor.anchor_id}",
+    )
 
 
 # ---------------------------------------------------------------------------

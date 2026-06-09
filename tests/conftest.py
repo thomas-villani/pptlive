@@ -17,7 +17,7 @@ same object, the way the real COM property does.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -1125,7 +1125,7 @@ class _FakeShapes:
 # legacy identity-free `Add` is the fallback on a deck with no comment to source
 # from. `Delete()` removes the comment (and, being a list slice, its replies).
 
-_SEED_DT = datetime(2026, 6, 7, 10, 30, tzinfo=timezone.utc)
+_SEED_DT = datetime(2026, 6, 7, 10, 30, tzinfo=UTC)
 
 
 class _FakeComment:
