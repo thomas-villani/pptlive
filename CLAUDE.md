@@ -57,6 +57,7 @@ src/pptlive/
   _smartart.py       SmartArt    (a diagram is a shape; node tree read/set_nodes)      [v0.8]
   _theme.py          Theme + Master  (deck-wide palette/fonts/text-styles/background)  [v0.9]
   _findreplace.py    fuzzy match core (find_matches/normalize); find()/find_replace() on Presentation [v1.0]
+  _comments.py       Comment / CommentCollection (slide.comments; threaded, identity-bound add/reply) [v1.3]
   _selection.py      viewed-slide + Selection snapshot/restore
   _edit.py           EditScope — view/Selection preservation + atomic undo via StartNewUndoEntry (see below)
   _show.py           SlideShow control (deck.show)
@@ -71,8 +72,22 @@ tests/conftest.py    fake_powerpoint fixture (MagicMock COM), no_powerpoint, rea
 
 `find()` / `find_replace()` (`_findreplace.py`) shipped in v1.0 — fuzzy traversal
 search across shapes / table cells / notes; library + CLI (`find`, `replace
---find`) + MCP (`ppt_read` find, `ppt_edit` find_replace). Still in `spec.md` but
-unbuilt: the standalone CLI `exec` batch verb (MCP `ppt_batch` covers batch).
+--find`) + MCP (`ppt_read` find, `ppt_edit` find_replace).
+
+**Review comments (`_comments.py`) shipped in v1.3.** `slide.comments` is a
+per-slide `CommentCollection` (1-based, `add`/`list`/`[i]`); `deck.comments()` is
+the deck-wide roll-up. Comments attach to a **slide** at an `(x, y)` point (not a
+text range) and are **threaded** (`Comment.replies` / `Comment.reply`). Adding
+needs the signed-in Office-account identity (`ProviderID`/`UserID`): `add` lifts
+it off any existing comment via the modern `Comments.Add2`, falling back to the
+legacy identity-free `Comments.Add` on a comment-less deck; a reply lifts identity
+off its parent. Two honest caveats baked in: `Add2` **binds to the account** (the
+passed `author`/`initials` reach only the legacy fallback), and there is **no
+resolve/reopen verb** — `Comment.Status`/`.Resolved` are not COM-readable on
+current builds. Library + CLI (`comment list/add/reply/delete`) + MCP (`ppt_read`
+`comments`; `ppt_edit` `comment_add`/`comment_reply`/`comment_delete`). Still in
+`spec.md` but unbuilt: the standalone CLI `exec` batch verb (MCP `ppt_batch`
+covers batch).
 Agent skills shipped as **two** guides (`pptlive-cli` + `pptlive-python`), not
 wordlive's single one — `llm-help [--python]` dumps one, `install-skill` writes
 them to `.agents/skills/`, and `install-mcp` / the `mcpb/` bundle wire up MCP.
@@ -132,6 +147,7 @@ them to `.agents/skills/`, and `install-mcp` / the `mcpb/` bundle wire up MCP.
    | `para:S:N:P`     | paragraph P in shape N on slide S |
    | `cell:S:N:R:C`   | cell (row R, col C) of the table in shape N on slide S |
    | `notes:S`        | speaker-notes body of slide S |
+   | `comments:S`     | the review comments on slide S — a **read selector** (like `slide:S`, a container, not a text `Anchor`); read via `deck.slides[S].comments`, address one for reply/delete by `(slide, 1-based index)` |
 
    `body` also aliases the generic **content** placeholder (`PpPlaceholderType.OBJECT`,
    reads back as `placeholder: "object"`). When a KIND matches **more than one**

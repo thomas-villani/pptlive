@@ -580,6 +580,36 @@ pptlive smartart recolor-text --slide 3 --shape 2 --color "#FFFFFF"
 
 ---
 
+## Comments — the `comment` group
+
+Review comments — read a reviewer's notes and reply to them, the "address the
+comments" workflow. Comments attach to a **slide** at an `(x, y)` point and are
+**threaded**; you address one for reply/delete by `--slide S --index N` (1-based,
+from `comment list`). `comment list` with no `--slide` is a deck-wide roll-up.
+
+```bash
+pptlive comment list                                  # deck-wide {total, slides:[...]}
+pptlive comment list --slide 1                        # one slide's comments + threads
+pptlive comment add   --slide 2 --text "Please cite a source."
+pptlive comment reply --slide 1 --index 1 --text "Done."
+pptlive comment delete --slide 1 --index 1            # removes the comment + its replies
+```
+
+```json
+[{"index": 1, "author": "Thomas Villani", "initials": "TV",
+  "text": "Tighten this headline.", "datetime": "2026-06-07T10:30:00+00:00",
+  "left": 12.0, "top": 12.0,
+  "replies": [{"index": 1, "author": "Thomas Villani", "text": "Agreed — will do.", ...}]}]
+```
+
+A new comment **binds to the signed-in Office account** — the shown author follows
+that account, not `--author`/`--initials` (those reach only the legacy fallback used
+on a deck that has no existing comment to source an identity from). There is **no
+resolve verb**: PowerPoint's COM doesn't expose comment resolution state on current
+builds. Add/reply/delete are each one Ctrl-Z and don't move your view.
+
+---
+
 ## Theme — the `theme` group
 
 Deck-wide styling: the 12-slot palette and the heading/body typefaces. These are

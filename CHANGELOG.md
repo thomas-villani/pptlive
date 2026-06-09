@@ -20,6 +20,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Review comments — read + add/reply/delete** (v1.3, the review loop).
+  PowerPoint's review-comment channel, across library + CLI + MCP. Comments attach
+  to a **slide** at an `(x, y)` point (not a text range) and are **threaded**:
+  `slide.comments` is a per-slide `CommentCollection` (1-based; `add`/`list`/`[i]`,
+  each comment carrying `author`/`initials`/`text`/`datetime`/`left`/`top` and its
+  `replies`), `Comment.reply(text)` appends to the thread, `Comment.delete()` removes
+  it, and `deck.comments()` is the deck-wide roll-up. Adding binds to the signed-in
+  Office account: `add` sources the modern `Comments.Add2` `ProviderID`/`UserID` off
+  any existing comment and falls back to the legacy identity-free `Comments.Add` on a
+  comment-less deck (the passed `author`/`initials` reach only that fallback — `Add2`
+  binds to the account). MCP `ppt_read` op `comments`; `ppt_edit` ops `comment_add` /
+  `comment_reply` / `comment_delete`. CLI `comment list/add/reply/delete`. No
+  resolve/reopen verb — `Comment.Status`/`.Resolved` are not COM-readable on current
+  builds (documented).
 - **Shape fill & border color** (PPTLIVE-007). `Shape.set_fill(fill=/line=/line_width=)`
   sets a shape's solid fill and/or border (a `#RRGGBB` color, an `(r, g, b)` tuple,
   a raw RGB int, or `"none"` for transparent fill / no border) — the spatial

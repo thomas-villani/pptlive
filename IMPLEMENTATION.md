@@ -671,6 +671,39 @@ slides × shapes → each text frame, table cells, and speaker notes; there is n
 mid-paragraph workflow needs it); the CLI `exec` batch verb (MCP `ppt_batch`
 already covers batch; the standalone CLI `exec` stays on the roadmap).
 
+## v1.3 — review loop: comments — SHIPPED
+
+The highest-leverage roadmap tier and the one whose COM risk was fully burned down
+by `scripts/comments_spike.py` (2026-06-07, net-zero) before any build. Comments are
+the PowerPoint diff from wordlive's range-anchored `_comments.py`: they attach to a
+**slide** at an `(x, y)` point, are **threaded**, and binding an author needs the
+signed-in Office-account identity.
+
+- [x] **`_comments.py`** — `Comment` (`author`/`author_initials`/`text`/`datetime`
+  (ISO)/`left`/`top`, threaded `replies`, `reply`, `delete`, `to_dict`) + per-slide
+  `CommentCollection` (`Slide.comments`; 1-based `[i]`/iter, `add`/`list`).
+  `Presentation.comments()` is the deck-wide roll-up `{total, slides:[...]}`.
+- [x] **Identity** — `add` lifts the modern `Comments.Add2(Left, Top, Author,
+  Initials, Text, ProviderID, UserID)` identity off any existing comment
+  (`_discover_identity`), falling back to the legacy identity-free `Comments.Add` on
+  a comment-less deck; a `reply` lifts identity straight off its parent. Honest
+  caveats: `Add2` binds to the account (the passed author/initials only reach the
+  legacy path), and `Comment.Status`/`.Resolved` aren't COM-readable, so **no
+  resolve verb** ships. Both verified in the spike.
+- [x] **CLI** — a `comment` group: `list [--slide S]` (per-slide / deck roll-up),
+  `add --slide --text [--left --top --author --initials]`, `reply --slide --index
+  --text`, `delete --slide --index`, all through `deck.edit(...)` (one Ctrl-Z).
+- [x] **MCP** — `ppt_read` op `comments` (`slide?`); `ppt_edit` ops `comment_add` /
+  `comment_reply` / `comment_delete`. Flow through `ppt_batch` via `_read_core` /
+  `_edit_core`.
+- [x] **Tests** — fake `Comments` collection in conftest (threaded, identity-bound,
+  legacy-`Add` fallback path); `tests/test_comments.py` + `tests/test_mcp.py`
+  coverage. See `roadmap.md` §v1.3.
+
+**Deferred:** resolve/reopen (not COM-readable); account-identity sourcing for a
+comment-less deck (the legacy `Add` covers it; option (a) needs its own micro-spike);
+mentions / rich-text comment bodies.
+
 ## v1.0+ — defer
 
 - [ ] Event sinks (`SlideShowNextSlide`, `WindowSelectionChange`); async wrapper.

@@ -37,6 +37,7 @@ is no deck-wide `range:`. Pass an anchor as `--anchor-id`:
 | `para:S:N:P`   | paragraph P (1-based) of shape N on slide S |
 | `cell:S:N:R:C` | cell (row R, col C) of the table in shape N on slide S — a cell takes every text/format verb |
 | `notes:S`      | speaker-notes body of slide S |
+| `comments:S`   | the review comments on slide S — a **read selector** (container, not a text anchor); address one for reply/delete by `--slide S --index N` |
 | `here:`        | whatever the user has selected right now (the opt-in way to act on the live selection) |
 
 `body` also matches the generic **content** placeholder (reads back as
@@ -91,6 +92,12 @@ you can re-identify after drift. Steer toward `ph:S:KIND`, `.Name`, and
 - Charts (data lives in an embedded Excel workbook): `pptlive shape add --slide 4 --kind chart --chart-type column --categories "Q1,Q2,Q3" --series '{"Revenue":[10,20,30]}'`; `pptlive chart set-type --slide 4 --shape 5 --chart-type line`; `pptlive chart set-data --slide 4 --shape 5 --categories "A,B" --series '{"S":[1,2]}'`.
 - SmartArt (content is a node tree): `pptlive shape add --slide 3 --kind smartart --smartart-kind process --nodes '["Discover","Design","Build","Ship"]'`; `pptlive smartart set-nodes --slide 3 --shape 2 --nodes '[{"text":"CEO","children":["Eng","Sales"]}]'`.
 - **Recolor composite text** (a chart/SmartArt has no text anchor, so this is the only color path for its internal text): `pptlive chart recolor-text --slide 6 --shape 2 --color "#FFFFFF"` recolors every shown chart text element (legend, axis tick labels, title, data labels); `pptlive smartart recolor-text --slide 3 --shape 2 --color "#FFFFFF"` recolors every node label. The coarse fix when inherited black chart/diagram text goes invisible on a dark (or any custom) background — no rebuild from primitives needed.
+
+## Comments — review thread (the "address the comments" workflow)
+Comments attach to a slide and are **threaded**; address one by `--slide S --index N`.
+- `pptlive comment list` (deck-wide `{total, slides:[...]}`) or `--slide 1` (one slide + threads).
+- `pptlive comment add --slide 2 --text "Cite a source."` · `pptlive comment reply --slide 1 --index 1 --text "Done."` · `pptlive comment delete --slide 1 --index 1`.
+- A new comment **binds to the signed-in account** (the passed `--author`/`--initials` only apply to the legacy fallback on a comment-less deck). No resolve verb — comment resolution state isn't COM-readable.
 
 ## Theme & master — deck-wide styling
 Global and anti-polite, but still one Ctrl-Z; your view doesn't move.
