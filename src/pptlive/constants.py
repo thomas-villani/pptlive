@@ -38,6 +38,23 @@ def is_true(tristate: Any) -> bool:
         return bool(tristate)
 
 
+def tristate_value(tristate: Any) -> bool | str:
+    """An MsoTriState font property -> `True` / `False` / `"mixed"`.
+
+    Unlike `is_true` (which collapses MIXED to False), this preserves the
+    `msoTriStateMixed` (-2) signal a font property like `Font.Bold` returns when
+    a *range* spans both bold and non-bold runs — so a reader can tell "this
+    paragraph is uniformly not-bold" apart from "this paragraph mixes bold runs".
+    """
+    try:
+        v = int(tristate)
+    except (TypeError, ValueError):
+        return bool(tristate)
+    if v == int(MsoTriState.MIXED):
+        return "mixed"
+    return v == int(MsoTriState.TRUE)
+
+
 class MsoShapeType(IntEnum):
     """`Shape.Type` values — what kind of object a shape is.
 

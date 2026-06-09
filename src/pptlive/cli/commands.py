@@ -1542,7 +1542,9 @@ def master_read(ctx: click.Context) -> None:
 @click.option(
     "--style", type=click.Choice(TEXT_STYLE_CHOICES), required=True, help="Which text style."
 )
-@click.option("--level", type=click.IntRange(1, 5), required=True, help="Outline level (1-5).")
+@click.option(
+    "--level", type=click.IntRange(1, 5), default=1, show_default=True, help="Outline level (1-5)."
+)
 @click.option("--bold/--no-bold", "bold", default=None, help="Bold on/off.")
 @click.option("--italic/--no-italic", "italic", default=None, help="Italic on/off.")
 @click.option("--underline/--no-underline", "underline", default=None, help="Underline on/off.")
@@ -1589,7 +1591,9 @@ def master_format_text_style(
 @click.option(
     "--style", type=click.Choice(TEXT_STYLE_CHOICES), required=True, help="Which text style."
 )
-@click.option("--level", type=click.IntRange(1, 5), required=True, help="Outline level (1-5).")
+@click.option(
+    "--level", type=click.IntRange(1, 5), default=1, show_default=True, help="Outline level (1-5)."
+)
 @click.option("--alignment", type=click.Choice(ALIGNMENT_CHOICES), default=None, help="Alignment.")
 @click.option("--space-before", type=float, default=None, help="Space before (points).")
 @click.option("--space-after", type=float, default=None, help="Space after (points).")
@@ -1724,7 +1728,12 @@ def _set_text(ctx: click.Context, anchor_id: str, text: str, label: str) -> None
 @click.option(
     "--anchor-id", "anchor_id", required=True, help="Text anchor to set (ph:/shape:/notes:)."
 )
-@click.option("--text", "text", required=True, help="New text (embed \\n for paragraphs).")
+@click.option(
+    "--text",
+    "text",
+    required=True,
+    help="New text (embed \\n or \\r for paragraphs; \\v for a soft line break).",
+)
 @click.pass_context
 def write(ctx: click.Context, anchor_id: str, text: str) -> None:
     """Set the text of a text anchor (preserves the viewed slide; one Ctrl-Z)."""
@@ -1777,7 +1786,12 @@ def find(ctx: click.Context, text: str, in_: str | None) -> None:
 @click.option(
     "--find", "find_text", default=None, help="Fuzzy text to locate (alternative to --anchor-id)."
 )
-@click.option("--text", "text", required=True, help="Replacement text (embed \\n for paragraphs).")
+@click.option(
+    "--text",
+    "text",
+    required=True,
+    help="Replacement text (embed \\n or \\r for paragraphs; \\v for a soft line break).",
+)
 @click.option(
     "--in", "in_", default=None, help="In fuzzy mode, scope the search (slide:S / an anchor id)."
 )

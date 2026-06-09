@@ -112,7 +112,9 @@ def test_find_no_match_returns_empty_list(deck) -> None:  # type: ignore[no-unty
 def test_find_includes_a_context_snippet(deck) -> None:  # type: ignore[no-untyped-def]
     [hit] = deck.find("Demo")
     assert "Demo" in hit["context"]
-    assert "\r" not in hit["context"]  # breaks flattened to spaces for display
+    # Paragraph breaks render as a visible glyph (not a raw `\r`) for legibility.
+    assert "\r" not in hit["context"]
+    assert "⏎" in hit["context"]  # the body "Intro\rDemo\rQ&A" surrounds the hit
 
 
 def test_find_reaches_table_cells(deck) -> None:  # type: ignore[no-untyped-def]

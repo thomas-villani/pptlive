@@ -132,6 +132,13 @@ them to `.agents/skills/`, and `install-mcp` / the `mcpb/` bundle wire up MCP.
    | `cell:S:N:R:C`   | cell (row R, col C) of the table in shape N on slide S |
    | `notes:S`        | speaker-notes body of slide S |
 
+   `body` also aliases the generic **content** placeholder (`PpPlaceholderType.OBJECT`,
+   reads back as `placeholder: "object"`). When a KIND matches **more than one**
+   placeholder on a slide (the two content bodies of a Two Content / Comparison
+   layout), `_find_placeholder` raises `AmbiguousMatchError` (exit 5) listing the
+   candidate `shape:S:N` anchors rather than silently picking the first — reach each
+   one by `shape:S:N`/`.Name`.
+
    `shape:` is int-only (z-order) to avoid index-vs-name ambiguity; expose shape
    `.Name` separately (`slide.shapes["Title 1"]`). **z-order drifts** when shapes
    are added/removed: resolve `shape:S:N` **live** (never cache it), and have

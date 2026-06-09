@@ -27,6 +27,7 @@ _PH_TITLE = 1
 _PH_BODY = 2
 _PH_CENTER_TITLE = 3
 _PH_SUBTITLE = 4
+_PH_OBJECT = 7  # generic content placeholder (what `body` also matches)
 
 # MsoShapeType values used below.
 _MSO_CHART = 3
