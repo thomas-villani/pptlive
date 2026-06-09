@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Minimum Python is now 3.11** (was 3.10). The library and the `pptlive[mcp]`
+  bundle both require `>=3.11`, and `ruff`/`mypy` target `py311`, so the codebase
+  can use `StrEnum` / `assert_never` and other modern typing. Sibling `wordlive`
+  is bumping to the same floor in lockstep, so the projects stay in parity. No
+  library API change.
+- **Internal dispatch refactors (no API or behavior change).** The CLI's
+  per-command scaffold (`attach` → pick `--doc` deck → error boundary, repeated
+  ~58×) collapsed into a single `_deck_command` decorator. The MCP op surface
+  moved from three hand-synced op lists (the `Literal`, the `if op == …` chain,
+  the docstring) to a per-tool `StrEnum` + handler registry — one op is now one
+  function, and a missing handler is an import-time error. The CLI behavior, MCP
+  op vocabulary, and the agent-facing tool schema are all unchanged.
 - **`write` (`set_text`) now treats `\n` as a real paragraph break** (PPTLIVE-001).
   An LLM building a bullet body with `"a\nb\nc"` previously got **one** paragraph
   full of soft line breaks (`<a:br>`), so the lines were not individually
