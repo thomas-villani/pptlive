@@ -26,6 +26,10 @@ from mcp.server.fastmcp.exceptions import ToolError  # noqa: E402
 from mcp.types import CallToolResult, ImageContent, TextContent  # noqa: E402
 
 from pptlive.mcp.server import (  # noqa: E402
+    EditOp,
+    ReadOp,
+    RenderOp,
+    ShowOp,
     build_server,
     ppt_batch,
     ppt_edit,
@@ -33,6 +37,22 @@ from pptlive.mcp.server import (  # noqa: E402
     ppt_render,
     ppt_show,
 )
+
+
+def _op_enum(tool: Any) -> list[str]:
+    """The allowed `op` values from a tool's input schema.
+
+    The `op` arg is typed by a `StrEnum`, which pydantic renders as a `$ref` into
+    `$defs` (rather than an inline `enum`), so resolve through the ref. Still a
+    valid JSON-Schema enum — every MCP client dereferences it.
+    """
+    schema = tool.inputSchema
+    op = schema["properties"]["op"]
+    if "enum" in op:
+        return list(op["enum"])
+    ref = op["$ref"].rsplit("/", 1)[-1]  # "#/$defs/ReadOp" -> "ReadOp"
+    return list(schema["$defs"][ref]["enum"])
+
 
 # ---------------------------------------------------------------------------
 # Server assembly
@@ -43,6 +63,22 @@ def test_build_server_registers_all_tools() -> None:
     srv = build_server()
     names = {t.name for t in asyncio.run(srv.list_tools())}
     assert names == {"ppt_read", "ppt_edit", "ppt_render", "ppt_show", "ppt_batch"}
+
+
+def test_every_op_is_documented_in_its_tool_docstring() -> None:
+    """The agent-facing docstring is the third place an op must appear (after the
+    enum that types it and the dispatch registry keyed by it). The import-time
+    `assert set(*_OPS) == set(*Op)` in server.py guards the enum↔registry pair;
+    this guards the enum↔docstring pair, so the whole triplet can't drift."""
+    for fn, enum in (
+        (ppt_read, ReadOp),
+        (ppt_edit, EditOp),
+        (ppt_render, RenderOp),
+        (ppt_show, ShowOp),
+    ):
+        doc = fn.__doc__ or ""
+        missing = [op.value for op in enum if f'"{op.value}"' not in doc]
+        assert not missing, f"{fn.__name__} docstring is missing ops: {missing}"
 
 
 def test_guide_resources_serve_skill_bodies() -> None:
@@ -63,12 +99,12 @@ def test_tool_schema_marks_required_args() -> None:
     assert tools["ppt_edit"].inputSchema["required"] == ["op"]
     # ppt_batch's one required arg is the command list.
     assert tools["ppt_batch"].inputSchema["required"] == ["commands"]
-    # Literal -> enum surfaces in the schema so the agent gets valid choices.
-    edit_op = tools["ppt_edit"].inputSchema["properties"]["op"]
-    assert {"write", "format", "shape_add", "chart_set_data"} <= set(edit_op["enum"])
+    # The StrEnum op surfaces as a schema enum (via $defs) so the agent gets the
+    # valid choices.
+    assert {"write", "format", "shape_add", "chart_set_data"} <= set(_op_enum(tools["ppt_edit"]))
     write_mode = tools["ppt_edit"].inputSchema["properties"]["mode"]
     assert write_mode["enum"] == ["set", "insert_after", "insert_before"]
-    render_ops = set(tools["ppt_render"].inputSchema["properties"]["op"]["enum"])
+    render_ops = set(_op_enum(tools["ppt_render"]))
     assert {"deck_snapshot", "deck_pdf", "save", "save_as"} <= render_ops
 
 
@@ -615,9 +651,9 @@ def test_smartart_recolor_text_requires_color(fake_powerpoint: Any) -> None:
 def test_read_op_enum_includes_smartart() -> None:
     srv = build_server()
     tools = {t.name: t for t in asyncio.run(srv.list_tools())}
-    assert "smartart" in tools["ppt_read"].inputSchema["properties"]["op"]["enum"]
-    assert "smartart_set_nodes" in tools["ppt_edit"].inputSchema["properties"]["op"]["enum"]
-    edit_ops = set(tools["ppt_edit"].inputSchema["properties"]["op"]["enum"])
+    assert "smartart" in _op_enum(tools["ppt_read"])
+    assert "smartart_set_nodes" in _op_enum(tools["ppt_edit"])
+    edit_ops = set(_op_enum(tools["ppt_edit"]))
     assert {"chart_recolor_text", "smartart_recolor_text"} <= edit_ops
 
 
@@ -677,8 +713,8 @@ def test_comment_delete(fake_powerpoint: Any) -> None:
 def test_comment_ops_in_enums() -> None:
     srv = build_server()
     tools = {t.name: t for t in asyncio.run(srv.list_tools())}
-    read_ops = set(tools["ppt_read"].inputSchema["properties"]["op"]["enum"])
-    edit_ops = set(tools["ppt_edit"].inputSchema["properties"]["op"]["enum"])
+    read_ops = set(_op_enum(tools["ppt_read"]))
+    edit_ops = set(_op_enum(tools["ppt_edit"]))
     assert "comments" in read_ops
     assert {"comment_add", "comment_reply", "comment_delete"} <= edit_ops
 
@@ -745,8 +781,8 @@ def test_master_set_background(fake_powerpoint: Any) -> None:
 def test_edit_op_enum_includes_theme_master() -> None:
     srv = build_server()
     tools = {t.name: t for t in asyncio.run(srv.list_tools())}
-    read_ops = tools["ppt_read"].inputSchema["properties"]["op"]["enum"]
-    edit_ops = tools["ppt_edit"].inputSchema["properties"]["op"]["enum"]
+    read_ops = _op_enum(tools["ppt_read"])
+    edit_ops = _op_enum(tools["ppt_edit"])
     assert {"theme", "master"} <= set(read_ops)
     assert {
         "theme_set_color",
