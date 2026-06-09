@@ -39,6 +39,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already in every shape listing). Unlike `shape:S:N` — a z-order index that shifts
   down when a lower shape is deleted or restacked — a `shapeid` keeps pointing at the
   same shape across structural edits. Resolves live, so it also survives reorder.
+- **Composite-text recolor for SmartArt & charts** (PPTLIVE-009). A SmartArt diagram
+  / chart has no text anchor, so `format_text` couldn't reach its internal labels —
+  on a dark (or any custom-background) theme the inherited black node / axis / legend
+  text went invisible with no in-place fix, forcing a rebuild from primitives.
+  `SmartArt.recolor_text(color)` recolors every node label; `Chart.recolor_text(color)`
+  recolors every **shown** chart text element (legend, both axis tick labels, title,
+  per-series data labels) plus the `ChartArea` global default. Coarse "recolor all text
+  to X" only, and only what's already displayed (guarded by `HasLegend`/`HasTitle`;
+  axes/data-labels best-effort, so a pie chart's absent axes are skipped). MCP `ppt_edit`
+  ops `chart_recolor_text` / `smartart_recolor_text`; CLI `chart recolor-text` /
+  `smartart recolor-text`. Composite-text *fill* and per-element targeting remain
+  deferred — drop to `.com` for those.
 - **Placeholder ambiguity guard** (PPTLIVE-004). On Two Content / Comparison
   layouts (two generic `object` content placeholders), `ph:S:body` used to silently
   resolve to the *first* one. It now raises `AmbiguousMatchError` (exit 5 / MCP

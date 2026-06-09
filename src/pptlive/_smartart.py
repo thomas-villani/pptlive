@@ -40,6 +40,8 @@ from . import _com
 from .constants import (
     SMARTART_TREE_KINDS,
     MsoSmartArtNodePosition,
+    color_hex,
+    parse_color,
     smartart_layout_name,
 )
 
@@ -208,6 +210,38 @@ class SmartArt:
                 com_node = sa.Nodes.Item(i)
                 com_node.TextFrame2.TextRange.Text = node["text"]
                 self._add_children(com_node, node["children"])
+
+    def recolor_text(self, color: str | int | tuple[int, int, int]) -> dict[str, Any]:
+        """Set the font color of **every** node's text to `color` (one Ctrl-Z).
+
+        A SmartArt diagram has no addressable text frame of its own — its labels
+        live on each node's `TextFrame2` — so there is no per-anchor `format_text`
+        path the way a textbox has. This is the coarse fix PPTLIVE-009 asked for:
+        recolor all node text at once, the move a dark- (or any custom-background)
+        theme needs when the inherited black node text goes invisible.
+
+        `color` is a `"#RRGGBB"` / `"RRGGBB"` hex string, an `(r, g, b)` tuple, or a
+        raw RGB int (same forms as `format_text`'s `color`). Raises `ValueError` for
+        a malformed color (before any COM). Walks `SmartArt.AllNodes` and sets each
+        node's `TextFrame2.TextRange.Font.Fill.ForeColor.RGB` (TextFrame2 colors
+        live on `Font.Fill.ForeColor`, not `Font.Color`). Wrap in `deck.edit(...)`
+        for view preservation + the one-Ctrl-Z fence. Returns
+        `{ok, slide, shape, anchor_id, color, nodes_recolored}`.
+        """
+        rgb = parse_color(color)  # ValueError before any COM
+        with _com.translate_com_errors():
+            allnodes = self.com.AllNodes
+            total = int(allnodes.Count)
+            for i in range(1, total + 1):
+                allnodes.Item(i).TextFrame2.TextRange.Font.Fill.ForeColor.RGB = rgb
+        return {
+            "ok": True,
+            "slide": self._shape.slide.index,
+            "shape": self._shape.index,
+            "anchor_id": self._shape.anchor_id,
+            "color": color_hex(rgb),
+            "nodes_recolored": total,
+        }
 
     def __repr__(self) -> str:
         return f"<SmartArt {self._shape.anchor_id} layout={self.kind!r}>"

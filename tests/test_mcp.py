@@ -527,6 +527,21 @@ def test_chart_read_non_chart_is_not_found(fake_powerpoint: Any) -> None:
     assert "not_found" in str(exc.value)
 
 
+def test_chart_recolor_text(fake_powerpoint: Any) -> None:
+    aid = _add_chart(categories=["Q1", "Q2"], series={"R": [1, 2]})
+    out = ppt_edit("chart_recolor_text", anchor_id=aid, color="#FFFFFF")
+    assert out["ok"] is True
+    assert out["color"] == "#FFFFFF"
+    assert "chart_area" in out["recolored"]
+
+
+def test_chart_recolor_text_requires_color(fake_powerpoint: Any) -> None:
+    aid = _add_chart()
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("chart_recolor_text", anchor_id=aid)
+    assert "invalid_args" in str(exc.value)
+
+
 # ---------------------------------------------------------------------------
 # SmartArt — addressed by the SmartArt shape's anchor_id (shape:S:N)
 # ---------------------------------------------------------------------------
@@ -580,11 +595,28 @@ def test_smartart_read_non_smartart_is_not_found(fake_powerpoint: Any) -> None:
     assert "not_found" in str(exc.value)
 
 
+def test_smartart_recolor_text(fake_powerpoint: Any) -> None:
+    aid = _add_smartart(smartart_kind="process", nodes=["A", "B", "C"])
+    out = ppt_edit("smartart_recolor_text", anchor_id=aid, color="#FFFFFF")
+    assert out["ok"] is True
+    assert out["color"] == "#FFFFFF"
+    assert out["nodes_recolored"] == 3
+
+
+def test_smartart_recolor_text_requires_color(fake_powerpoint: Any) -> None:
+    aid = _add_smartart()
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("smartart_recolor_text", anchor_id=aid)
+    assert "invalid_args" in str(exc.value)
+
+
 def test_read_op_enum_includes_smartart() -> None:
     srv = build_server()
     tools = {t.name: t for t in asyncio.run(srv.list_tools())}
     assert "smartart" in tools["ppt_read"].inputSchema["properties"]["op"]["enum"]
     assert "smartart_set_nodes" in tools["ppt_edit"].inputSchema["properties"]["op"]["enum"]
+    edit_ops = set(tools["ppt_edit"].inputSchema["properties"]["op"]["enum"])
+    assert {"chart_recolor_text", "smartart_recolor_text"} <= edit_ops
 
 
 # ---------------------------------------------------------------------------

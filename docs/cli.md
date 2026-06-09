@@ -509,6 +509,29 @@ pptlive chart set-data --slide 4 --shape 6 \
 `--chart-type` is a friendly name (`column`, `line`, `pie`, …); see
 `--help` for the full `--chart-type` choices.
 
+### Recolor chart text — `chart recolor-text`
+
+A chart has no text anchor, so `format-text` can't reach its internal text. Use
+`chart recolor-text` for the coarse "recolor all of it" move — the fix when the
+inherited (black) axis/legend text is invisible on a dark or custom background.
+
+```bash
+pptlive chart recolor-text --slide 6 --shape 2 --color "#FFFFFF"
+```
+
+```json
+{
+  "ok": true, "slide": 6, "shape": 2, "anchor_id": "shape:6:2", "color": "#FFFFFF",
+  "recolored": ["chart_area", "legend", "category_axis", "value_axis"],
+  "series_data_labels": 0
+}
+```
+
+`recolored` lists the elements actually touched: it only recolors text that's
+**shown** (legend/title guarded by their presence; axis tick labels and data
+labels best-effort, so a pie chart's absent axes are simply skipped). It never
+adds a legend, title, or labels the deck didn't already display.
+
 ---
 
 ## SmartArt — the `smartart` group
@@ -539,6 +562,21 @@ objects (`children` nests recursively). Flat layouts (`process`, `cycle`,
 `list`, `pyramid`, `venn`) take any number of top-level nodes; tree layouts
 (`hierarchy`, `orgchart`) take a **single root** with nested children — passing
 more than one top-level node to a tree layout is an error (exit 1).
+
+### Recolor node text — `smartart recolor-text`
+
+Node labels live on each node's text frame, with no per-anchor handle, so
+`smartart recolor-text` recolors **every** node at once — the fix when the
+inherited (black) node text is invisible on a dark or custom background.
+
+```bash
+pptlive smartart recolor-text --slide 3 --shape 2 --color "#FFFFFF"
+```
+
+```json
+{ "ok": true, "slide": 3, "shape": 2, "anchor_id": "shape:3:2",
+  "color": "#FFFFFF", "nodes_recolored": 4 }
+```
 
 ---
 

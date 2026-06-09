@@ -15,7 +15,7 @@ import pytest
 from click.testing import CliRunner
 
 from pptlive.cli.main import main
-from pptlive.constants import smartart_layout_for, smartart_layout_name
+from pptlive.constants import parse_color, smartart_layout_for, smartart_layout_name
 from pptlive.exceptions import AnchorNotFoundError
 
 
@@ -230,3 +230,55 @@ def test_cli_smartart_set_nodes(fake_powerpoint) -> None:  # type: ignore[no-unt
 def test_cli_smartart_read_non_smartart_is_exit_2(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     result = CliRunner().invoke(main, ["smartart", "read", "--slide", "2", "--shape", "3"])
     assert result.exit_code == 2, result.output
+
+
+# -- recolor_text (PPTLIVE-009) ---------------------------------------------
+
+
+def test_smartart_recolor_text_recolors_every_node(deck) -> None:  # type: ignore[no-untyped-def]
+    sa = deck.slides[3].shapes.add_smartart(
+        "process", ["A", "B", {"text": "C", "children": ["c1", "c2"]}]
+    )
+    info = sa.smartart.recolor_text("#112233")
+    assert info["ok"] is True
+    assert info["color"] == "#112233"
+    assert info["nodes_recolored"] == 5  # A, B, C, c1, c2 (AllNodes, depth-first)
+    allnodes = sa.com.SmartArt.AllNodes
+    expected = parse_color("#112233")
+    assert allnodes.Count == 5
+    for i in range(1, allnodes.Count + 1):
+        node = allnodes.Item(i)
+        assert int(node.TextFrame2.TextRange.Font.Fill.ForeColor.RGB) == expected
+
+
+def test_smartart_recolor_text_bad_color_raises(deck) -> None:  # type: ignore[no-untyped-def]
+    sa = deck.slides[3].shapes.add_smartart("process", ["A"])
+    with pytest.raises(ValueError):
+        sa.smartart.recolor_text("nope")
+
+
+def test_cli_smartart_recolor_text(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    add = CliRunner().invoke(
+        main,
+        [
+            "shape",
+            "add",
+            "--slide",
+            "3",
+            "--kind",
+            "smartart",
+            "--smartart-kind",
+            "process",
+            "--nodes",
+            '["A","B","C"]',
+        ],
+    )
+    n = int(_json(add)["anchor_id"].split(":")[2])
+    result = CliRunner().invoke(
+        main,
+        ["smartart", "recolor-text", "--slide", "3", "--shape", str(n), "--color", "#FFFFFF"],
+    )
+    assert result.exit_code == 0, result.output
+    info = _json(result)
+    assert info["color"] == "#FFFFFF"
+    assert info["nodes_recolored"] == 3

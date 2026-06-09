@@ -1389,7 +1389,7 @@ def table_delete_row(ctx: click.Context, slide_index: int, shape_index: int, row
 
 @click.group(name="chart")
 def chart() -> None:
-    """Read + edit charts (a chart is a shape; data lives in an embedded Excel)."""
+    """Read + edit charts: read, set-type, set-data, recolor-text (a chart is a shape)."""
 
 
 def _resolve_chart(deck: Presentation, slide_index: int, shape_index: int) -> Any:
@@ -1483,6 +1483,42 @@ def chart_set_data(
     _run(ctx, go)
 
 
+@chart.command(name="recolor-text")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--shape", "shape_index", type=int, required=True, help="1-based shape z-order index."
+)
+@click.option(
+    "--color",
+    "color",
+    required=True,
+    help='Text color as "#RRGGBB" (or "RRGGBB"). Recolors every shown chart text '
+    "element: legend, axis tick labels, title, data labels.",
+)
+@click.pass_context
+def chart_recolor_text(ctx: click.Context, slide_index: int, shape_index: int, color: str) -> None:
+    """Recolor ALL of a chart's text (legend/axes/title/data labels; one Ctrl-Z).
+
+    The coarse fix for a chart whose inherited (black) axis/legend text is
+    invisible on a custom background — no rebuild from primitives needed.
+    """
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            ch = _resolve_chart(deck, slide_index, shape_index)
+            with deck.edit(f"CLI: recolor chart text shape:{slide_index}:{shape_index}"):
+                info = ch.recolor_text(color)
+            emit(
+                info,
+                as_text=not ctx.obj["as_json"],
+                text=f"recolored {info['anchor_id']} text -> {info['color']} "
+                f"({', '.join(info['recolored'])})",
+            )
+
+    _run(ctx, go)
+
+
 # ---------------------------------------------------------------------------
 # smartart read | set-nodes  (a SmartArt diagram is a shape; content is a tree)
 # ---------------------------------------------------------------------------
@@ -1490,7 +1526,7 @@ def chart_set_data(
 
 @click.group(name="smartart")
 def smartart() -> None:
-    """Read + edit SmartArt diagrams (a diagram is a shape; content is a node tree)."""
+    """Read + edit SmartArt: read, set-nodes, recolor-text (a diagram is a shape)."""
 
 
 def _resolve_smartart(deck: Presentation, slide_index: int, shape_index: int) -> Any:
@@ -1540,6 +1576,43 @@ def smartart_set_nodes(ctx: click.Context, slide_index: int, shape_index: int, n
                 sa.set_nodes(parsed or [])
             info = sa.read()
             emit(info, as_text=not ctx.obj["as_json"], text=_fmt_smartart_read(info))
+
+    _run(ctx, go)
+
+
+@smartart.command(name="recolor-text")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--shape", "shape_index", type=int, required=True, help="1-based shape z-order index."
+)
+@click.option(
+    "--color",
+    "color",
+    required=True,
+    help='Text color as "#RRGGBB" (or "RRGGBB"). Recolors every node label.',
+)
+@click.pass_context
+def smartart_recolor_text(
+    ctx: click.Context, slide_index: int, shape_index: int, color: str
+) -> None:
+    """Recolor ALL of a SmartArt diagram's node text (one Ctrl-Z).
+
+    The coarse fix for a diagram whose inherited (black) node labels are
+    invisible on a custom background — no rebuild from primitives needed.
+    """
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            sa = _resolve_smartart(deck, slide_index, shape_index)
+            with deck.edit(f"CLI: recolor smartart text shape:{slide_index}:{shape_index}"):
+                info = sa.recolor_text(color)
+            emit(
+                info,
+                as_text=not ctx.obj["as_json"],
+                text=f"recolored {info['anchor_id']} text -> {info['color']} "
+                f"({info['nodes_recolored']} nodes)",
+            )
 
     _run(ctx, go)
 

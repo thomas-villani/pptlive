@@ -444,6 +444,10 @@ def _edit_core(deck: Presentation, op: str, p: dict[str, Any]) -> dict[str, Any]
         )
         chart.set_data(p["categories"], p["series"])
         return chart.read()
+    if op == "chart_recolor_text":
+        chart = _resolve_shape(deck, p.get("anchor_id")).chart
+        _require(p.get("color") is not None, "edit op='chart_recolor_text' requires `color`")
+        return chart.recolor_text(p["color"])
 
     # -- SmartArt (addressed by the SmartArt shape's anchor_id) ------------
     if op == "smartart_set_nodes":
@@ -451,6 +455,10 @@ def _edit_core(deck: Presentation, op: str, p: dict[str, Any]) -> dict[str, Any]
         _require(p.get("nodes") is not None, "edit op='smartart_set_nodes' requires `nodes`")
         sa.set_nodes(p["nodes"])
         return sa.read()
+    if op == "smartart_recolor_text":
+        sa = _resolve_shape(deck, p.get("anchor_id")).smartart
+        _require(p.get("color") is not None, "edit op='smartart_recolor_text' requires `color`")
+        return sa.recolor_text(p["color"])
 
     # -- theme (deck-wide palette + typefaces) -----------------------------
     if op == "theme_set_color":
@@ -653,7 +661,9 @@ def ppt_edit(
         "table_delete_row",
         "chart_set_type",
         "chart_set_data",
+        "chart_recolor_text",
         "smartart_set_nodes",
+        "smartart_recolor_text",
         "theme_set_color",
         "theme_set_font",
         "master_format_text_style",
@@ -766,8 +776,16 @@ def ppt_edit(
       Series are plotted in insertion order; note bar charts render series
       bottom-to-top, so the first series sits at the bottom (Excel/PowerPoint
       convention, not a reorder).
+    - "chart_recolor_text": set `color` on EVERY shown chart text element (legend,
+      axis tick labels, title, data labels) at once — the coarse fix when inherited
+      black chart text is invisible on a custom background. A chart has no text
+      anchor, so this is the only color path for its internal text.
     - "smartart_set_nodes": replace the diagram's `nodes` — a list of strings
       (flat) and/or {text, children} objects (nested; tree layouts take one root).
+    - "smartart_recolor_text": set `color` on EVERY node's label at once — the
+      coarse fix when inherited black node text is invisible on a custom
+      background. A SmartArt diagram has no text anchor, so this is its only text
+      color path.
 
     To edit a table cell's text, write to its `cell:S:N:R:C` anchor with op="write".
 

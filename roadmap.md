@@ -12,9 +12,23 @@ honestly, and sketches the wrapper shape so it slots into the established
 > `IMPLEMENTATION.md`): attach, reads, text, slide lifecycle, shapes & geometry,
 > tables, charts, SmartArt, render, live selection, slide-show control, and
 > theme/master styling — across the JSON CLI **and** the five-tool MCP surface.
-> The object model is well covered for **structure and content**. What's thin is
-> **appearance and behaviour** (fills, lines, motion, navigation), the **review
-> loop** (comments), and a handful of **specced-but-unbuilt** items.
+> The object model is well covered for **structure and content**.
+>
+> **Shipped since this roadmap was written (2026-06-07 → -09):** **v1.0
+> find/replace** (fuzzy, deck-wide); a round of **MCP test-feedback fixes** (`\n`
+> → real paragraphs, placeholder-ambiguity guard, richer formatting reads,
+> view-preservation hardening); the first **shape-styling** cut — **`set_fill`**
+> (solid fill + border colour/weight, `"none"` = transparent), **`reorder`**
+> (z-order front/back/forward/backward), and the delete-proof **`shapeid:S:ID`**
+> anchor; and **composite-text recolor** (`SmartArt.recolor_text` /
+> `Chart.recolor_text` — the only colour path for diagram-node / chart-element
+> text). So the v1.2 styling gate is **partway open** and the `shape:S:N` drift
+> hazard now has a stable-handle answer.
+>
+> What's still thin is the rest of **appearance and behaviour** (gradients,
+> effects, motion, navigation), the **review loop** (comments — spiked, not yet
+> built), and a handful of **specced-but-unbuilt** items (the CLI `exec` verb,
+> export/save).
 
 **Status legend:** `[ ]` not started · `[~]` in progress · `[x]` shipped.
 Spike-first remains the rule: confirm each COM behaviour on a live deck, write a
@@ -28,7 +42,7 @@ one-line finding, *then* harden.
 | ---- | ----- | ------- | -------- |
 | **v1.0** | **find / replace + `exec` CLI** | Last wordlive-parity gap; deck-wide search is table-stakes for "change X everywhere" | Low — `TextRange.Find/Replace` exist |
 | **v1.1** | **Output: save & PDF/image export** | Trivial COM, huge practical payoff ("export the deck to PDF"); the one thing every agent eventually wants | Low — `ExportAsFixedFormat`, `SaveAs` |
-| **v1.2** | **Shape styling — fill / line / effects** | Biggest *authoring* gap: agents can place a shape but can't colour it; blocks good-looking decks | Low-med — fills are easy, gradient stops fiddly |
+| **v1.2** | **Shape styling — fill / line / effects** *(started: solid fill/line + z-order shipped; gradients/effects/per-slide bg open)* | Biggest *authoring* gap: agents can place a shape but can't colour it; blocks good-looking decks | Low-med — fills are easy, gradient stops fiddly |
 | **v1.3** | **Review loop — comments** | "Address the reviewer's comments" is a killer workflow; read is side-effect-free & polite | **Low** — read (incl. threads), add & reply all verified live; only open bit is sourcing `ProviderID`/`UserID` on a comment-less deck |
 | **v1.4** | **Navigation & structure — hyperlinks, sections, headers/footers** | Makes multi-slide decks navigable and organized | Low |
 | **v1.5** | **Motion — transitions & animations** | Polish; transitions are trivial, animations are the long tail | Med — `TimeLine` effect enums are large/fiddly |
@@ -147,16 +161,19 @@ The biggest **authoring** gap. Today an agent can *place* a shape and set its
 a slide actually look designed. This is the per-shape visual counterpart to
 v0.3's `format_text` and v0.9's theme palette.
 
-- [ ] **`Shape.fill` / `set_fill(...)`** over `Shape.Fill` (`MsoFillFormat`):
-  solid (`.Solid()` + `.ForeColor.RGB`), transparency (`.Transparency`),
-  gradient (`.OneColorGradient`/`.TwoColorGradient`/`.PresetGradient` +
-  `.GradientStops`), picture (`.UserPicture(path)`), patterned, or none
-  (`.Visible = msoFalse`). Reuse `parse_color`/`color_hex` (R-low-byte RGB long,
-  same as `Font.Color.RGB` and the theme palette).
-- [ ] **`Shape.line` / `set_line(...)`** over `Shape.Line` (`MsoLineFormat`):
-  `.ForeColor.RGB`, `.Weight` (points), `.DashStyle` (`MsoLineDashStyle`),
-  `.Visible`, arrowheads (`.BeginArrowheadStyle`/`.EndArrowheadStyle` — relevant
-  once connectors land).
+- [~] **`Shape.set_fill(...)` — SOLID FILL + BORDER SHIPPED (2026-06-08,
+  PPTLIVE-007).** A single `set_fill(fill=, line=, line_width=)` (not the separate
+  `set_fill`/`set_line` originally sketched) sets the shape's **solid fill** and/or
+  **border** — a `#RRGGBB` / `(r,g,b)` / raw-int colour or `"none"` (transparent
+  fill / no border, via `Fill.Visible = msoFalse`). `fill=`/`line=`/`line_width=`
+  also ride on `add_shape`/`add_textbox`; every shape read now reports `fill`/`line`
+  (`{color, visible[, weight]}`) with the `color_hex_or_none` theme-sentinel guard.
+  Wired library + CLI (`shape fill`, `shape add --fill/--line/--line-width`) + MCP
+  (`format` `fill_color`/`line_color`/`line_width`, `shape_add`). Reuses
+  `parse_color`/`color_hex` (R-low-byte RGB long). **Still open:** `.Transparency`
+  (partial alpha), gradient (`.OneColorGradient`/`.TwoColorGradient`/`.PresetGradient`
+  + `.GradientStops`), picture (`.UserPicture(path)`), patterned fills, and line
+  `.DashStyle` / arrowheads — the fiddly/long-tail cuts below.
 - [ ] **Effects (second cut):** `Shape.Shadow` (`MsoShadowFormat`),
   `.Glow`, `.SoftEdge`, `.Reflection`, `.ThreeD`. Start with shadow (the common
   ask); the rest are opportunistic.
@@ -167,9 +184,12 @@ v0.3's `format_text` and v0.9's theme palette.
 - **Constants:** `MsoFillType`, `MsoGradientStyle`/`MsoPresetGradientType`,
   `MsoLineDashStyle`, `MsoPatternType`, `MsoShadowType` — added as each verb
   needs them (don't pre-populate, per convention #7).
-- **CLI/MCP:** a `format-shape` verb (`--fill`/`--fill-gradient`/`--line-color`/
-  `--line-weight`/`--line-dash`/`--shadow`); MCP `ppt_edit` ops
-  `shape_set_fill`/`shape_set_line`. All through `deck.edit()`.
+- **CLI/MCP:** the solid cut shipped as CLI **`shape fill`** + `shape add
+  --fill/--line/--line-width` and MCP `format` (`fill_color`/`line_color`/
+  `line_width`) — *not* the originally-sketched `format-shape` /
+  `shape_set_fill`/`shape_set_line` ops. The remaining `--fill-gradient`/
+  `--line-dash`/`--shadow` knobs land with their cuts above. All through
+  `deck.edit()`.
 - **Spike:** gradient stops are the fiddly bit (`GradientStops.Insert2(color,
   position, transparency, brightness)` ordering/clearing) — ship **solid + line +
   simple two-colour gradient** first, defer multi-stop. Confirm `UserPicture`
@@ -294,22 +314,37 @@ speculatively.
   borders (`Cell.Shape.Fill`, `Cell.Borders`), column width / row height,
   built-in table styles (`Table.ApplyStyle(styleId)`), header/banding flags
   (`.FirstRow`/`.HorizBanding`). Extends v0.5.
-- [ ] **Deeper charts.** Title, legend, axes (`Chart.Axes(...)`), data labels,
-  per-series colour. Extends v0.7b's `set_type`/`set_data` from *data* to
+- [~] **Deeper charts / SmartArt — TEXT COLOUR SHIPPED (2026-06-09,
+  PPTLIVE-009).** `Chart.recolor_text(color)` recolors every shown chart text
+  element (legend, both axis tick labels, title, per-series data labels) +
+  `ChartArea` default; `SmartArt.recolor_text(color)` recolors every node label —
+  the only colour path for these anchor-less composite shapes (CLI `chart/smartart
+  recolor-text`; MCP `chart_recolor_text`/`smartart_recolor_text`). Coarse "all
+  text → X" only. **Still open:** title/legend/axis *content & geometry*
+  (`Chart.Axes(...)`, `.HasTitle` text), per-element (vs. whole-shape) text
+  targeting, and **fill** colour — per-series chart fill and SmartArt node-shape
+  fill (no text-anchor; needs its own spike). Extends v0.7b/v0.8 from *content* to
   *appearance*.
-- [ ] **Shape arrangement.** `ShapeRange.Group`/`Ungroup`, `Shape.ZOrder(
-  msoBringToFront/…)`, `ShapeRange.Align`/`.Distribute`, and **connectors**
+- [~] **Shape arrangement — Z-ORDER SHIPPED (2026-06-08, PPTLIVE-008).**
+  `Shape.reorder("front"|"back"|"forward"|"backward")` over `Shape.ZOrder` returns
+  the new 1-based slot (CLI `shape order --to`; MCP `shape_order`) — so a new
+  background panel slides *behind* existing content. **Still open:**
+  `ShapeRange.Group`/`Ungroup`, `.Align`/`.Distribute`, and **connectors**
   (`Shapes.AddConnector` + `ConnectorFormat.BeginConnect(shape, site)`) for
-  agent-built diagrams. Note: grouping **changes z-order indices** — interacts
-  with the `shape:S:N` drift hazard; document it.
+  agent-built diagrams. Note: grouping **changes z-order indices** — interacts with
+  the `shape:S:N` drift hazard (now mitigable via `shapeid:S:ID`, below); document it.
 - [ ] **Media.** `Shapes.AddMediaObject2` (video/audio embed/link),
   `Shapes.AddOLEObject`. Niche but occasionally asked.
-- [ ] **Tags as a durable re-identification handle.** `Shape.Tags` /
-  `Slide.Tags` / `Presentation.Tags` (`.Add(name, value)`, `.Item(name)`) are
-  arbitrary key/value pairs **persisted in the file** — a *stabler* re-find
-  handle than the volatile `shape:S:N` z-order and more general than `alt_text`
-  (which only suits pictures). Could become the recommended agent
-  "remember-this-shape" mechanism. Cross-cutting; low cost.
+- [~] **Durable re-identification handle — `shapeid:S:ID` SHIPPED (2026-06-08,
+  PPTLIVE-010); file-persisted Tags still open.** `slide.shapes.by_id(ID)` /
+  `anchor_by_id("shapeid:S:ID")` resolves a shape by its stable `Shape.Id` (the
+  `id` already in every shape listing) — delete-proof and restack-proof, unlike the
+  volatile `shape:S:N` z-order index, and more general than `alt_text` (pictures
+  only). It is the recommended "remember-this-shape" handle **within a session**.
+  **Still open — `Shape.Tags`** (`.Add(name, value)`/`.Item(name)`): arbitrary
+  key/value pairs **persisted in the file**, so they survive *save/reopen* where a
+  runtime `Shape.Id` may not — the cross-session complement to `shapeid`. Low cost;
+  pull in when a workflow needs cross-session re-find.
 - [ ] **Document properties / metadata.** `Presentation.BuiltInDocumentProperties`
   (title, author, subject, keywords) + `CustomDocumentProperties`. Cheap read,
   occasional write.

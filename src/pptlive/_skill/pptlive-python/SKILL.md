@@ -147,6 +147,13 @@ with deck.edit("Add a process diagram"):
     sa = deck.slides[3].shapes.add_smartart("process", ["Discover", "Design", "Build"]).smartart
     sa.set_nodes([{"text": "CEO", "children": ["VP Eng", "VP Sales"]}])   # flat list or tree
 tree = sa.read()                                      # {layout, nodes:[{text, level, children}]}
+
+# Recolor composite text — a chart/SmartArt has no text anchor, so format_text
+# can't reach it; recolor_text is the only color path. The coarse fix when the
+# inherited black text goes invisible on a dark (or any custom) background.
+with deck.edit("Make the diagram readable on dark"):
+    chart.recolor_text("#FFFFFF")   # every shown chart element: legend/axes/title/data labels
+    sa.recolor_text("#FFFFFF")      # every SmartArt node label
 ```
 
 ## Deck-wide styling — theme + master (global, but still one Ctrl-Z)
