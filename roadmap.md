@@ -22,13 +22,15 @@ honestly, and sketches the wrapper shape so it slots into the established
 > (z-order front/back/forward/backward), and the delete-proof **`shapeid:S:ID`**
 > anchor; and **composite-text recolor** (`SmartArt.recolor_text` /
 > `Chart.recolor_text` — the only colour path for diagram-node / chart-element
-> text). So the v1.2 styling gate is **partway open** and the `shape:S:N` drift
-> hazard now has a stable-handle answer.
+> text); and **v1.3 review comments** — threaded read + add/reply/delete
+> (`slide.comments` / `deck.comments()`), the review loop that makes pptlive feel
+> indispensable on a shared deck. So the v1.2 styling gate is **partway open**, the
+> `shape:S:N` drift hazard now has a stable-handle answer, and the collaboration
+> loop is in.
 >
 > What's still thin is the rest of **appearance and behaviour** (gradients,
-> effects, motion, navigation), the **review loop** (comments — spiked, not yet
-> built), and a handful of **specced-but-unbuilt** items (the CLI `exec` verb,
-> export/save).
+> effects, motion, navigation) and a handful of **specced-but-unbuilt** items (the
+> CLI `exec` verb, export/save).
 
 **Status legend:** `[ ]` not started · `[~]` in progress · `[x]` shipped.
 Spike-first remains the rule: confirm each COM behaviour on a live deck, write a
@@ -43,7 +45,7 @@ one-line finding, *then* harden.
 | **v1.0** | **find / replace + `exec` CLI** | Last wordlive-parity gap; deck-wide search is table-stakes for "change X everywhere" | Low — `TextRange.Find/Replace` exist |
 | **v1.1** | **Output: save & PDF/image export** | Trivial COM, huge practical payoff ("export the deck to PDF"); the one thing every agent eventually wants | Low — `ExportAsFixedFormat`, `SaveAs` |
 | **v1.2** | **Shape styling — fill / line / effects** *(started: solid fill/line + z-order shipped; gradients/effects/per-slide bg open)* | Biggest *authoring* gap: agents can place a shape but can't colour it; blocks good-looking decks | Low-med — fills are easy, gradient stops fiddly |
-| **v1.3** | **Review loop — comments** | "Address the reviewer's comments" is a killer workflow; read is side-effect-free & polite | **Low** — read (incl. threads), add & reply all verified live; only open bit is sourcing `ProviderID`/`UserID` on a comment-less deck |
+| **v1.3** | **Review loop — comments** *(SHIPPED 2026-06-09 — read + add/reply/delete, threaded; resolve-state not COM-readable)* | "Address the reviewer's comments" is a killer workflow; read is side-effect-free & polite | **Low** — read (incl. threads), add & reply all verified live; comment-less-deck identity solved via legacy-`Add` fallback |
 | **v1.4** | **Navigation & structure — hyperlinks, sections, headers/footers** | Makes multi-slide decks navigable and organized | Low |
 | **v1.5** | **Motion — transitions & animations** | Polish; transitions are trivial, animations are the long tail | Med — `TimeLine` effect enums are large/fiddly |
 | **opportunistic** | deeper tables/charts, arrangement, media, tags, metadata | Pull in on demand when a workflow needs it | varies |
@@ -197,7 +199,7 @@ v0.3's `format_text` and v0.9's theme palette.
 
 ---
 
-## v1.3 — review loop: comments
+## v1.3 — review loop: comments — SHIPPED (2026-06-09)
 
 "Read the reviewer's comments and address them" is one of the highest-value
 agent workflows on a real, shared deck — and **reading is side-effect-free and
@@ -205,7 +207,16 @@ perfectly polite** (no view move, no edit fence). This is the feature most
 likely to make pptlive feel *indispensable* on a working deck rather than a
 clean-room one.
 
-- [x] **`Slide.comments` (read) — GATE CLEARED, COM sees UI comments.**
+**Built** (`_comments.py`, see `IMPLEMENTATION.md` §v1.3): `slide.comments` (per-slide,
+1-based, `add`/`reply`/`delete`/`list`, threaded), `deck.comments()` deck-wide roll-up;
+CLI `comment list/add/reply/delete`; MCP `ppt_read` `comments` + `ppt_edit`
+`comment_add`/`comment_reply`/`comment_delete`. Identity for the modern `Add2` is
+sourced off an existing comment, with a legacy identity-free `Add` fallback on a
+comment-less deck (resolving the one open question below). **Not built** (COM doesn't
+expose it): resolve/reopen — `Comment.Status`/`.Resolved` are "no longer supported by
+this version".
+
+- [x] **`Slide.comments` (read) — SHIPPED; COM sees UI comments incl. threads.**
   `Slide.Comments` collection: per comment `.Author`, `.AuthorInitials`,
   `.Text`, `.DateTime`, `.Left`/`.Top` (anchor position). Surface as `comments:S`
   reads → `[{author, text, datetime, anchor}]`, plus a deck-wide roll-up.
@@ -215,7 +226,7 @@ clean-room one.
   COM walk — `Author`, `AuthorInitials`, `Text`, tz-aware `DateTime`,
   `Left`/`Top`. So v1.3 read ships **full coverage**, not the feared
   legacy-only-with-caveat. (Build the wrapper; this is no longer a risk.)
-- [x] **Add / reply — RESOLVED, threaded write works.** Both verified live on a
+- [x] **Add / reply / delete — SHIPPED, threaded write works.** Both verified live on a
   temp slide (net-zero), using identity keys discovered from a real comment.
   - **Add a comment:** `Slide.Comments.Add2(Left, Top, Author, AuthorInitials,
     Text, ProviderID, UserID)` — the 7-arg modern form. (The 5-arg call fails
@@ -227,13 +238,12 @@ clean-room one.
     reply read back. Replies inherit the parent's anchor `Left`/`Top`.
   - **Identity source — the one real design question.** `ProviderID`/`UserID`
     are the signed-in Office account (`ProviderID="AD"`,
-    `UserID="S::user@domain::<guid>"` on this box). The wrapper can **lift them
-    off any existing comment in the deck** (`_discover_identity`), but a deck
-    with *zero* comments has no source. Decide the fallback at build time:
-    (a) read the app/account identity if COM exposes it; (b) fall back to legacy
-    `Comments.Add(Left, Top, Author, Initials, Text)` (no IDs needed — verified
-    working, though it may produce a non-threaded/legacy comment); or (c) require
-    the caller to pass identity explicitly. **(a) needs its own micro-spike.**
+    `UserID="S::user@domain::<guid>"` on this box). The wrapper **lifts them off
+    any existing comment in the deck** (`_discover_identity`). **RESOLVED at build
+    (2026-06-09): option (b)** — on a deck with *zero* comments to source from,
+    `add` falls back to legacy `Comments.Add(Left, Top, Author, Initials, Text)`
+    (no IDs needed). Option (a) (reading the app/account identity directly, for a
+    *threaded* first comment) stays deferred behind its own micro-spike.
   - **Authorship can't be spoofed (caveat to document).** `Add2` **ignores the
     passed `Author`/`AuthorInitials` and binds the comment to the account behind
     `UserID`** — we passed `"Spike Author"`/`"SA"` and it read back as the
@@ -250,9 +260,10 @@ clean-room one.
   (`"no longer supported by this version"`), `.Status`, `.Resolved` — so
   comment *resolution state* is not COM-readable here; a "resolve comment" verb
   would need its own spike (likely not exposed).
-- **CLI/MCP:** `comments read --slide S` / deck-wide (recurse replies into a
-  thread tree); MCP `ppt_read` op `comments`. Add/reply as `ppt_edit` ops
-  `comment_add` / `comment_reply` (identity sourced per the design note above).
+- **CLI/MCP (SHIPPED):** CLI `comment list [--slide S]` (per-slide / deck-wide
+  roll-up, replies nested into a thread tree), `comment add/reply/delete`; MCP
+  `ppt_read` op `comments` and `ppt_edit` ops `comment_add` / `comment_reply` /
+  `comment_delete` (identity sourced per the design note above).
 
 ---
 

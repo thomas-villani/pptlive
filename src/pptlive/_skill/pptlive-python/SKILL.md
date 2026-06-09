@@ -80,6 +80,7 @@ deck-wide `range:`.
 | `para:S:N:P`   | paragraph P (1-based) of shape N on slide S |
 | `cell:S:N:R:C` | cell (row R, col C) of the table in shape N on slide S — a `Cell` *is* an anchor |
 | `notes:S`      | speaker-notes body of slide S |
+| `comments:S`   | review comments on slide S — a **container** read via `slide.comments` (not an `Anchor`); one comment is `(slide, 1-based index)` |
 | `here:`        | whatever the user has selected right now (opt-in) |
 
 `body` also matches the generic **content** placeholder, which reads back with
@@ -155,6 +156,25 @@ with deck.edit("Make the diagram readable on dark"):
     chart.recolor_text("#FFFFFF")   # every shown chart element: legend/axes/title/data labels
     sa.recolor_text("#FFFFFF")      # every SmartArt node label
 ```
+
+## Comments — threaded review (read + add/reply/delete)
+
+```python
+roll = deck.comments()                          # {total, slides:[{slide, comments:[...]}]}
+for c in deck.slides[1].comments:               # per-slide; 1-based, iterable
+    print(c.author, c.text, [r.text for r in c.replies])
+
+with deck.edit("Respond to review"):
+    c = deck.slides[2].comments.add("Please cite a source.")   # binds to the signed-in account
+    deck.slides[1].comments[1].reply("Done.")                  # threaded reply
+    deck.slides[1].comments[3].delete()                        # removes the comment + its replies
+```
+
+Comments attach to a slide at an `(x, y)` point and are threaded. `add` sources the
+modern `Add2` identity off an existing comment, falling back to the legacy
+identity-free add on a comment-less deck; the passed `author`/`initials` reach only
+that fallback (`Add2` binds to the account). No `resolve()` — comment resolution
+state isn't COM-readable.
 
 ## Deck-wide styling — theme + master (global, but still one Ctrl-Z)
 

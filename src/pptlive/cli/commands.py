@@ -114,6 +114,39 @@ def _fmt_replace_summary(replacements: list[dict[str, Any]]) -> str:
     return f"replaced {n} occurrence{'s' if n != 1 else ''}"
 
 
+def _fmt_comment(c: dict[str, Any], *, indent: str = "") -> list[str]:
+    """Render one comment (and its reply thread) as indented text lines."""
+    when = c.get("datetime") or ""
+    head = f"{indent}[{c.get('index')}] {c.get('author') or '?'}"
+    if when:
+        head += f" ({when})"
+    lines = [f"{head}: {c.get('text') or ''}"]
+    for reply in c.get("replies") or []:
+        lines.extend(_fmt_comment(reply, indent=indent + "    ↳ "))
+    return lines
+
+
+def _fmt_comment_list(payload: Any) -> str:
+    """Text view of a per-slide list or a deck-wide `{total, slides:[...]}` rollup."""
+    if isinstance(payload, dict):  # deck-wide rollup
+        slides = payload.get("slides") or []
+        if not slides:
+            return "(no comments)"
+        lines: list[str] = []
+        for entry in slides:
+            lines.append(f"slide {entry.get('slide')}:")
+            for c in entry.get("comments") or []:
+                lines.extend(_fmt_comment(c, indent="  "))
+        return "\n".join(lines)
+    # per-slide list
+    if not payload:
+        return "(no comments)"
+    lines = []
+    for c in payload:
+        lines.extend(_fmt_comment(c))
+    return "\n".join(lines)
+
+
 def _fmt_shapes(shapes: list[dict[str, Any]]) -> str:
     if not shapes:
         return "(no shapes)"
@@ -340,6 +373,7 @@ def register(group: click.Group) -> None:
     group.add_command(table)
     group.add_command(chart)
     group.add_command(smartart)
+    group.add_command(comment)
     group.add_command(theme)
     group.add_command(master)
     group.add_command(selection_cmd)
@@ -1612,6 +1646,144 @@ def smartart_recolor_text(
                 as_text=not ctx.obj["as_json"],
                 text=f"recolored {info['anchor_id']} text -> {info['color']} "
                 f"({info['nodes_recolored']} nodes)",
+            )
+
+    _run(ctx, go)
+
+
+# ---------------------------------------------------------------------------
+# comment — review comments (list / add / reply / delete); threaded, per-slide
+# ---------------------------------------------------------------------------
+
+
+@click.group(name="comment")
+def comment() -> None:
+    """Read + write review comments: list, add, reply, delete (threaded, per-slide).
+
+    Comments attach to a slide at an (x, y) point and are addressed by
+    `--slide S --index N` (1-based, see `comment list`). Adding binds to the
+    signed-in Office account; there is no resolve verb (not COM-readable).
+    """
+
+
+@comment.command(name="list")
+@click.option(
+    "--slide",
+    "slide_index",
+    type=int,
+    default=None,
+    help="1-based slide index. Omit for a deck-wide roll-up of every comment.",
+)
+@click.pass_context
+def comment_list(ctx: click.Context, slide_index: int | None) -> None:
+    """List comments on a slide (`--slide S`) or across the whole deck."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            payload: Any = (
+                deck.slides[slide_index].comments.list()
+                if slide_index is not None
+                else deck.comments()
+            )
+            emit(payload, as_text=not ctx.obj["as_json"], text=_fmt_comment_list(payload))
+
+    _run(ctx, go)
+
+
+@comment.command(name="add")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option("--text", "text", required=True, help="The comment body.")
+@click.option("--left", "left", type=float, default=None, help="Anchor x, in points (default 12).")
+@click.option("--top", "top", type=float, default=None, help="Anchor y, in points (default 12).")
+@click.option(
+    "--author",
+    "author",
+    default=None,
+    help="Author name (best-effort; modern Office binds to the signed-in account).",
+)
+@click.option(
+    "--initials",
+    "initials",
+    default=None,
+    help="Author initials (best-effort; modern Office binds to the signed-in account).",
+)
+@click.pass_context
+def comment_add(
+    ctx: click.Context,
+    slide_index: int,
+    text: str,
+    left: float | None,
+    top: float | None,
+    author: str | None,
+    initials: str | None,
+) -> None:
+    """Add a comment to slide S (one Ctrl-Z). Binds to the signed-in account."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            kwargs: dict[str, Any] = {"author": author, "initials": initials}
+            if left is not None:
+                kwargs["left"] = left
+            if top is not None:
+                kwargs["top"] = top
+            with deck.edit(f"CLI: add comment on slide {slide_index}"):
+                c = deck.slides[slide_index].comments.add(text, **kwargs)
+                info = c.to_dict()
+            info = {"ok": True, "slide": slide_index, "comment": info}
+            emit(
+                info,
+                as_text=not ctx.obj["as_json"],
+                text=f"added comment {info['comment']['index']} on slide {slide_index}",
+            )
+
+    _run(ctx, go)
+
+
+@comment.command(name="reply")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--index", "index", type=int, required=True, help="1-based comment index (see `comment list`)."
+)
+@click.option("--text", "text", required=True, help="The reply body.")
+@click.pass_context
+def comment_reply(ctx: click.Context, slide_index: int, index: int, text: str) -> None:
+    """Reply to comment INDEX on slide S (threaded; one Ctrl-Z)."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            with deck.edit(f"CLI: reply to comment {slide_index}:{index}"):
+                rep = deck.slides[slide_index].comments[index].reply(text)
+                info = rep.to_dict()
+            emit(
+                {"ok": True, "slide": slide_index, "parent": index, "reply": info},
+                as_text=not ctx.obj["as_json"],
+                text=f"replied to comment {index} on slide {slide_index}",
+            )
+
+    _run(ctx, go)
+
+
+@comment.command(name="delete")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--index", "index", type=int, required=True, help="1-based comment index (see `comment list`)."
+)
+@click.pass_context
+def comment_delete(ctx: click.Context, slide_index: int, index: int) -> None:
+    """Delete comment INDEX on slide S (takes its replies; one Ctrl-Z)."""
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            with deck.edit(f"CLI: delete comment {slide_index}:{index}"):
+                deck.slides[slide_index].comments[index].delete()
+            emit(
+                {"ok": True, "slide": slide_index, "index": index},
+                as_text=not ctx.obj["as_json"],
+                text=f"deleted comment {index} on slide {slide_index}",
             )
 
     _run(ctx, go)

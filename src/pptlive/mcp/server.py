@@ -236,6 +236,10 @@ def _read_core(ppt: Any, op: str, p: dict[str, Any]) -> dict[str, Any]:
         return _resolve_shape(deck, p.get("anchor_id")).chart.read()
     if op == "smartart":
         return _resolve_shape(deck, p.get("anchor_id")).smartart.read()
+    if op == "comments":
+        if p.get("slide") is not None:
+            return {"slide": p["slide"], "comments": deck.slides[p["slide"]].comments.list()}
+        return deck.comments()
     if op == "theme":
         return deck.theme.read()
     if op == "master":
@@ -460,6 +464,29 @@ def _edit_core(deck: Presentation, op: str, p: dict[str, Any]) -> dict[str, Any]
         _require(p.get("color") is not None, "edit op='smartart_recolor_text' requires `color`")
         return sa.recolor_text(p["color"])
 
+    # -- comments (review thread; addressed by slide + 1-based index) ------
+    if op == "comment_add":
+        _require(p.get("slide") is not None, "edit op='comment_add' requires `slide`")
+        _require(p.get("text") is not None, "edit op='comment_add' requires `text`")
+        kwargs: dict[str, Any] = {"author": p.get("author"), "initials": p.get("initials")}
+        if p.get("left") is not None:
+            kwargs["left"] = p["left"]
+        if p.get("top") is not None:
+            kwargs["top"] = p["top"]
+        c = deck.slides[p["slide"]].comments.add(p["text"], **kwargs)
+        return {"ok": True, "slide": p["slide"], "comment": c.to_dict()}
+    if op == "comment_reply":
+        _require(p.get("slide") is not None, "edit op='comment_reply' requires `slide`")
+        _require(p.get("index") is not None, "edit op='comment_reply' requires `index`")
+        _require(p.get("text") is not None, "edit op='comment_reply' requires `text`")
+        rep = deck.slides[p["slide"]].comments[p["index"]].reply(p["text"])
+        return {"ok": True, "slide": p["slide"], "parent": p["index"], "reply": rep.to_dict()}
+    if op == "comment_delete":
+        _require(p.get("slide") is not None, "edit op='comment_delete' requires `slide`")
+        _require(p.get("index") is not None, "edit op='comment_delete' requires `index`")
+        deck.slides[p["slide"]].comments[p["index"]].delete()
+        return {"ok": True, "slide": p["slide"], "index": p["index"]}
+
     # -- theme (deck-wide palette + typefaces) -----------------------------
     if op == "theme_set_color":
         _require(p.get("slot") is not None, "edit op='theme_set_color' requires `slot`")
@@ -593,6 +620,7 @@ def ppt_read(
         "table",
         "chart",
         "smartart",
+        "comments",
         "theme",
         "master",
         "layouts",
@@ -628,6 +656,11 @@ def ppt_read(
       text anchor id. Pair with `ppt_edit` op="find_replace" to act on the hits.
     - "table" / "chart" / "smartart": the grid / chart data / node tree of the
       table-, chart-, or SmartArt shape at `anchor_id` (a `shape:S:N`).
+    - "comments": review comments. Pass `slide` for one slide's comments (each with
+      its reply thread); omit `slide` for a deck-wide roll-up
+      `{total, slides:[{slide, comments:[...]}]}`. Each comment is
+      `{index, author, initials, text, datetime, left, top, replies:[...]}`; address
+      one for reply/delete by its `slide` + 1-based `index`.
     - "theme": the deck-wide palette (12 slots, e.g. accent1) + heading/body fonts.
     - "master": the master text styles (title/body/default, 5 levels each) + background.
     - "layouts": the layout names that `ppt_edit` slide_add/set_layout accept.
@@ -664,6 +697,9 @@ def ppt_edit(
         "chart_recolor_text",
         "smartart_set_nodes",
         "smartart_recolor_text",
+        "comment_add",
+        "comment_reply",
+        "comment_delete",
         "theme_set_color",
         "theme_set_font",
         "master_format_text_style",
@@ -721,6 +757,8 @@ def ppt_edit(
     script: Literal["latin", "east_asian", "complex_script"] = "latin",
     style: Literal["title", "body", "default"] | None = None,
     level: int | None = None,
+    author: str | None = None,
+    initials: str | None = None,
     doc: str | None = None,
 ) -> dict[str, Any]:
     """Edit the live PowerPoint deck — write/format text, add or arrange slides
@@ -789,6 +827,16 @@ def ppt_edit(
 
     To edit a table cell's text, write to its `cell:S:N:R:C` anchor with op="write".
 
+    Review comments (threaded, per-slide; addressed by `slide` + 1-based `index`):
+    - "comment_add": add a comment to `slide` with body `text` (optional `left`/`top`
+      anchor point in points). Binds to the signed-in Office account — the shown
+      author/initials follow that account, not the optional `author`/`initials`
+      (those reach only the legacy fallback on a deck with no comments to source an
+      identity from). Use op="comments" to find a comment's `index`.
+    - "comment_reply": add a threaded reply (`text`) to comment `index` on `slide`.
+    - "comment_delete": delete comment `index` on `slide` (takes its replies too).
+    There is no resolve/reopen op — comment resolution state is not COM-readable.
+
     Deck-wide styling (global — restyles every inheriting slide; no `anchor_id`):
     - "theme_set_color": set palette `slot` (e.g. "accent1"/"dark1"/"hyperlink") to `color`.
     - "theme_set_font": set the `which`="major" (headings) or "minor" (body) typeface
@@ -853,6 +901,8 @@ def ppt_edit(
         "script": script,
         "style": style,
         "level": level,
+        "author": author,
+        "initials": initials,
     }
     with _mcp_errors(), attach() as ppt:
         deck = _pick_deck(ppt, doc)

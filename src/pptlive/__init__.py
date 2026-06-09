@@ -25,6 +25,7 @@ from . import constants, units
 from ._anchors import Anchor, Notes, Paragraph, ParagraphCollection
 from ._app import PowerPoint, attach, connect
 from ._charts import Chart
+from ._comments import Comment, CommentCollection
 from ._edit import EditScope
 from ._presentation import Presentation, PresentationCollection
 from ._selection import SelectionInfo, SelectionSnapshot
@@ -55,6 +56,8 @@ __all__ = [
     "Cell",
     "Chart",
     "ComError",
+    "Comment",
+    "CommentCollection",
     "EditScope",
     "LayoutNotFoundError",
     "Master",

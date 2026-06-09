@@ -120,6 +120,16 @@ no single text range, just like a whole table doesn't. Slide-level verbs
 [`Slide`](python-api.md#pptlive.Slide) object and the `slide` CLI group, and
 you reach a slide with `deck.slides[S]`, not `anchor_by_id`.
 
+`comments:S` is the same kind of read selector — a slide's review comments are a
+*container*, not a text anchor. Read them via `deck.slides[S].comments` (or
+`deck.comments()` deck-wide); a single comment is addressed for reply/delete by its
+`(slide, 1-based index)`, not an anchor id. Comments attach to a slide at an
+`(x, y)` point and are **threaded** (`comment.replies` / `comment.reply(text)`).
+Adding binds to the signed-in Office account (the modern `Comments.Add2` identity
+is sourced off an existing comment, falling back to the legacy identity-free add on
+a comment-less deck); there is no resolve verb, since comment resolution state isn't
+COM-readable on current builds.
+
 ### z-order drifts — design around it
 
 `shape:S:N` uses the 1-based z-order index, which **shifts when shapes are
