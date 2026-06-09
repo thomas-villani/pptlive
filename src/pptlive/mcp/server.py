@@ -47,6 +47,8 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
@@ -152,6 +154,10 @@ def _resolve_shape(deck: Presentation, anchor_id: str | None) -> Shape:
 #: size — ~1024 px stays legible while keeping the encoded block cheap.
 _EMBED_DEFAULT_WIDTH = 1024
 
+#: Default `max_dim` long-edge cap for an embedded deck snapshot — kept a touch
+#: smaller than a single-slide render since a whole deck multiplies the cost.
+_EMBED_DEFAULT_MAX_DIM = 1000
+
 _MIME_BY_FMT = {
     "png": "image/png",
     "jpg": "image/jpeg",
@@ -173,16 +179,25 @@ def _render_reply(results: list[dict[str, Any]], structured: dict[str, Any]) -> 
     """Build the tool reply for render output that may carry images.
 
     `results` is the list of per-op result dicts that *might* hold a `path` +
-    `format` (slide_image / shape_image); `structured` is the dict to surface as
-    the call's structuredContent (the single op's result, or the batch summary).
-    Returns a `CallToolResult` (image block(s) + JSON text + structured content)
-    when any image is present, else just `structured` for FastMCP to serialize.
+    `format` (slide_image / shape_image), or an `images` list of `{slide, path,
+    format}` (deck_snapshot — each prefixed by a "slide N" text label so the model
+    knows which is which); `structured` is the dict to surface as the call's
+    structuredContent (the single op's result, or the batch summary). Returns a
+    `CallToolResult` (image block(s) + JSON text + structured content) when any
+    image is present, else just `structured` for FastMCP to serialize.
     """
-    blocks = [
-        _image_block(r["path"], r.get("format", "png"))
-        for r in results
-        if isinstance(r, dict) and r.get("path")
-    ]
+    blocks: list[Any] = []
+    for r in results:
+        if not isinstance(r, dict):
+            continue
+        if r.get("path"):
+            blocks.append(_image_block(r["path"], r.get("format", "png")))
+        for img in r.get("images") or []:
+            if not (isinstance(img, dict) and img.get("path")):
+                continue
+            if img.get("slide") is not None:
+                blocks.append(TextContent(type="text", text=f"slide {img['slide']}"))
+            blocks.append(_image_block(img["path"], img.get("format", "png")))
     if not blocks:
         return structured
     text = TextContent(type="text", text=json.dumps(structured, indent=2, default=str))
@@ -555,6 +570,31 @@ def _moves_view(tool: str, op: str | None) -> bool:
     return (tool == "render" and op == "navigate") or (tool == "show" and op in _MOVING_SHOW_OPS)
 
 
+def _parse_slide_selector(slides: Any) -> int | tuple[int, int] | None:
+    """Parse a `deck_snapshot` `slides` arg into a `snapshot()` selector.
+
+    Accepts `None` (all slides), an `int` (single 1-based slide), or a string —
+    `"3"` (single) or `"2-4"` (inclusive span). A malformed string is an
+    `invalid_args` ToolError.
+    """
+    if slides is None:
+        return None
+    if isinstance(slides, bool):
+        raise ToolError("invalid_args: `slides` must be an int or a span string like '2-4'")
+    if isinstance(slides, int):
+        return slides
+    s = str(slides).strip()
+    try:
+        if "-" in s:
+            a, _, b = s.partition("-")
+            return int(a), int(b)
+        return int(s)
+    except ValueError as e:
+        raise ToolError(
+            f"invalid_args: `slides` must be an int or a span like '2-4', got {slides!r}"
+        ) from e
+
+
 def _render_core(ppt: Any, op: str, p: dict[str, Any]) -> dict[str, Any]:
     """Render-to-image + the one deliberate view move (`navigate`)."""
     deck = _pick_deck(ppt, p.get("doc"))
@@ -565,6 +605,18 @@ def _render_core(ppt: Any, op: str, p: dict[str, Any]) -> dict[str, Any]:
             p.get("out"), width=p.get("width"), height=p.get("height"), fmt=fmt
         )
         return {"ok": True, "slide": p["slide"], "path": str(path), "format": fmt}
+    if op == "deck_snapshot":
+        selector = _parse_slide_selector(p.get("slides"))
+        out_dir = tempfile.mkdtemp(prefix="pptlive_snap_")
+        base = os.path.join(out_dir, f"snap.{fmt}")
+        snaps = deck.snapshot(base, slides=selector, fmt=fmt, max_dim=p.get("max_dim"))
+        return {
+            "ok": True,
+            "count": len(snaps),
+            "format": fmt,
+            "max_dim": p.get("max_dim"),
+            "images": [{"slide": s.slide, "path": str(s.path), "format": fmt} for s in snaps],
+        }
     if op == "shape_image":
         sh = _resolve_shape(deck, p.get("anchor_id"))
         path = sh.export_image(p.get("out"), fmt=fmt)
@@ -911,7 +963,7 @@ def ppt_edit(
 
 
 def ppt_render(
-    op: Literal["slide_image", "shape_image", "navigate"],
+    op: Literal["slide_image", "deck_snapshot", "shape_image", "navigate"],
     slide: int | None = None,
     anchor_id: str | None = None,
     out: str | None = None,
@@ -921,6 +973,8 @@ def ppt_render(
     select: bool = True,
     embed: bool = True,
     doc: str | None = None,
+    slides: str | None = None,
+    max_dim: int | None = None,
 ) -> Any:
     """Render a PowerPoint slide or shape to an image a vision model can see, or
     move the user's view to a slide/shape. `op`:
@@ -932,6 +986,15 @@ def ppt_render(
       defaults to a temp file; pass `width`/`height` (pixels; one is enough — the
       other follows the aspect ratio). Default render is ~1024 px on the long edge
       to keep the inline image cheap; override with `width`/`height`.
+    - "deck_snapshot": render the WHOLE deck (or `slides`) to one inline image per
+      slide so you can SEE every slide at once cheaply — the token-aware "did my
+      styling land across all slides" read. `max_dim` caps each slide's long edge
+      in pixels (only ever lowering resolution); since every slide shares one
+      geometry the cap is a uniform, predictable per-slide budget (defaults to
+      ~1000 px when embedding). `slides` selects what to render: a single 1-based
+      slide ("3") or an inclusive span ("2-4"); omit for the whole deck. Each slide
+      comes back as a "slide N" label + image block; the structured result lists the
+      written file `path`s. Polite (does not move the view).
     - "shape_image": render *just* the shape at `anchor_id` (cropped to its bounds,
       native pixel size) — so a vision model can see one picture/diagram alone.
       Same dual return (inline image + `path`). Polite. `out` defaults to a temp file.
@@ -947,6 +1010,8 @@ def ppt_render(
     `fmt` is the image format. `doc` targets a presentation by name."""
     if op == "slide_image" and embed and width is None and height is None:
         width = _EMBED_DEFAULT_WIDTH
+    if op == "deck_snapshot" and embed and max_dim is None:
+        max_dim = _EMBED_DEFAULT_MAX_DIM
     params = {
         "slide": slide,
         "anchor_id": anchor_id,
@@ -956,10 +1021,12 @@ def ppt_render(
         "fmt": fmt,
         "select": select,
         "doc": doc,
+        "slides": slides,
+        "max_dim": max_dim,
     }
     with _mcp_errors(), attach() as ppt:
         result = _render_core(ppt, op, params)
-        if embed and op in ("slide_image", "shape_image"):
+        if embed and op in ("slide_image", "deck_snapshot", "shape_image"):
             return _render_reply([result], result)
         return result
 
@@ -1049,6 +1116,13 @@ def ppt_batch(
                     and p.get("height") is None
                 ):
                     p["width"] = _EMBED_DEFAULT_WIDTH
+                if (
+                    embed
+                    and tool == "render"
+                    and op == "deck_snapshot"
+                    and p.get("max_dim") is None
+                ):
+                    p["max_dim"] = _EMBED_DEFAULT_MAX_DIM
                 entry: dict[str, Any] = {"index": i, "tool": tool, "op": op}
                 try:
                     _require(op is not None, f"command #{i} is missing `op`")

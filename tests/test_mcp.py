@@ -23,7 +23,7 @@ import pytest
 pytest.importorskip("mcp")
 
 from mcp.server.fastmcp.exceptions import ToolError  # noqa: E402
-from mcp.types import CallToolResult, ImageContent  # noqa: E402
+from mcp.types import CallToolResult, ImageContent, TextContent  # noqa: E402
 
 from pptlive.mcp.server import (  # noqa: E402
     build_server,
@@ -68,6 +68,8 @@ def test_tool_schema_marks_required_args() -> None:
     assert {"write", "format", "shape_add", "chart_set_data"} <= set(edit_op["enum"])
     write_mode = tools["ppt_edit"].inputSchema["properties"]["mode"]
     assert write_mode["enum"] == ["set", "insert_after", "insert_before"]
+    render_ops = set(tools["ppt_render"].inputSchema["properties"]["op"]["enum"])
+    assert "deck_snapshot" in render_ops
 
 
 def test_structured_output_not_wrapped_under_result(fake_powerpoint: Any) -> None:
@@ -809,6 +811,46 @@ def test_shape_image_embeds_with_correct_mime(fake_powerpoint: Any) -> None:
     assert isinstance(res, CallToolResult)
     image = next(c for c in res.content if isinstance(c, ImageContent))
     assert image.mimeType == "image/jpeg"
+
+
+def test_deck_snapshot_embeds_one_image_per_slide(fake_powerpoint: Any) -> None:
+    # The whole-deck vision read: one labelled image block per slide, inline.
+    res = ppt_render("deck_snapshot")
+    assert isinstance(res, CallToolResult)
+    assert res.structuredContent is not None
+    assert res.structuredContent["ok"] is True
+    assert res.structuredContent["count"] == 3
+    # structured result carries the written paths (no bytes — no double-encode).
+    assert [img["slide"] for img in res.structuredContent["images"]] == [1, 2, 3]
+    images = [c for c in res.content if isinstance(c, ImageContent)]
+    assert len(images) == 3
+    assert all(img.mimeType == "image/png" for img in images)
+    # each image is preceded by a "slide N" text label.
+    labels = [
+        c.text for c in res.content if isinstance(c, TextContent) and c.text.startswith("slide ")
+    ]
+    assert labels == ["slide 1", "slide 2", "slide 3"]
+
+
+def test_deck_snapshot_embed_defaults_max_dim(fake_powerpoint: Any) -> None:
+    # With no max_dim and embed on, the cap defaults to ~1000 px (long edge) so
+    # the whole deck stays cheap — the fake echoes the requested size in the PNG.
+    res = ppt_render("deck_snapshot", slides="1")
+    assert isinstance(res, CallToolResult)
+    image = next(c for c in res.content if isinstance(c, ImageContent))
+    width, _height = _png_dims(base64.b64decode(image.data))
+    assert width == 1000
+
+
+def test_deck_snapshot_respects_slides_span(fake_powerpoint: Any) -> None:
+    res = ppt_render("deck_snapshot", slides="2-3")
+    assert isinstance(res, CallToolResult)
+    assert [img["slide"] for img in res.structuredContent["images"]] == [2, 3]
+
+
+def test_deck_snapshot_bad_slides_is_invalid_args(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError, match="invalid_args"):
+        ppt_render("deck_snapshot", slides="oops")
 
 
 def test_slide_image_embed_survives_server_call_tool(fake_powerpoint: Any) -> None:

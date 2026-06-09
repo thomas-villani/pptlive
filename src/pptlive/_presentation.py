@@ -14,13 +14,14 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import _com, _findreplace
+from . import _com, _findreplace, _snapshot
 from ._anchors import Anchor
 from ._edit import EditScope
 from ._selection import SelectionInfo, read_selection
 from ._shapes import Shape, has_table, has_text_frame
 from ._show import SlideShow
 from ._slides import Slide, SlideCollection, _paragraphs
+from ._snapshot import Snapshot
 from ._theme import Master, Theme
 from .constants import DEFAULT_LAYOUT_ALIAS, image_filter_for, match_layout_name
 from .exceptions import (
@@ -139,6 +140,36 @@ class Presentation:
             target = os.path.join(out_dir, f"slide-{slide.index:03d}.{ext}")
             paths.append(slide.export_image(target, width=width, height=height, fmt=fmt))
         return paths
+
+    def snapshot(
+        self,
+        out: str | os.PathLike[str] | None = None,
+        *,
+        slides: int | tuple[int, int] | None = None,
+        fmt: str = "png",
+        max_dim: int | None = None,
+    ) -> list[Snapshot]:
+        """Render slides to PNG so a vision model can *see* the whole deck cheaply.
+
+        The token-cost-aware read: `max_dim` caps each slide's **long edge** in
+        pixels (only ever lowering resolution), so the per-slide cost is a
+        predictable budget — and because every slide shares one geometry, that
+        budget is uniform across the deck. The lever for "render the whole deck
+        and check my styling landed" without full-resolution token bloat
+        (~1000 stays legible). `max_dim=None` renders at native size.
+
+        `slides` selects what to render: `None` (default) every slide, an `int`
+        a single 1-based slide, a `(start, end)` tuple an inclusive span. Returns
+        one [`Snapshot`][pptlive.Snapshot] per slide (so a single slide is a
+        one-element list); read `.png` for the bytes.
+
+        If `out` is given the image is also written there: a single slide to `out`
+        itself, multiple slides alongside it as `<stem>-s<N><suffix>`. `fmt` is a
+        friendly image token (`png`/`jpg`/…). A read — the export renders the
+        current unsaved state and leaves the viewed slide and Selection untouched
+        (no `edit()` fence needed).
+        """
+        return _snapshot.snapshot(self, out, slides=slides, fmt=fmt, max_dim=max_dim)
 
     def selection(self) -> SelectionInfo:
         """The user's current selection, resolved to anchors — a polite read.
