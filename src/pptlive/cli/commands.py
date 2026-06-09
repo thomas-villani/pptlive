@@ -36,6 +36,7 @@ from ..constants import (
     CHART_TYPE_CHOICES,
     IMAGE_FORMAT_CHOICES,
     LIST_TYPE_CHOICES,
+    SAVE_FORMAT_CHOICES,
     SHAPE_IMAGE_FORMAT_CHOICES,
     SMARTART_CHOICES,
     TEXT_STYLE_CHOICES,
@@ -67,7 +68,10 @@ def _fmt_status(info: dict[str, Any]) -> str:
     lines = []
     for d in decks:
         marker = "*" if d.get("is_active") else " "
-        lines.append(f"{marker} {str(d.get('name', '')):<{width}}  {d.get('path', '')}")
+        # `saved` is present from v1.1; a False (or missing on an old payload)
+        # value flags unsaved changes the user may want persisted.
+        dirty = " (unsaved)" if d.get("saved") is False else ""
+        lines.append(f"{marker} {str(d.get('name', '')):<{width}}  {d.get('path', '')}{dirty}")
     viewed = info.get("viewed_slide")
     if viewed is not None:
         lines.append(f"viewing slide {viewed}")
@@ -475,12 +479,109 @@ def snapshot_cmd(
     _run(ctx, go)
 
 
+# ---------------------------------------------------------------------------
+# save | save-as PATH [--format] [--overwrite] | export-pdf PATH
+#   Explicit-only file output (pptlive never auto-saves). save/save-as persist
+#   the working .pptx; export-pdf is a read (no rebind, dirty flag preserved).
+# ---------------------------------------------------------------------------
+
+
+@click.command(name="save")
+@click.pass_context
+def save_cmd(ctx: click.Context) -> None:
+    """Save the deck to its existing file (explicit; pptlive never auto-saves).
+
+    Fails (exit 1) if the deck has never been saved — use `save-as PATH` first.
+    """
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            path = deck.save()
+            emit(
+                {"ok": True, "path": path, "saved": True},
+                as_text=not ctx.obj["as_json"],
+                text=f"saved {path}",
+            )
+
+    _run(ctx, go)
+
+
+@click.command(name="save-as")
+@click.argument("path", type=click.Path(dir_okay=False, path_type=Path))
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(SAVE_FORMAT_CHOICES),
+    default="pptx",
+    show_default=True,
+    help="Output format (PDF is `export-pdf`).",
+)
+@click.option(
+    "--overwrite",
+    is_flag=True,
+    default=False,
+    help="Allow overwriting an existing file (default: refuse).",
+)
+@click.pass_context
+def save_as_cmd(ctx: click.Context, path: Path, fmt: str, overwrite: bool) -> None:
+    """Save the deck to PATH and rebind the working file to it (explicit).
+
+    After this the open deck *is* PATH (its name/path follow), matching
+    PowerPoint's Save-As. Refuses to clobber an existing file unless `--overwrite`.
+    For PDF, use `export-pdf` (a read — it doesn't rebind the working file).
+    """
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            written = deck.save_as(path, fmt=fmt, overwrite=overwrite)
+            emit(
+                {"ok": True, "path": written, "format": fmt},
+                as_text=not ctx.obj["as_json"],
+                text=f"saved {written}",
+            )
+
+    try:
+        _run(ctx, go)
+    except FileExistsError as exc:
+        click.echo(f"error: {exc}", err=True)
+        sys.exit(1)
+
+
+@click.command(name="export-pdf")
+@click.argument("path", type=click.Path(dir_okay=False, path_type=Path))
+@click.pass_context
+def export_pdf_cmd(ctx: click.Context, path: Path) -> None:
+    """Export the deck to a PDF at PATH (the "hand back a deliverable" path).
+
+    A pixel-faithful render of the deck's current (unsaved) state via PowerPoint's
+    PDF engine. A read: it neither rebinds the working file nor clears its dirty
+    flag, so your `.pptx` is untouched. Overwrites an existing PDF.
+    """
+
+    def go() -> None:
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            written = deck.export_pdf(path)
+            emit(
+                {"ok": True, "path": written},
+                as_text=not ctx.obj["as_json"],
+                text=f"exported {written}",
+            )
+
+    _run(ctx, go)
+
+
 def register(group: click.Group) -> None:
     group.add_command(status)
     group.add_command(slides_cmd)
     group.add_command(outline)
     group.add_command(slide)
     group.add_command(snapshot_cmd)
+    group.add_command(save_cmd)
+    group.add_command(save_as_cmd)
+    group.add_command(export_pdf_cmd)
     group.add_command(shapes_cmd)
     group.add_command(shape)
     group.add_command(read)

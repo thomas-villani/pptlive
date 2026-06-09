@@ -198,6 +198,14 @@ png = deck.slides[4].export_image(width=1280)         # one slide -> temp PNG (o
 for snap in deck.snapshot(max_dim=1000):              # -> [Snapshot(slide, png, path), ...]
     review(snap.png)                                  # bytes; pass out="deck.png" to also write -sN files
 
+# Save / export — explicit, never implicit (pptlive never auto-saves). save_as
+# REBINDS the working file (the deck becomes that path); export_pdf is a READ
+# (no rebind, dirty flag preserved — the "hand back a deliverable" path).
+if not deck.saved:                                    # deck.saved / deck.path also ride on `status`
+    deck.save()                                       # persist in place; UnsavedPresentationError if no path yet
+deck.save_as("C:/out/v2.pptx", overwrite=False)       # write .pptx + rebind; refuses to clobber unless overwrite
+deck.export_pdf("C:/out/deck.pdf")                    # pixel-faithful PDF; working .pptx untouched
+
 sel = deck.selection()                                # {type, slide, anchor_id, shapes, ...}
 if sel.anchor_id:
     with deck.edit("Bold the selected text"):
@@ -216,6 +224,7 @@ deck.show.end()
 All failures raise a `pl.PptliveError` subclass (mirrors the CLI's exit codes):
 `AnchorNotFoundError` (slide/shape/anchor missing; `SlideNotFoundError`
 subclasses it) · `AmbiguousMatchError` · `NoTextFrameError` (shape holds no text)
+· `UnsavedPresentationError` (`save()` on a never-saved deck — use `save_as(path)`)
 · `PowerPointBusyError` (a modal dialog is open — back off and retry) ·
 `PowerPointNotRunningError` · `PresentationNotFoundError`.
 

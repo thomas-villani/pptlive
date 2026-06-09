@@ -48,6 +48,7 @@ from .exceptions import (
     PresentationNotFoundError,
     SlideNotFoundError,
     SlideShowNotRunningError,
+    UnsavedPresentationError,
 )
 
 __all__ = [
@@ -88,6 +89,7 @@ __all__ = [
     "Snapshot",
     "Table",
     "Theme",
+    "UnsavedPresentationError",
     "attach",
     "connect",
     "constants",

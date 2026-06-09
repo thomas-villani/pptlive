@@ -26,16 +26,18 @@ honestly, and sketches the wrapper shape so it slots into the established
 > (`slide.comments` / `deck.comments()`), the review loop that makes pptlive feel
 > indispensable on a shared deck. So the v1.2 styling gate is **partway open**, the
 > `shape:S:N` drift hazard now has a stable-handle answer, and the collaboration
-> loop is in. **And v1.1's first cut landed (2026-06-09): `deck.snapshot()`** — a
+> loop is in. **And v1.1 is complete (2026-06-09):** `deck.snapshot()` — a
 > whole-deck low-resolution render (one PNG per slide, `max_dim` long-edge cap) so a
 > vision model can *see* the whole deck at a predictable, uniform per-slide token
-> cost — the token-aware "did my styling land across all slides" read, ported from
-> wordlive's snapshot but shorter (`Slide.Export` renders a sized PNG directly, no
-> PDF/PyMuPDF).
+> cost — plus the **save & PDF-export** tier: `deck.save()` / `save_as()` (explicit,
+> never-implicit; `save_as` rebinds the working file) and `deck.export_pdf()` (a
+> read — no rebind, dirty flag preserved), with a `deck.saved` dirty flag on every
+> `status` row. PDF rides `SaveAs(…, ppSaveAsPDF=32)` since `ExportAsFixedFormat`
+> won't marshal under the late-bound `_com` dispatch.
 >
 > What's still thin is the rest of **appearance and behaviour** (gradients,
-> effects, motion, navigation) and a handful of **specced-but-unbuilt** items (the
-> CLI `exec` verb, PDF export, save).
+> effects, motion, navigation) and one **specced-but-unbuilt** item (the standalone
+> CLI `exec` verb; MCP `ppt_batch` already covers batch).
 
 **Status legend:** `[ ]` not started · `[~]` in progress · `[x]` shipped.
 Spike-first remains the rule: confirm each COM behaviour on a live deck, write a
@@ -48,7 +50,7 @@ one-line finding, *then* harden.
 | Tier | Theme | Why now | COM risk |
 | ---- | ----- | ------- | -------- |
 | **v1.0** | **find / replace + `exec` CLI** | Last wordlive-parity gap; deck-wide search is table-stakes for "change X everywhere" | Low — `TextRange.Find/Replace` exist |
-| **v1.1** | **Output: save & PDF/image export** *(started: `deck.snapshot()` low-res whole-deck render shipped; PDF export + save/save_as open)* | Trivial COM, huge practical payoff ("export the deck to PDF"); the one thing every agent eventually wants | Low — `ExportAsFixedFormat`, `SaveAs` |
+| **v1.1** | **Output: save & PDF/image export** *(SHIPPED 2026-06-09 — `deck.snapshot()` low-res whole-deck render + `save`/`save_as`/`export_pdf`)* | Trivial COM, huge practical payoff ("export the deck to PDF"); the one thing every agent eventually wants | Low — PDF via `SaveAs(…, ppSaveAsPDF)` (`ExportAsFixedFormat` won't marshal late-bound) |
 | **v1.2** | **Shape styling — fill / line / effects** *(started: solid fill/line + z-order shipped; gradients/effects/per-slide bg open)* | Biggest *authoring* gap: agents can place a shape but can't colour it; blocks good-looking decks | Low-med — fills are easy, gradient stops fiddly |
 | **v1.3** | **Review loop — comments** *(SHIPPED 2026-06-09 — read + add/reply/delete, threaded; resolve-state not COM-readable)* | "Address the reviewer's comments" is a killer workflow; read is side-effect-free & polite | **Low** — read (incl. threads), add & reply all verified live; comment-less-deck identity solved via legacy-`Add` fallback |
 | **v1.4** | **Navigation & structure — hyperlinks, sections, headers/footers** | Makes multi-slide decks navigable and organized | Low |
@@ -145,10 +147,14 @@ this adds the deck-level outputs that are one COM call away.
 > of the live deck, the same spirit as `Slide.Export`. Saving the *working file*
 > is the more debatable one; gate it behind an explicit verb and never auto-save.
 
-- [ ] **`deck.export_pdf(path)`** over `Presentation.ExportAsFixedFormat(Path,
-  FixedFormatType=ppFixedFormatTypePDF, Intent, …)` (or `SaveAs(path,
-  ppSaveAsPDF=32)`). High value, near-zero risk. CLI `deck export-pdf --out
-  PATH`; MCP `ppt_render` op `deck_pdf`.
+- [x] **`deck.export_pdf(path)` — SHIPPED (2026-06-09).** A pixel-faithful PDF of
+  the deck's current (unsaved) state, and a **read**: it neither rebinds the
+  working file nor clears its dirty flag, so the `.pptx` is untouched (verified
+  live). **Spike finding:** `ExportAsFixedFormat` — the nominal API — won't marshal
+  under pptlive's late-bound `_com` dispatch (a trailing object-typed param raises
+  `TypeError` for *every* arg form, named or positional), so PDF goes through
+  `SaveAs(path, ppSaveAsPDF=32)`, which produces the same faithful PDF as a pure
+  export. CLI `export-pdf PATH`; MCP `ppt_render` op `deck_pdf`.
 - [x] **Whole-deck image render — SHIPPED as `deck.snapshot()` (2026-06-09).**
   The multi-slide complement to v0.4's single-slide PNG, reframed around LLM token
   cost (ported from wordlive's snapshot): renders slides to PNG with a `max_dim`
@@ -161,11 +167,17 @@ this adds the deck-level outputs that are one COM call away.
   `deck.export_images` (v0.4) stays for bulk-to-disk. **Still open:** a `jpg`-quality
   knob and per-slide `width`/`height` overrides (snapshot's lever is `max_dim`
   only).
-- [ ] **`deck.save()` / `save_as(path)`** over `Presentation.Save` /
-  `SaveAs(path, format)` — explicit-only, never implicit. Expose
-  `Presentation.Saved` (dirty flag) + `.Path` on `status`/`deck` reads so an
-  agent can see unsaved state. **Spike:** `Save` on a never-saved deck raises
-  (no path) — surface as a clear error, not a COM blob.
+- [x] **`deck.save()` / `save_as(path)` — SHIPPED (2026-06-09).** Explicit-only,
+  never implicit. `save()` persists to the existing file; `save_as(path, *,
+  fmt="pptx", overwrite=False)` writes a `.pptx` and **rebinds** the working file
+  to it (the open deck becomes that file, like PowerPoint's Save-As), refusing to
+  clobber unless `overwrite=True`. `deck.saved` (the `Presentation.Saved` dirty
+  flag) joins `path` on every `status` deck row. **Spike correction:** `Save` on a
+  never-saved deck does **not** raise — on a OneDrive/SharePoint build it silently
+  uploads to the user's default cloud folder — so `save()` guards in Python on an
+  empty `Presentation.Path` and raises `UnsavedPresentationError` (exit 1) instead.
+  CLI `save` / `save-as PATH [--format/--overwrite]`; MCP `ppt_render` ops
+  `save` / `save_as`.
 
 ---
 

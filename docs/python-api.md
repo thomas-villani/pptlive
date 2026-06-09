@@ -141,6 +141,29 @@ Each rendered slide comes back as a `Snapshot`.
 
 ::: pptlive.Snapshot
 
+## Saving & export
+
+Three **explicit, never-implicit** verbs on [`Presentation`](#pptlive.Presentation)
+(pptlive never auto-saves): `deck.save()` persists to the existing file;
+`deck.save_as(path, *, fmt="pptx", overwrite=False)` writes a `.pptx` and **rebinds**
+the working file to it (the open deck becomes that file, like PowerPoint's Save-As),
+refusing to clobber unless `overwrite=True`; and `deck.export_pdf(path)` writes a
+pixel-faithful PDF as a **read** — unlike `save_as` it neither rebinds the working
+file nor clears its dirty flag, so your `.pptx` is untouched. `deck.saved` (the
+`Presentation.Saved` dirty flag) and `deck.path` ride on every `status` deck row so
+an agent can see unsaved state. `save()` on a never-saved deck raises
+[`UnsavedPresentationError`](#pptlive.UnsavedPresentationError) rather than letting
+PowerPoint silently route the file to a default cloud folder.
+
+```python
+with pl.attach() as ppt:
+    deck = ppt.presentations.active
+    if not deck.saved:
+        deck.save()                       # persist in place (must already have a path)
+    deck.save_as("C:/out/v2.pptx")        # write + rebind the working file
+    deck.export_pdf("C:/out/deck.pdf")    # a read — working file untouched
+```
+
 ## Slide show
 
 [`deck.show`](#pptlive.SlideShow) drives a running slide show like a presenter's
@@ -193,6 +216,8 @@ that map names to the right int the way an LLM would phrase them.
 ::: pptlive.LayoutNotFoundError
 
 ::: pptlive.NoTextFrameError
+
+::: pptlive.UnsavedPresentationError
 
 ::: pptlive.SlideShowNotRunningError
 
