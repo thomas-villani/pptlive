@@ -15,6 +15,7 @@ import pytest
 from click.testing import CliRunner
 
 from pptlive.cli.main import main
+from pptlive.constants import parse_color
 from pptlive.exceptions import AnchorNotFoundError
 
 
@@ -259,3 +260,69 @@ def test_cli_shape_add_chart_one_of_data_opts_errors(fake_powerpoint) -> None:  
     )
     assert result.exit_code != 0
     assert "both --categories and --series" in result.output
+
+
+# -- recolor_text (PPTLIVE-009) ---------------------------------------------
+
+
+def test_chart_recolor_text_recolors_shown_elements(deck) -> None:  # type: ignore[no-untyped-def]
+    ch = deck.slides[3].shapes.add_chart("column", ["Q1", "Q2"], {"R": [1, 2], "P": [3, 4]})
+    info = ch.chart.recolor_text("#FFFFFF")
+    assert info["ok"] is True
+    assert info["color"] == "#FFFFFF"
+    # The legend shows by default; the title and data labels don't, so they're
+    # left untouched (recolor never adds chrome the deck didn't show).
+    assert info["recolored"] == ["chart_area", "legend", "category_axis", "value_axis"]
+    assert info["series_data_labels"] == 0
+    white = parse_color("#FFFFFF")
+    fake = ch.com.Chart
+    assert int(fake.Legend.Font.Color) == white
+    assert int(fake.ChartArea.Format.TextFrame2.TextRange.Font.Fill.ForeColor.RGB) == white
+    assert int(fake._axis_fonts[1].Color) == white
+    assert int(fake._axis_fonts[2].Color) == white
+
+
+def test_chart_recolor_text_includes_title_when_shown(deck) -> None:  # type: ignore[no-untyped-def]
+    ch = deck.slides[3].shapes.add_chart("column", ["Q1"], {"R": [1]})
+    ch.com.Chart.HasTitle = True
+    info = ch.chart.recolor_text("#102030")
+    assert "title" in info["recolored"]
+    assert int(ch.com.Chart.ChartTitle.Font.Color) == parse_color("#102030")
+
+
+def test_chart_recolor_text_counts_data_labels_when_shown(deck) -> None:  # type: ignore[no-untyped-def]
+    ch = deck.slides[3].shapes.add_chart("column", ["Q1", "Q2"], {"R": [1, 2], "P": [3, 4]})
+    ch.com.Chart._series_labels_on = True  # both series now show data labels
+    info = ch.chart.recolor_text("#00FF00")
+    assert info["series_data_labels"] == 2
+    assert "data_labels" in info["recolored"]
+    assert int(ch.com.Chart._label_fonts[1].Color) == parse_color("#00FF00")
+
+
+def test_chart_recolor_text_skips_absent_axes(deck) -> None:  # type: ignore[no-untyped-def]
+    # A pie chart has no axes: Axes() raises, and recolor skips them silently.
+    ch = deck.slides[3].shapes.add_chart("pie", ["A", "B"], {"S": [1, 2]})
+    ch.com.Chart._axes_present = False
+    info = ch.chart.recolor_text("#FFFFFF")
+    assert "chart_area" in info["recolored"]
+    assert "category_axis" not in info["recolored"]
+    assert "value_axis" not in info["recolored"]
+
+
+def test_chart_recolor_text_bad_color_raises(deck) -> None:  # type: ignore[no-untyped-def]
+    ch = deck.slides[3].shapes.add_chart("column", ["Q1"], {"R": [1]})
+    with pytest.raises(ValueError):
+        ch.chart.recolor_text("not-a-color")
+
+
+def test_cli_chart_recolor_text(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    add = CliRunner().invoke(main, ["shape", "add", "--slide", "3", "--kind", "chart"])
+    n = int(_json(add)["anchor_id"].split(":")[2])
+    result = CliRunner().invoke(
+        main,
+        ["chart", "recolor-text", "--slide", "3", "--shape", str(n), "--color", "#FFFFFF"],
+    )
+    assert result.exit_code == 0
+    info = _json(result)
+    assert info["color"] == "#FFFFFF"
+    assert "chart_area" in info["recolored"]

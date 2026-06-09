@@ -155,8 +155,20 @@ them to `.agents/skills/`, and `install-mcp` / the `mcpb/` bundle wire up MCP.
    `Shape.reorder("front"|"back"|"forward"|"backward")` restacks via `Shape.ZOrder`.
    Every shape listing now carries `fill`/`line` (`{color, visible[, weight]}`), with
    the same theme-sentinel guard as font color (`color_hex_or_none` → `None`, never a
-   wrong `#000000`). Still **unaddressable**: SmartArt-node / chart-internal text
-   color (PPTLIVE-009, deferred — rebuild from primitives for now).
+   wrong `#000000`).
+
+   **Composite-text recolor (PPTLIVE-009, resolved):** a SmartArt diagram / chart has
+   no text anchor, so `format_text` can't reach its internal labels. `SmartArt.recolor_text(color)`
+   walks `AllNodes` setting each node's `TextFrame2.TextRange.Font.Fill.ForeColor.RGB`;
+   `Chart.recolor_text(color)` sets every **shown** chart text element — legend / both
+   axis tick labels / title / per-series data labels (classic chart `Font.Color` is the
+   RGB long directly, not a `ColorFormat`; `DataLabels` is a method) plus the `ChartArea`
+   global default. Coarse "recolor all text to X" only (the dark-theme fix); guarded by
+   `HasLegend`/`HasTitle` and best-effort axes (`HasAxis` is an Excel-ism PowerPoint's
+   chart COM rejects — a pie's absent axes are skipped, not an error). CLI `chart
+   recolor-text` / `smartart recolor-text`; MCP `chart_recolor_text` / `smartart_recolor_text`.
+   Still deferred: composite-text *fill* (node-shape / series fill) and per-element
+   (vs. whole-shape) targeting.
 
 ## Politeness model (the whole point)
 

@@ -655,10 +655,35 @@ class _FakeChartData:
 
 
 class _FakeSeries:
-    def __init__(self, name: Any, x_values: list[Any], values: list[Any]) -> None:
+    def __init__(
+        self,
+        name: Any,
+        x_values: list[Any],
+        values: list[Any],
+        chart: _FakeChart | None = None,
+        index: int | None = None,
+    ) -> None:
         self.Name = name
         self.XValues = x_values
         self.Values = values
+        self._chart = chart
+        self._index = index
+
+    @property
+    def HasDataLabels(self) -> bool:
+        return bool(self._chart._series_labels_on) if self._chart is not None else False
+
+    @HasDataLabels.setter
+    def HasDataLabels(self, value: bool) -> None:
+        if self._chart is not None:
+            self._chart._series_labels_on = bool(value)
+
+    def DataLabels(self) -> Any:
+        # A method (not a property), like the live COM — recolor reaches the font
+        # via `DataLabels().Font.Color`. Persist the font on the chart so a test
+        # can read the color back after the per-call series object is gone.
+        assert self._chart is not None and self._index is not None
+        return SimpleNamespace(Font=self._chart._label_font(self._index))
 
 
 class _FakeSeriesCollection:
@@ -686,6 +711,31 @@ class _FakeChart:
         # data: 3 series x 4 categories in $A$1:$D$5.
         self._seed_default_data()
         self._nrows, self._ncols = 5, 4
+        # Text elements `recolor_text` touches. ChartArea's color lives on the
+        # modern TextFrame2; legend/title/axis fonts use the classic chart-Font
+        # model where `Font.Color` is the RGB long directly.
+        self.HasLegend = True
+        self.HasTitle = False
+        self.Legend = SimpleNamespace(Font=SimpleNamespace(Color=0))
+        self.ChartTitle = SimpleNamespace(Font=SimpleNamespace(Color=0), Text="")
+        self.ChartArea = SimpleNamespace(Format=SimpleNamespace(TextFrame2=_fake_textframe2()))
+        self._axes_present = True  # a pie chart sets this False -> Axes() raises
+        self._axis_fonts: dict[int, Any] = {
+            1: SimpleNamespace(Color=0),  # category
+            2: SimpleNamespace(Color=0),  # value
+        }
+        self._series_labels_on = False
+        self._label_fonts: dict[int, Any] = {}
+
+    def Axes(self, axis_type: int, group: int | None = None) -> Any:
+        if not self._axes_present:
+            from pptlive.exceptions import ComError
+
+            raise ComError("this chart has no axes")
+        return SimpleNamespace(TickLabels=SimpleNamespace(Font=self._axis_fonts[int(axis_type)]))
+
+    def _label_font(self, index: int) -> Any:
+        return self._label_fonts.setdefault(int(index), SimpleNamespace(Color=0))
 
     def _seed_default_data(self) -> None:
         c = self._ws._cells
@@ -720,7 +770,7 @@ class _FakeChart:
         for col in range(2, self._ncols + 1):
             name = cells.get((1, col))
             values = [cells.get((r, col)) for r in range(2, self._nrows + 1)]
-            series.append(_FakeSeries(name, list(cats), values))
+            series.append(_FakeSeries(name, list(cats), values, chart=self, index=col - 1))
         return _FakeSeriesCollection(series)
 
 
@@ -758,11 +808,23 @@ class _FakeSmartArtLayouts:
         return self._items[int(index) - 1]
 
 
+def _fake_textframe2() -> SimpleNamespace:
+    """A TextFrame2 whose text-color lives on `TextRange.Font.Fill.ForeColor.RGB`.
+
+    SmartArt nodes (and a chart's ChartArea) carry color there, not on
+    `Font.Color` — mirrors `SmartArt.recolor_text` / `Chart.recolor_text`. The RGB
+    seeds to the `0x80000000` automatic sentinel, like a real theme-driven color.
+    """
+    fore = SimpleNamespace(RGB=0x80000000)
+    font = SimpleNamespace(Fill=SimpleNamespace(ForeColor=fore))
+    return SimpleNamespace(TextRange=SimpleNamespace(Text="", Font=font))
+
+
 class _FakeSmartArtNode:
     def __init__(self, level: int, parent_list: _FakeSmartArtNodes) -> None:
         self._level = int(level)
         self._parent_list = parent_list
-        self.TextFrame2 = SimpleNamespace(TextRange=SimpleNamespace(Text=""))
+        self.TextFrame2 = _fake_textframe2()
         self._children = _FakeSmartArtNodes(level=self._level + 1)
 
     @property

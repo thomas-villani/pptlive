@@ -31,7 +31,12 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from . import _com
-from .constants import chart_type_for, chart_type_name
+from .constants import chart_type_for, chart_type_name, color_hex, parse_color
+from .exceptions import PptliveError
+
+# XlAxisType — the two axes whose tick labels carry text.
+_XL_CATEGORY = 1
+_XL_VALUE = 2
 
 if TYPE_CHECKING:
     from ._shapes import Shape
@@ -230,6 +235,86 @@ class Chart:
         # chart is created (RPC_S_UNKNOWN_IF); the write is a clean rewrite, so
         # retrying the whole sequence is safe. See `_com.retry_on_busy`.
         _com.retry_on_busy(_write)
+
+    def recolor_text(self, color: str | int | tuple[int, int, int]) -> dict[str, Any]:
+        """Set the font color of **every shown** chart text element (one Ctrl-Z).
+
+        A chart has no addressable text frame of its own — its text is split across
+        the legend, axis tick labels, title, and data labels, each its own COM
+        element — so there is no per-anchor `format_text` path. This is the coarse
+        fix PPTLIVE-009 asked for: recolor all chart text at once, the move a dark-
+        (or any custom-background) theme needs when the inherited black axis/legend
+        text goes invisible.
+
+        `color` is a `"#RRGGBB"` / `"RRGGBB"` hex string, an `(r, g, b)` tuple, or a
+        raw RGB int (same forms as `format_text`'s `color`). Raises `ValueError` for
+        a malformed color (before any COM). Recolors only the elements that are
+        actually **present**: the legend/title are guarded by `HasLegend` /
+        `HasTitle`; the axis tick labels and per-series data labels are best-effort
+        (an absent axis — e.g. a pie chart has none — is simply skipped, not an
+        error), so it never adds a legend, title, or labels the deck didn't show.
+        Always sets the `ChartArea` global text default (the modern
+        `Format.TextFrame2` path) so any text shown later inherits the color too.
+        Wrap in `deck.edit(...)` for view preservation + the one-Ctrl-Z fence.
+        Returns `{ok, slide, shape, anchor_id, color, recolored, series_data_labels}`
+        where `recolored` lists the element kinds that were touched.
+
+        The chart `Font` model differs from a text frame's: a chart element's
+        `Font.Color` is *itself* the RGB long (set/read directly), not a
+        `ColorFormat` with `.RGB`; and `Series.DataLabels` is a **method**.
+        `Chart.HasAxis` is an Excel-ism PowerPoint's chart COM rejects, so axes are
+        probed by attempting the set rather than asking first.
+        """
+        rgb = parse_color(color)  # ValueError before any COM
+        recolored: list[str] = []
+        labeled = 0
+
+        def _attempt_axis(axis_type: int) -> bool:
+            """Set an axis's tick-label color; skip (False) if that axis is absent.
+
+            `Chart.HasAxis` is unreliable on PowerPoint's chart COM, so we attempt
+            the set and treat a COM failure (e.g. a pie chart has no axes) as
+            "not present" rather than an error.
+            """
+            try:
+                with _com.translate_com_errors():
+                    self.com.Axes(axis_type).TickLabels.Font.Color = rgb
+                return True
+            except PptliveError:
+                return False
+
+        with _com.translate_com_errors():
+            chart = self.com
+            # Global default for all chart text (modern TextFrame2 path); reliably
+            # present, and covers text elements shown later.
+            chart.ChartArea.Format.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = rgb
+            recolored.append("chart_area")
+            if bool(chart.HasLegend):
+                chart.Legend.Font.Color = rgb
+                recolored.append("legend")
+            if bool(chart.HasTitle):
+                chart.ChartTitle.Font.Color = rgb
+                recolored.append("title")
+            sc = chart.SeriesCollection()
+            for i in range(1, int(sc.Count) + 1):
+                s = sc(i)
+                if bool(s.HasDataLabels):
+                    s.DataLabels().Font.Color = rgb
+                    labeled += 1
+            if labeled:
+                recolored.append("data_labels")
+        for axis_type, name in ((_XL_CATEGORY, "category_axis"), (_XL_VALUE, "value_axis")):
+            if _attempt_axis(axis_type):
+                recolored.append(name)
+        return {
+            "ok": True,
+            "slide": self._shape.slide.index,
+            "shape": self._shape.index,
+            "anchor_id": self._shape.anchor_id,
+            "color": color_hex(rgb),
+            "recolored": recolored,
+            "series_data_labels": labeled,
+        }
 
     def __repr__(self) -> str:
         return f"<Chart {self._shape.anchor_id} type={self.chart_type!r}>"

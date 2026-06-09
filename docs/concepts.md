@@ -250,6 +250,30 @@ reports `fill` and `line` back (`{color, visible[, weight]}`), with a theme or
 automatic color shown honestly as `color: null` rather than a misleading
 `#000000`.
 
+### Composite shapes have no text anchor — `recolor_text`
+
+A chart and a SmartArt diagram are single shapes whose text is *internal* — split
+across the legend / axes / title / data labels of a chart, or the node tree of a
+diagram. There's no `para:`/`ph:` anchor reaching inside, so `format_text` can't
+touch it. The coarse fix — the move a dark (or any custom-background) theme needs
+when that inherited black text goes invisible — is `recolor_text`:
+
+```python
+chart = deck.slides[6].shapes["Chart 2"].chart
+diagram = deck.slides[3].shapes["Diagram 1"].smartart
+with deck.edit("Make the composites readable on dark"):
+    chart.recolor_text("#FFFFFF")     # every shown element: legend, axes, title, data labels
+    diagram.recolor_text("#FFFFFF")   # every node label
+```
+
+`Chart.recolor_text` recolors only text that's actually **shown** — guarded by
+`HasLegend`/`HasTitle`, with axes and data labels best-effort (a pie chart's
+absent axes are skipped, never an error) — so it never adds chrome the deck
+didn't display. It returns `{..., recolored: [...], series_data_labels: N}` naming
+what it touched; `SmartArt.recolor_text` returns `{..., nodes_recolored: N}`. This
+is coarse "recolor all text to X" only; per-element targeting and composite-text
+*fill* aren't covered — drop to [`.com`](#the-com-escape-hatch) for those.
+
 ## The `.com` escape hatch
 
 pptlive deliberately covers a small surface. When you need something it
