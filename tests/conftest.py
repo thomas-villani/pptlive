@@ -16,6 +16,7 @@ same object, the way the real COM property does.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 
@@ -1113,6 +1114,178 @@ class _FakeShapes:
 
 
 # ---------------------------------------------------------------------------
+# Comments (v1.3): threaded, slide-attached, identity-bound (Add2 / legacy Add)
+# ---------------------------------------------------------------------------
+#
+# The fake mirrors the live findings the wrapper relies on: a comment carries
+# Author/AuthorInitials/Text/DateTime/Left/Top plus a ProviderID/UserID identity,
+# and a `.Replies` collection whose `Add2` appends a threaded child. `Add2` binds
+# to the passed identity (the wrapper sources it off an existing comment); the
+# legacy identity-free `Add` is the fallback on a deck with no comment to source
+# from. `Delete()` removes the comment (and, being a list slice, its replies).
+
+_SEED_DT = datetime(2026, 6, 7, 10, 30, tzinfo=timezone.utc)
+
+
+class _FakeComment:
+    """One review comment (or reply). Lives in a parent Python list so `Delete`
+    can remove it; `Replies` wraps its own child list."""
+
+    def __init__(
+        self,
+        *,
+        container: list[_FakeComment],
+        text: str,
+        author: str = "",
+        initials: str = "",
+        provider: str = "",
+        user: str = "",
+        left: float = 12.0,
+        top: float = 12.0,
+        dt: datetime | None = None,
+    ) -> None:
+        self._container = container
+        self.Text = text
+        self.Author = author
+        self.AuthorInitials = initials
+        self.ProviderID = provider
+        self.UserID = user
+        self.Left = float(left)
+        self.Top = float(top)
+        self.DateTime = dt if dt is not None else _SEED_DT
+        self._replies: list[_FakeComment] = []
+
+    @property
+    def Replies(self) -> _FakeReplies:
+        return _FakeReplies(self._replies)
+
+    def Delete(self) -> None:
+        self._container.remove(self)
+
+
+class _FakeReplies:
+    """A comment's `.Replies` — 1-based `Item`/callable + `Count` + `Add2`."""
+
+    def __init__(self, replies: list[_FakeComment]) -> None:
+        self._replies = replies
+
+    @property
+    def Count(self) -> int:
+        return len(self._replies)
+
+    def Item(self, index: int) -> _FakeComment:
+        return self._replies[int(index) - 1]
+
+    def __call__(self, index: int) -> _FakeComment:
+        return self._replies[int(index) - 1]
+
+    def Add2(
+        self,
+        left: float,
+        top: float,
+        author: str,
+        initials: str,
+        text: str,
+        provider: str = "",
+        user: str = "",
+    ) -> _FakeComment:
+        rep = _FakeComment(
+            container=self._replies,
+            text=text,
+            author=author,
+            initials=initials,
+            provider=provider,
+            user=user,
+            left=left,
+            top=top,
+        )
+        self._replies.append(rep)
+        return rep
+
+
+class _FakeCommentCollection:
+    """`Slide.Comments` — 1-based `Item`/callable + `Count` + modern `Add2` /
+    legacy `Add`. Records `last_add_method` so a test can assert which path ran."""
+
+    def __init__(self, comments: list[_FakeComment] | None = None) -> None:
+        self._comments: list[_FakeComment] = comments if comments is not None else []
+        self.last_add_method: str | None = None
+
+    @property
+    def Count(self) -> int:
+        return len(self._comments)
+
+    def Item(self, index: int) -> _FakeComment:
+        return self._comments[int(index) - 1]
+
+    def __call__(self, index: int) -> _FakeComment:
+        return self._comments[int(index) - 1]
+
+    def Add2(
+        self,
+        left: float,
+        top: float,
+        author: str,
+        initials: str,
+        text: str,
+        provider: str = "",
+        user: str = "",
+    ) -> _FakeComment:
+        self.last_add_method = "Add2"
+        c = _FakeComment(
+            container=self._comments,
+            text=text,
+            author=author,
+            initials=initials,
+            provider=provider,
+            user=user,
+            left=left,
+            top=top,
+        )
+        self._comments.append(c)
+        return c
+
+    def Add(self, left: float, top: float, author: str, initials: str, text: str) -> _FakeComment:
+        self.last_add_method = "Add"
+        c = _FakeComment(
+            container=self._comments,
+            text=text,
+            author=author,
+            initials=initials,
+            left=left,
+            top=top,
+        )
+        self._comments.append(c)
+        return c
+
+
+def _seeded_comments() -> list[_FakeComment]:
+    """One parent comment with a threaded reply — both carrying a real identity,
+    so reads/threads and identity-sourced Add2 are exercised on the default deck."""
+    comments: list[_FakeComment] = []
+    parent = _FakeComment(
+        container=comments,
+        text="Tighten this headline.",
+        author="Thomas Villani",
+        initials="TV",
+        provider="AD",
+        user="S::tom@example.com::abc-123",
+    )
+    parent._replies.append(
+        _FakeComment(
+            container=parent._replies,
+            text="Agreed — will do.",
+            author="Thomas Villani",
+            initials="TV",
+            provider="AD",
+            user="S::tom@example.com::abc-123",
+        )
+    )
+    comments.append(parent)
+    return comments
+
+
+# ---------------------------------------------------------------------------
 # Slide, notes page, layouts
 # ---------------------------------------------------------------------------
 
@@ -1200,12 +1373,14 @@ class _FakeSlide:
         layout_name: str,
         shapes: list[_FakeShape],
         notes_text: str | None = "",
+        comments: list[_FakeComment] | None = None,
     ) -> None:
         self.SlideID = slide_id
         self.Shapes = _FakeShapes(shapes)
         self.CustomLayout = _FakeCustomLayout(layout_name)
         self._notes_text = notes_text
         self.NotesPage = _FakeNotesPage(notes_text)
+        self.Comments = _FakeCommentCollection(comments)
         self._collection: _FakeSlides | None = None
         self._app: _FakeApplication | None = None
 
@@ -1663,6 +1838,7 @@ def _default_deck() -> _FakePresentation:
         slide_id=256,
         layout_name="Title Slide",
         notes_text="Lead with the vision.",
+        comments=_seeded_comments(),
         shapes=[
             _FakeShape(
                 name="Title 1",

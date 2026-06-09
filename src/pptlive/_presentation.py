@@ -226,6 +226,24 @@ class Presentation:
             out.append({"slide": slide.index, "title": slide.title, "bullets": bullets})
         return out
 
+    def comments(self) -> dict[str, Any]:
+        """Every review comment across the deck — the deck-wide roll-up.
+
+        `{total, slides: [{slide, comments:[{index, author, initials, text,
+        datetime, left, top, replies:[...]}, ...]}, ...]}`. Only slides that carry
+        at least one comment appear; `total` counts top-level comments (not
+        replies). A read — side-effect-free and polite (no view move). For one
+        slide, use `deck.slides[S].comments.list()` (the `comments:S` read).
+        """
+        slides_out: list[dict[str, Any]] = []
+        total = 0
+        for slide in self.slides:
+            items = slide.comments.list()
+            if items:
+                slides_out.append({"slide": slide.index, "comments": items})
+                total += len(items)
+        return {"total": total, "slides": slides_out}
+
     def anchor_by_id(self, anchor_id: str) -> Anchor:
         """Resolve an `anchor_id` string into an `Anchor`.
 

@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import _com
 from ._anchors import Notes
+from ._comments import CommentCollection
 from ._shapes import PlaceholderShape, ShapeCollection, is_placeholder
 from .constants import DEFAULT_LEGACY_LAYOUT, image_filter_for, is_true, placeholder_types_for
 from .exceptions import (
@@ -83,6 +84,11 @@ class Slide:
     def notes(self) -> Notes:
         """The speaker-notes anchor (`notes:S`)."""
         return Notes(self)
+
+    @property
+    def comments(self) -> CommentCollection:
+        """The slide's review comments (`comments:S`) — read + add/reply/delete."""
+        return CommentCollection(self)
 
     @property
     def layout_name(self) -> str | None:

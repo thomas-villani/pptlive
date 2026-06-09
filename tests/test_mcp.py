@@ -620,6 +620,68 @@ def test_read_op_enum_includes_smartart() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Comments — ppt_read op=comments, ppt_edit comment_add/reply/delete
+# ---------------------------------------------------------------------------
+
+
+def test_read_comments_slide(fake_powerpoint: Any) -> None:
+    out = ppt_read("comments", slide=1)
+    assert out["slide"] == 1
+    assert out["comments"][0]["text"] == "Tighten this headline."
+    assert out["comments"][0]["replies"][0]["text"] == "Agreed — will do."
+
+
+def test_read_comments_deck_rollup(fake_powerpoint: Any) -> None:
+    out = ppt_read("comments")
+    assert out["total"] == 1
+    assert out["slides"][0]["slide"] == 1
+
+
+def test_comment_add(fake_powerpoint: Any) -> None:
+    out = ppt_edit("comment_add", slide=2, text="Please cite a source.")
+    assert out["ok"] is True
+    assert out["comment"]["text"] == "Please cite a source."
+    assert ppt_read("comments", slide=2)["comments"][0]["text"] == "Please cite a source."
+
+
+def test_comment_add_requires_text(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("comment_add", slide=2)
+    assert "invalid_args" in str(exc.value)
+
+
+def test_comment_reply(fake_powerpoint: Any) -> None:
+    out = ppt_edit("comment_reply", slide=1, index=1, text="Done.")
+    assert out["ok"] is True
+    assert out["reply"]["text"] == "Done."
+    assert [r["text"] for r in ppt_read("comments", slide=1)["comments"][0]["replies"]] == [
+        "Agreed — will do.",
+        "Done.",
+    ]
+
+
+def test_comment_reply_requires_index(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("comment_reply", slide=1, text="x")
+    assert "invalid_args" in str(exc.value)
+
+
+def test_comment_delete(fake_powerpoint: Any) -> None:
+    out = ppt_edit("comment_delete", slide=1, index=1)
+    assert out["ok"] is True
+    assert ppt_read("comments")["total"] == 0
+
+
+def test_comment_ops_in_enums() -> None:
+    srv = build_server()
+    tools = {t.name: t for t in asyncio.run(srv.list_tools())}
+    read_ops = set(tools["ppt_read"].inputSchema["properties"]["op"]["enum"])
+    edit_ops = set(tools["ppt_edit"].inputSchema["properties"]["op"]["enum"])
+    assert "comments" in read_ops
+    assert {"comment_add", "comment_reply", "comment_delete"} <= edit_ops
+
+
+# ---------------------------------------------------------------------------
 # Master / theme (ppt_read op=theme|master, ppt_edit op=theme_*/master_*)
 # ---------------------------------------------------------------------------
 
