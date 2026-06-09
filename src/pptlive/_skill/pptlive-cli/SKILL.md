@@ -77,6 +77,12 @@ you can re-identify after drift. Steer toward `ph:S:KIND`, `.Name`, and
 - `pptlive slide export --slide 2 --out slide2.png [--width 1280] [--format png]` — render one slide to an image so a vision model can *see* it.
 - `pptlive snapshot [--slide N | --slides A-B] [--out deck.png] [--max-dim 1000]` — render the **whole deck** (one PNG per slide) so you can check styling across every slide cheaply. `--max-dim` caps each slide's long edge (a uniform, predictable per-slide token cost); with `--out` it writes `<stem>-sN<suffix>`, otherwise base64 inline. The "did my restyle land everywhere?" read.
 
+## Save & export (explicit — pptlive never auto-saves)
+`status` shows each deck's `saved` flag (and flags `(unsaved)` in `--text`).
+- `pptlive save` — save to the existing file. Exits **1** if the deck was never saved (use `save-as` first; the guard stops PowerPoint silently cloud-saving a path-less deck).
+- `pptlive save-as PATH [--format pptx] [--overwrite]` — write a `.pptx` and **rebind** the working file to it (the open deck becomes PATH, like Save-As). Refuses to clobber unless `--overwrite`. For PDF use `export-pdf`.
+- `pptlive export-pdf PATH` — export a pixel-faithful PDF of the current (unsaved) state. A **read**: no rebind, dirty flag preserved, your `.pptx` untouched. The "hand back a deliverable" path. Overwrites an existing PDF.
+
 ## Shapes
 - `pptlive shape add --slide 4 --kind textbox --text "Revenue up 12%" --left 72 --top 72` (points throughout; 1 in = 72 pt).
 - `pptlive shape add --slide 4 --kind shape --shape-type star --left 400 --top 120 --width 120 --height 120 --fill "#1E74B5" --line none` (textbox/shape take `--fill`/`--line` = `#RRGGBB` or `none`, `--line-width` pts).

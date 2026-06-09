@@ -732,8 +732,45 @@ and (since every slide shares one geometry) *uniform*, per-slide budget.
   `Slide.Export` already writes a dim-encoding stub PNG, so no conftest change.
   See `roadmap.md` §v1.1.
 
-**Still open in v1.1:** PDF export (`ExportAsFixedFormat`), `save`/`save_as`, and a
-`jpg`-quality / per-slide size knob on the snapshot.
+**Still open in v1.1:** a `jpg`-quality / per-slide size knob on the snapshot
+(the snapshot lever is `max_dim` only).
+
+## v1.1 — output: save & PDF export — SHIPPED
+
+Completes the output tier: the explicit, never-implicit file-output verbs. Three
+spike findings shaped it (see `scripts/save_export_spike.py`,
+`export_pdf_argforms_spike.py`, `saveas_pdf_dirty_spike.py`):
+(1) `ExportAsFixedFormat` won't marshal under the late-bound `_com` dispatch —
+*every* arg form (named, positional, `…2`) raises `TypeError: Python instance can
+not be converted to a COM object` — so PDF rides `SaveAs(path, ppSaveAsPDF=32)`;
+(2) `SaveAs`-to-PDF writes a faithful PDF *without* rebinding the working file or
+clearing its dirty flag (a true export); (3) PowerPoint's `Save()` does **not**
+raise on a never-saved deck (it silently cloud-saves on OneDrive/SharePoint
+builds), so the never-saved guard lives in Python on an empty `Presentation.Path`.
+
+- [x] **`constants.py`** — `PpSaveAsFileType` (`OPEN_XML_PRESENTATION=24`,
+  `PDF=32`) + `save_format_for(fmt)` (resolves `"pptx"`; rejects `"pdf"` → pointer
+  to `export_pdf`).
+- [x] **`exceptions.py`** — `UnsavedPresentationError(PptliveError)` (exit 1),
+  exported from `__init__`.
+- [x] **`Presentation`** — `saved` property (`bool(Presentation.Saved)`);
+  `save()` (guards empty `.Path` → `UnsavedPresentationError`, else `Save()`);
+  `save_as(path, *, fmt="pptx", overwrite=False)` (`SaveAs(abspath, 24)`, rebinds,
+  `FileExistsError` on clobber); `export_pdf(path)` (`SaveAs(abspath, 32)`, a read).
+  `PresentationCollection.list()` now emits `saved` (so `status` shows it).
+- [x] **CLI** — top-level `save`, `save-as PATH [--format pptx] [--overwrite]`,
+  `export-pdf PATH` (positional path, mirrors wordlive); `_fmt_status` flags
+  `(unsaved)`. `FileExistsError` → clean stderr + exit 1.
+- [x] **MCP** — `ppt_render` ops `save` / `save_as` / `deck_pdf` (+ `overwrite`
+  param). `_render_reply` now only embeds image-format paths, so a PDF/pptx `path`
+  rides in `structuredContent` only — never mis-encoded as an inline image (matters
+  in `ppt_batch`, which feeds all render results through `_render_reply`).
+- [x] **Tests** — `tests/test_save_export.py` (library: saved/save/save_as/
+  export_pdf rebind-vs-read, never-saved guard, overwrite; CLI: all three verbs +
+  status). `tests/test_mcp.py` extended (deck_pdf no-embed, save/save_as, batch
+  PDF-doesn't-break-embedding). Fake `_FakePresentation` gained `Path`/`Saved`/
+  `Save`/`SaveAs` mirroring the verified COM behavior. Live wrapper smoke confirmed
+  the whole path net-zero on a throwaway deck.
 
 ## v1.0+ — defer
 

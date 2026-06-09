@@ -311,6 +311,32 @@ leaves the viewed slide and Selection untouched, so it needs no `edit()` fence.
 (Not to be confused with the *Selection* snapshot above, which `EditScope` uses to
 restore the user's view.)
 
+## Saving is explicit — and export is a read
+
+pptlive **never auto-saves**. Every edit lands in the *live* deck (that's the
+whole point — it's the file the user has open), but committing those edits to disk
+only happens when you ask: `deck.save()`, `deck.save_as(path)`. This is the same
+politeness instinct as the view model — the tool doesn't take an irreversible,
+outward-facing action (writing the user's file) as a side effect of editing.
+
+Two distinctions matter:
+
+- **`save_as` rebinds; `export_pdf` does not.** `save_as(path)` makes the open
+  deck *become* the new file (its `name`/`path` follow), exactly like PowerPoint's
+  Save-As — so the user's working file is now `path`. `export_pdf(path)`, by
+  contrast, is a **read**: it writes a pixel-faithful PDF but leaves the working
+  file, its path, and its dirty flag untouched. Reach for `export_pdf` to "hand
+  back a deliverable" without touching what the user is editing.
+- **`save()` refuses a path-less deck.** A brand-new deck has no file yet. Calling
+  `save()` on it raises `UnsavedPresentationError` rather than guessing a location
+  — because PowerPoint's own `Save()` *doesn't* refuse: on a OneDrive/SharePoint
+  build it silently uploads to the user's default cloud folder, which is exactly
+  the kind of surprise outward action the guard exists to prevent. Use
+  `save_as(path)` to choose the destination explicitly.
+
+`deck.saved` (and `deck.path`) surface on every `status` deck row, so an agent can
+see there's unsaved work before deciding what to do about it.
+
 ## The `.com` escape hatch
 
 pptlive deliberately covers a small surface. When you need something it

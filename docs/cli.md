@@ -294,6 +294,38 @@ pptlive snapshot --slides 2-4 --max-dim 800            # just slides 2–4
 
 ---
 
+## Save & export — `save` · `save-as` · `export-pdf`
+
+Explicit file output — pptlive **never auto-saves**. `status` shows each deck's
+`saved` flag (and flags `(unsaved)` in `--text`), so you can tell there's unsaved
+work before deciding to persist it.
+
+- **`save`** — save the deck to its existing file. Exits **1** if the deck has
+  never been saved (no path yet) — use `save-as PATH` first. (The guard is
+  deliberate: PowerPoint's own `Save` would silently upload a path-less deck to
+  your default OneDrive/SharePoint folder.)
+- **`save-as PATH [--format pptx] [--overwrite]`** — write a `.pptx` and **rebind**
+  the working file to it: afterwards the open deck *is* PATH (its name/path
+  follow), matching PowerPoint's Save-As. Refuses to clobber an existing file
+  unless `--overwrite`. For PDF, use `export-pdf`.
+- **`export-pdf PATH`** — export a pixel-faithful PDF of the deck's current
+  (unsaved) state. A **read**: it neither rebinds the working file nor clears its
+  dirty flag, so your `.pptx` is untouched. Overwrites an existing PDF.
+
+```bash
+pptlive status                              # see which decks have unsaved changes
+pptlive save                                # persist in place (needs an existing path)
+pptlive save-as C:\out\v2.pptx              # write + rebind the working file
+pptlive save-as C:\out\v2.pptx --overwrite  # allow clobbering
+pptlive export-pdf C:\out\deck.pdf          # a read — working file untouched
+```
+
+```json
+{"ok": true, "path": "C:\\out\\deck.pdf"}
+```
+
+---
+
 ## Shapes — the `shape` group
 
 Create and place shapes (geometry in **points**; 1 inch = 72 pt). Each verb is

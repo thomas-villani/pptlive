@@ -105,8 +105,29 @@ slide; `slides` is `None` (all) | `int` (one) | `(start, end)` inclusive; with
 **read** — the export leaves the viewed slide + Selection untouched, so no
 `deck.edit()` fence. Library + CLI (`snapshot --slide/--slides/--out/--max-dim`) +
 MCP (`ppt_render` op `deck_snapshot`, returns a "slide N" label + image block per
-slide). The folder-based `deck.export_images` (v0.4) stays for bulk-to-disk; the
-remaining v1.1 output items (PDF export, save/save_as) are still unbuilt.
+slide). The folder-based `deck.export_images` (v0.4) stays for bulk-to-disk.
+
+**Save + PDF export (v1.1) completed the output tier (2026-06-09).** Three
+explicit, never-implicit verbs on `Presentation` (pptlive never auto-saves):
+`deck.save()` (persist to the existing file), `deck.save_as(path, *, fmt="pptx",
+overwrite=False)` (write + **rebind** the working file), and `deck.export_pdf(path)`
+(write a PDF — a **read**: no rebind, dirty flag preserved). Plus a `deck.saved`
+dirty-flag property, surfaced (with `path`) on every `status` deck row. Three
+spike findings shaped the design: (1) `ExportAsFixedFormat` — the nominal PDF API
+— **won't marshal under the late-bound `_com` dispatch** (a trailing object-typed
+param raises `TypeError`), so PDF rides `SaveAs(path, ppSaveAsPDF=32)`, which
+produces a faithful PDF *without* rebinding the working file or touching its dirty
+flag (a true export); (2) PowerPoint's `Save()` does **not** raise on a never-saved
+deck — on a OneDrive/SharePoint build it silently uploads to the user's default
+cloud folder — so `save()` guards in Python on an empty `Presentation.Path` and
+raises `UnsavedPresentationError` (exit 1) instead; (3) `save_as` to `.pptx` (24)
+*does* rebind the open deck to the new file (matching PowerPoint's Save-As).
+`save_as` refuses to clobber unless `overwrite=True` (`FileExistsError`, surfaced
+clean at CLI/MCP). Library + CLI (`save`, `save-as PATH [--format/--overwrite]`,
+`export-pdf PATH`) + MCP (`ppt_render` ops `save`/`save_as`/`deck_pdf`).
+Constants: `PpSaveAsFileType` (`OPEN_XML_PRESENTATION=24`, `PDF=32`) +
+`save_format_for`. Still in `spec.md` but unbuilt: the standalone CLI `exec` verb.
+
 Agent skills shipped as **two** guides (`pptlive-cli` + `pptlive-python`), not
 wordlive's single one — `llm-help [--python]` dumps one, `install-skill` writes
 them to `.agents/skills/`, and `install-mcp` / the `mcpb/` bundle wire up MCP.

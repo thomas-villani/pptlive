@@ -20,6 +20,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Save & PDF export — the explicit file-output verbs** (v1.1, completing the
+  output tier). Three never-implicit verbs on `Presentation` (pptlive never
+  auto-saves): `deck.save()` persists to the existing file; `deck.save_as(path, *,
+  fmt="pptx", overwrite=False)` writes a `.pptx` and **rebinds** the working file to
+  it (the open deck becomes that file, matching PowerPoint's Save-As), refusing to
+  clobber unless `overwrite=True`; `deck.export_pdf(path)` writes a pixel-faithful
+  PDF and is a **read** — it neither rebinds the working file nor clears its dirty
+  flag, so your `.pptx` is untouched. A `deck.saved` dirty-flag property joins
+  `path` on every `status` deck row (`{name, path, saved, is_active}`), so an agent
+  sees unsaved state before deciding to save. `save()` on a never-saved deck raises
+  `UnsavedPresentationError` (exit 1) rather than letting PowerPoint silently route
+  the file to the user's default cloud folder (a verified `Save()` behavior on
+  OneDrive/SharePoint builds). PDF goes through `SaveAs(path, ppSaveAsPDF=32)`:
+  `ExportAsFixedFormat` is the nominal API but won't marshal under pptlive's
+  late-bound COM dispatch, and `SaveAs`-to-PDF produces the same faithful PDF as a
+  pure export. CLI `save` / `save-as PATH [--format pptx] [--overwrite]` /
+  `export-pdf PATH`; MCP `ppt_render` ops `save` / `save_as` / `deck_pdf`. New
+  `PpSaveAsFileType` constant (`OPEN_XML_PRESENTATION=24`, `PDF=32`).
 - **Deck snapshot — whole-deck low-resolution render for vision models** (v1.1).
   `deck.snapshot(out=None, *, slides=None, fmt="png", max_dim=None)` renders slides
   to PNG so a vision model can *see* the whole deck cheaply — the token-cost-aware
