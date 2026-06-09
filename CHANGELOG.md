@@ -20,6 +20,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Deck snapshot — whole-deck low-resolution render for vision models** (v1.1).
+  `deck.snapshot(out=None, *, slides=None, fmt="png", max_dim=None)` renders slides
+  to PNG so a vision model can *see* the whole deck cheaply — the token-cost-aware
+  read. The lever is `max_dim`, a **long-edge pixel cap** (only ever lowering
+  resolution): a model is billed on an image's pixel *area*, not its DPI, so capping
+  the long edge gives a predictable per-slide token budget — and because every slide
+  shares one geometry, that budget is *uniform* across the deck (~1000 px stays
+  legible for "did my styling land"). The PowerPoint analog of wordlive's snapshot
+  but shorter: `Slide.Export` already renders a sized PNG, so there's no PDF/PyMuPDF
+  detour and no new dependency. Returns one `Snapshot(slide, png, path)` per slide;
+  `slides` is `None` (all) / an `int` (one) / a `(start, end)` inclusive span; with
+  `out` it writes files (single → that path, multiple → `<stem>-sN<suffix>`),
+  otherwise the bytes ride in `.png`. A read — leaves the viewed slide and Selection
+  untouched (no `edit()` fence). CLI `snapshot --slide/--slides/--out/--max-dim
+  --format` (path per slide with `--out`, base64 inline otherwise); MCP `ppt_render`
+  op `deck_snapshot` (`{slides?, max_dim?, fmt?}`) returns one "slide N" label +
+  image block per slide, defaulting `max_dim` to ~1000 px when embedding.
 - **Review comments — read + add/reply/delete** (v1.3, the review loop).
   PowerPoint's review-comment channel, across library + CLI + MCP. Comments attach
   to a **slide** at an `(x, y)` point (not a text range) and are **threaded**:

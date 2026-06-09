@@ -26,11 +26,16 @@ honestly, and sketches the wrapper shape so it slots into the established
 > (`slide.comments` / `deck.comments()`), the review loop that makes pptlive feel
 > indispensable on a shared deck. So the v1.2 styling gate is **partway open**, the
 > `shape:S:N` drift hazard now has a stable-handle answer, and the collaboration
-> loop is in.
+> loop is in. **And v1.1's first cut landed (2026-06-09): `deck.snapshot()`** — a
+> whole-deck low-resolution render (one PNG per slide, `max_dim` long-edge cap) so a
+> vision model can *see* the whole deck at a predictable, uniform per-slide token
+> cost — the token-aware "did my styling land across all slides" read, ported from
+> wordlive's snapshot but shorter (`Slide.Export` renders a sized PNG directly, no
+> PDF/PyMuPDF).
 >
 > What's still thin is the rest of **appearance and behaviour** (gradients,
 > effects, motion, navigation) and a handful of **specced-but-unbuilt** items (the
-> CLI `exec` verb, export/save).
+> CLI `exec` verb, PDF export, save).
 
 **Status legend:** `[ ]` not started · `[~]` in progress · `[x]` shipped.
 Spike-first remains the rule: confirm each COM behaviour on a live deck, write a
@@ -43,7 +48,7 @@ one-line finding, *then* harden.
 | Tier | Theme | Why now | COM risk |
 | ---- | ----- | ------- | -------- |
 | **v1.0** | **find / replace + `exec` CLI** | Last wordlive-parity gap; deck-wide search is table-stakes for "change X everywhere" | Low — `TextRange.Find/Replace` exist |
-| **v1.1** | **Output: save & PDF/image export** | Trivial COM, huge practical payoff ("export the deck to PDF"); the one thing every agent eventually wants | Low — `ExportAsFixedFormat`, `SaveAs` |
+| **v1.1** | **Output: save & PDF/image export** *(started: `deck.snapshot()` low-res whole-deck render shipped; PDF export + save/save_as open)* | Trivial COM, huge practical payoff ("export the deck to PDF"); the one thing every agent eventually wants | Low — `ExportAsFixedFormat`, `SaveAs` |
 | **v1.2** | **Shape styling — fill / line / effects** *(started: solid fill/line + z-order shipped; gradients/effects/per-slide bg open)* | Biggest *authoring* gap: agents can place a shape but can't colour it; blocks good-looking decks | Low-med — fills are easy, gradient stops fiddly |
 | **v1.3** | **Review loop — comments** *(SHIPPED 2026-06-09 — read + add/reply/delete, threaded; resolve-state not COM-readable)* | "Address the reviewer's comments" is a killer workflow; read is side-effect-free & polite | **Low** — read (incl. threads), add & reply all verified live; comment-less-deck identity solved via legacy-`Add` fallback |
 | **v1.4** | **Navigation & structure — hyperlinks, sections, headers/footers** | Makes multi-slide decks navigable and organized | Low |
@@ -144,10 +149,18 @@ this adds the deck-level outputs that are one COM call away.
   FixedFormatType=ppFixedFormatTypePDF, Intent, …)` (or `SaveAs(path,
   ppSaveAsPDF=32)`). High value, near-zero risk. CLI `deck export-pdf --out
   PATH`; MCP `ppt_render` op `deck_pdf`.
-- [ ] **`deck.export_images(dir, *, fmt, width, height)`** — the multi-slide
-  complement to v0.4's single-slide PNG (the wrapper already exists internally;
-  surface it on the CLI/MCP). `Presentation.Export(Path, FilterName, ScaleWidth,
-  ScaleHeight)` exports *every* slide to a folder.
+- [x] **Whole-deck image render — SHIPPED as `deck.snapshot()` (2026-06-09).**
+  The multi-slide complement to v0.4's single-slide PNG, reframed around LLM token
+  cost (ported from wordlive's snapshot): renders slides to PNG with a `max_dim`
+  **long-edge cap** so a vision model can *see* the whole deck at a predictable,
+  uniform per-slide budget. `deck.snapshot(out=None, *, slides=None, fmt, max_dim)`
+  returns one `Snapshot(slide, png, path)` per slide (`slides` = all / one int /
+  inclusive span); CLI `snapshot --slide/--slides/--out/--max-dim`; MCP `ppt_render`
+  op `deck_snapshot` (one "slide N" label + image block per slide). Built on
+  `Slide.export_image` (no PDF/PyMuPDF, no new dependency). The earlier folder-based
+  `deck.export_images` (v0.4) stays for bulk-to-disk. **Still open:** a `jpg`-quality
+  knob and per-slide `width`/`height` overrides (snapshot's lever is `max_dim`
+  only).
 - [ ] **`deck.save()` / `save_as(path)`** over `Presentation.Save` /
   `SaveAs(path, format)` — explicit-only, never implicit. Expose
   `Presentation.Saved` (dirty flag) + `.Path` on `status`/`deck` reads so an

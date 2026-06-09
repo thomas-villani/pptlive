@@ -129,6 +129,18 @@ in `deck.edit()` for the one-Ctrl-Z fence (the user's view doesn't move).
 
 ::: pptlive.Master
 
+## Rendering
+
+[`slide.export_image`](#pptlive.Slide) renders one slide to an image;
+[`deck.snapshot`](#pptlive.Presentation) renders the whole deck (or a slide
+selection) to one PNG per slide so a vision model can *see* every slide cheaply.
+Its `max_dim` long-edge pixel cap gives a predictable, uniform per-slide token
+budget (a model is billed on pixel area, not DPI). Both are reads — they reflect
+the current unsaved state but leave the viewed slide and Selection untouched.
+Each rendered slide comes back as a `Snapshot`.
+
+::: pptlive.Snapshot
+
 ## Slide show
 
 [`deck.show`](#pptlive.SlideShow) drives a running slide show like a presenter's

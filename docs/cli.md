@@ -267,6 +267,33 @@ pptlive slide export --slide 2                          # temp PNG
 
 ---
 
+## `snapshot` — see the whole deck cheaply
+
+Render slides to PNG so a vision model can *see* the whole deck at a predictable
+token cost. `--max-dim N` caps each slide's **long edge** in pixels (only ever
+lowering resolution) — the lever for "render the deck and check my styling
+landed" without full-resolution bloat. Because every slide shares one geometry,
+the cap is a *uniform* per-slide budget; `~1000` stays legible. Renders the
+current (unsaved) state; polite (doesn't move the view).
+
+Select with `--slide N` (one) or `--slides A-B` (an inclusive span); omit both
+for the whole deck. With `--out PATH` the PNGs are written (a single slide to
+that path, multiple as `<stem>-s<N><suffix>`) and each `path` is reported;
+without `--out`, base64 PNG data is returned inline.
+
+```bash
+pptlive snapshot --max-dim 1000                        # whole deck, base64 inline
+pptlive snapshot --out deck.png --max-dim 1000         # -> deck-s1.png, deck-s2.png, …
+pptlive snapshot --slides 2-4 --max-dim 800            # just slides 2–4
+```
+
+```json
+{"ok": true, "selector": "all slides", "count": 3, "format": "png",
+ "max_dim": 1000, "images": [{"slide": 1, "bytes": 24, "base64": "iVBORw0KG…"}, …]}
+```
+
+---
+
 ## Shapes — the `shape` group
 
 Create and place shapes (geometry in **points**; 1 inch = 72 pt). Each verb is

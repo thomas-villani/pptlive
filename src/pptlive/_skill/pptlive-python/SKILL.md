@@ -190,7 +190,13 @@ palette = deck.theme.read()                           # {colors:{slot:#RRGGBB}, 
 ## Render, selection, slide show
 
 ```python
-png = deck.slides[4].export_image(width=1280)         # temp PNG (or pass a path); polite
+png = deck.slides[4].export_image(width=1280)         # one slide -> temp PNG (or pass a path); polite
+
+# Whole-deck low-res snapshot — see every slide cheaply. max_dim caps each slide's
+# long edge (a uniform, predictable per-slide token cost — a model is billed on
+# pixel area, not DPI). slides=None (all) | int (one) | (start, end) inclusive.
+for snap in deck.snapshot(max_dim=1000):              # -> [Snapshot(slide, png, path), ...]
+    review(snap.png)                                  # bytes; pass out="deck.png" to also write -sN files
 
 sel = deck.selection()                                # {type, slide, anchor_id, shapes, ...}
 if sel.anchor_id:

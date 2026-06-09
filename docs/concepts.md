@@ -284,6 +284,33 @@ what it touched; `SmartArt.recolor_text` returns `{..., nodes_recolored: N}`. Th
 is coarse "recolor all text to X" only; per-element targeting and composite-text
 *fill* aren't covered — drop to [`.com`](#the-com-escape-hatch) for those.
 
+## Seeing the deck — the token-cost snapshot
+
+An agent that edits over COM wants to *see* the result. A single slide goes
+through [`slide.export_image`](python-api.md#pptlive.Slide); the whole deck goes
+through [`deck.snapshot`](python-api.md#pptlive.Presentation), which renders one
+PNG per slide so a vision model can review every slide at once.
+
+The key knob is **`max_dim`** — a long-edge pixel cap. A vision model is billed on
+an image's pixel *area*, not its DPI, and that area depends on geometry — so
+capping the long edge gives a *predictable* per-image token budget. And because
+every slide in a deck shares one geometry, a single `max_dim` makes that budget
+*uniform* across the deck: render the whole thing at `max_dim=1000` and each
+slide costs about the same, legible-but-cheap amount. `max_dim` only ever *lowers*
+resolution (it's capped at the slide's native 96-DPI size), and `max_dim=None`
+renders native.
+
+```python
+# "Did my restyle land across every slide?" — cheap whole-deck review.
+for snap in deck.snapshot(max_dim=1000):
+    show_to_vision_model(snap.png)        # snap.slide, snap.png (bytes), snap.path
+```
+
+Snapshotting is a **read**: the export reflects the current unsaved state but
+leaves the viewed slide and Selection untouched, so it needs no `edit()` fence.
+(Not to be confused with the *Selection* snapshot above, which `EditScope` uses to
+restore the user's view.)
+
 ## The `.com` escape hatch
 
 pptlive deliberately covers a small surface. When you need something it
