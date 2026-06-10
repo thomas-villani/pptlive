@@ -29,6 +29,7 @@ from typing import Any
 import click
 
 from .. import attach
+from .._batch import run_batch
 from .._guide import bundled_skill, skill_body, skill_name
 from .._presentation import Presentation
 from .._shapes import Shape
@@ -48,7 +49,7 @@ from ..constants import (
     ZORDER_CHOICES,
 )
 from ..exceptions import AnchorNotFoundError, PowerPointNotRunningError
-from .main import _run, emit
+from .main import EXIT_OTHER, _run, emit
 
 
 def _pick_deck(ppt: Any, doc_name: str | None) -> Presentation:
@@ -596,12 +597,15 @@ def register(group: click.Group) -> None:
     group.add_command(shape)
     group.add_command(read)
     group.add_command(write)
+    group.add_command(set_paragraphs)
+    group.add_command(exec_script)
     group.add_command(find)
     group.add_command(replace)
     group.add_command(paragraphs_cmd)
     group.add_command(insert)
     group.add_command(format_paragraph)
     group.add_command(format_text)
+    group.add_command(reset_format)
     group.add_command(list_cmd)
     group.add_command(table)
     group.add_command(chart)
@@ -1241,6 +1245,23 @@ def shape_order(ctx: click.Context, deck: Presentation, anchor_id: str, to: str)
     )
 
 
+@shape.command(name="reset-to-layout")
+@click.option(
+    "--anchor-id", "anchor_id", required=True, help="Placeholder to restore (ph:/shape:/shapeid:)."
+)
+@_deck_command
+def shape_reset_to_layout(ctx: click.Context, deck: Presentation, anchor_id: str) -> None:
+    """Restore a placeholder's geometry + default font size from its slide layout."""
+    sh = _resolve_shape(deck, anchor_id)
+    with deck.edit(f"CLI: reset to layout {anchor_id}"):
+        restored = sh.reset_to_layout()
+    emit(
+        {"ok": True, "anchor_id": sh.anchor_id, "restored": restored},
+        as_text=not ctx.obj["as_json"],
+        text=f"reset {sh.anchor_id} to its layout placeholder",
+    )
+
+
 # ---------------------------------------------------------------------------
 # text structure (v0.3): paragraphs, insert, format-paragraph, format-text, list
 # ---------------------------------------------------------------------------
@@ -1293,9 +1314,21 @@ def insert(ctx: click.Context, deck: Presentation, anchor_id: str, text: str, af
 @click.option("--alignment", type=click.Choice(ALIGNMENT_CHOICES), default=None, help="Alignment.")
 @click.option("--space-before", type=float, default=None, help="Space before (points).")
 @click.option("--space-after", type=float, default=None, help="Space after (points).")
+@click.option(
+    "--space-before-lines", type=float, default=None, help="Space before (multiple, e.g. 0.5)."
+)
+@click.option(
+    "--space-after-lines", type=float, default=None, help="Space after (multiple, e.g. 0.5)."
+)
 @click.option("--line-spacing", type=float, default=None, help="Line spacing (multiple, e.g. 1.5).")
 @click.option(
+    "--line-spacing-points", type=float, default=None, help="Line spacing (exact points, e.g. 24)."
+)
+@click.option(
     "--indent-level", type=click.IntRange(1, 5), default=None, help="Outline/bullet level (1-5)."
+)
+@click.option(
+    "--force", is_flag=True, default=False, help="Allow a line-spacing multiple above 5×."
 )
 @_deck_command
 def format_paragraph(
@@ -1305,11 +1338,30 @@ def format_paragraph(
     alignment: str | None,
     space_before: float | None,
     space_after: float | None,
+    space_before_lines: float | None,
+    space_after_lines: float | None,
     line_spacing: float | None,
+    line_spacing_points: float | None,
     indent_level: int | None,
+    force: bool,
 ) -> None:
-    """Set paragraph formatting (alignment, spacing, indent level) on a text anchor."""
-    if all(v is None for v in (alignment, space_before, space_after, line_spacing, indent_level)):
+    """Set paragraph formatting (alignment, spacing, indent level) on a text anchor.
+
+    Line spacing is unit-explicit: `--line-spacing` is a *multiple* (1.5), while
+    `--line-spacing-points` is *exact points* (24). Likewise `--space-before/after`
+    are points and `--space-before/after-lines` are multiples.
+    """
+    opts = (
+        alignment,
+        space_before,
+        space_after,
+        space_before_lines,
+        space_after_lines,
+        line_spacing,
+        line_spacing_points,
+        indent_level,
+    )
+    if all(v is None for v in opts):
         raise click.UsageError("format-paragraph requires at least one formatting option")
     anchor = deck.anchor_by_id(anchor_id)
     with deck.edit(f"CLI: format paragraph {anchor_id}"):
@@ -1317,8 +1369,12 @@ def format_paragraph(
             alignment=alignment,
             space_before=space_before,
             space_after=space_after,
+            space_before_lines=space_before_lines,
+            space_after_lines=space_after_lines,
             line_spacing=line_spacing,
+            line_spacing_points=line_spacing_points,
             indent_level=indent_level,
+            force=force,
         )
     emit(
         {"ok": True, "anchor_id": anchor.anchor_id},
@@ -1368,6 +1424,26 @@ def format_text(
         {"ok": True, "anchor_id": anchor.anchor_id},
         as_text=not ctx.obj["as_json"],
         text=f"formatted text of {anchor.anchor_id}",
+    )
+
+
+@click.command(name="reset-format")
+@click.option("--anchor-id", "anchor_id", required=True, help="Text anchor to reset.")
+@_deck_command
+def reset_format(ctx: click.Context, deck: Presentation, anchor_id: str) -> None:
+    """Reset an anchor's paragraph spacing to clean single-spaced defaults.
+
+    The recovery for a line-spacing spiral (giant spacing, text off the slide).
+    Does not reset font size/typeface — use `shape reset-to-layout` for a
+    placeholder's geometry + default font, or `format-text` to set a font.
+    """
+    anchor = deck.anchor_by_id(anchor_id)
+    with deck.edit(f"CLI: reset format {anchor_id}"):
+        anchor.reset_format()
+    emit(
+        {"ok": True, "anchor_id": anchor.anchor_id},
+        as_text=not ctx.obj["as_json"],
+        text=f"reset paragraph spacing of {anchor.anchor_id}",
     )
 
 
@@ -2024,6 +2100,22 @@ def read_anchor(ctx: click.Context, deck: Presentation, anchor_id: str) -> None:
     )
 
 
+@read.command(name="text-frame-status")
+@click.option(
+    "--anchor-id", "anchor_id", required=True, help="Shape to inspect (shape:/ph:/shapeid:)."
+)
+@_deck_command
+def read_text_frame_status(ctx: click.Context, deck: Presentation, anchor_id: str) -> None:
+    """Autofit / wrap / margin diagnostics for a shape's text frame (a read)."""
+    sh = _resolve_shape(deck, anchor_id)
+    status = sh.text_frame_status()
+    emit(
+        {"anchor_id": sh.anchor_id, **status.to_dict()},
+        as_text=not ctx.obj["as_json"],
+        text=f"{sh.anchor_id}: autosize={status.autosize} overflow_risk={status.overflow_risk}",
+    )
+
+
 @read.command(name="notes")
 @click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
 @_deck_command
@@ -2073,6 +2165,154 @@ def _set_text(ctx: click.Context, anchor_id: str, text: str, label: str) -> None
 def write(ctx: click.Context, anchor_id: str, text: str) -> None:
     """Set the text of a text anchor (preserves the viewed slide; one Ctrl-Z)."""
     _set_text(ctx, anchor_id, text, f"CLI: write {anchor_id}")
+
+
+@click.command(name="set-paragraphs")
+@click.option(
+    "--anchor-id", "anchor_id", required=True, help="Text anchor to rewrite (ph:/shape:/notes:)."
+)
+@click.option(
+    "--json",
+    "paragraphs_json",
+    default=None,
+    help='Paragraphs as a JSON array: strings or {"text", "list_type", ...} objects.',
+)
+@click.option(
+    "--file",
+    "json_file",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="Read the JSON paragraphs array from a file instead of --json.",
+)
+@_deck_command
+def set_paragraphs(
+    ctx: click.Context,
+    deck: Presentation,
+    anchor_id: str,
+    paragraphs_json: str | None,
+    json_file: str | None,
+) -> None:
+    """Rewrite an anchor as a clean list of paragraphs (no newline inference).
+
+    Each array item is a string or an object with `text` plus optional per-paragraph
+    formatting (`list_type`, `indent_level`, `alignment`, `line_spacing` /
+    `line_spacing_points`, `size`, `bold`, ...). Each item becomes one addressable
+    `para:`.
+    """
+    if (paragraphs_json is None) == (json_file is None):
+        raise click.UsageError("set-paragraphs needs exactly one of --json or --file")
+    if paragraphs_json is not None:
+        raw = paragraphs_json
+    else:
+        assert json_file is not None  # narrowed by the xor guard above
+        raw = Path(json_file).read_text("utf-8")
+    try:
+        items = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise click.UsageError(f"invalid JSON for paragraphs: {exc}") from exc
+    if not isinstance(items, list):
+        raise click.UsageError("paragraphs must be a JSON array")
+    anchor = deck.anchor_by_id(anchor_id)
+    with deck.edit(f"CLI: set paragraphs {anchor_id}"):
+        new_ids = anchor.set_paragraphs(items)
+    emit(
+        {"ok": True, "anchor_id": anchor.anchor_id, "paragraphs": new_ids},
+        as_text=not ctx.obj["as_json"],
+        text=f"set {len(new_ids)} paragraphs on {anchor.anchor_id}",
+    )
+
+
+# ---------------------------------------------------------------------------
+# exec --script ops.json   (apply a batch script as one Ctrl-Z)
+# ---------------------------------------------------------------------------
+
+#: A batch op's error category -> CLI exit code (mirrors main._exit_for, keyed by
+#: the string token run_batch reports instead of an exception type).
+_BATCH_EXIT_FOR: dict[str, int] = {
+    "not_found": 2,
+    "busy": 3,
+    "not_running": 4,
+    "ambiguous": 5,
+    "no_text_frame": 6,
+    "invalid_args": 1,
+    "error": 1,
+}
+
+
+@click.command(name="exec")
+@click.option(
+    "--script",
+    "script_path",
+    type=click.Path(exists=True, dir_okay=False),
+    required=True,
+    help='JSON batch script: {"label": "...", "ops": [{"op": ..., ...}, ...]}.',
+)
+@click.option(
+    "--continue",
+    "continue_on_error",
+    is_flag=True,
+    default=False,
+    help="Keep going after a failing op (default: stop at the first).",
+)
+@click.option(
+    "--no-atomic",
+    "no_atomic",
+    is_flag=True,
+    default=False,
+    help="Fence each op as its own undo entry (default: the whole script is one Ctrl-Z).",
+)
+@click.pass_context
+def exec_script(
+    ctx: click.Context, script_path: str, continue_on_error: bool, no_atomic: bool
+) -> None:
+    """Apply a JSON batch script of ops against one connection (the CLI batch verb).
+
+    The script is `{"label": "...", "ops": [{"op": "set_text", "anchor_id": ...,
+    "text": ...}, ...]}`. Each op defaults to the `edit` tool (set `"tool"` for a
+    read/render/show op); ops run in order and, by default, collapse to a single
+    Ctrl-Z. On a failing op the run stops (unless `--continue`) and the exit code
+    maps to that op's error category — `shape:S:N` refs resolve live as each op
+    runs, so address anything you didn't just create by `ph:S:KIND` or `.Name`.
+    """
+
+    def go() -> None:
+        raw = Path(script_path).read_text("utf-8")
+        try:
+            script = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise click.UsageError(f"invalid JSON in script: {exc}") from exc
+        if not isinstance(script, dict) or not isinstance(script.get("ops"), list):
+            raise click.UsageError('script must be a JSON object with an "ops" array')
+        label = str(script.get("label") or "exec script")
+        with attach() as ppt:
+            deck = _pick_deck(ppt, ctx.obj["doc_name"])
+            results = run_batch(
+                ppt,
+                deck,
+                script["ops"],
+                doc=ctx.obj["doc_name"],
+                atomic=not no_atomic,
+                stop_on_error=not continue_on_error,
+                label=f"CLI exec: {label}",
+            )
+        ok = all(r["ok"] for r in results)
+        summary = {
+            "ok": ok,
+            "label": label,
+            "atomic": not no_atomic,
+            "count": len(results),
+            "results": results,
+        }
+        emit(
+            summary,
+            as_text=not ctx.obj["as_json"],
+            text=f"exec {label!r}: {len(results)} ops, ok={ok}",
+        )
+        if not ok:
+            first_fail = next(r for r in results if not r["ok"])
+            sys.exit(_BATCH_EXIT_FOR.get(first_fail.get("error", "error"), EXIT_OTHER))
+
+    _run(ctx, go)
 
 
 # ---------------------------------------------------------------------------

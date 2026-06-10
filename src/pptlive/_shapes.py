@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 import tempfile
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -30,6 +31,7 @@ from .constants import (
     MsoTextOrientation,
     MsoTriState,
     autoshape_type_for,
+    autosize_name,
     chart_type_for,
     color_hex_or_none,
     is_true,
@@ -65,6 +67,8 @@ _CHART_DEFAULT_STYLE = -1  # AddChart2 Style: -1 = the type's default style
 _DEFAULT_SMARTART_WIDTH = 480.0  # ~6.7 in
 _DEFAULT_SMARTART_HEIGHT = 300.0  # ~4.2 in
 
+_safe = _com.safe_read  # defensive COM-property read (returns a default on failure)
+
 
 # ---------------------------------------------------------------------------
 # COM-level helpers (operate on a raw Shape dispatch object)
@@ -94,6 +98,66 @@ def has_text_frame(com_shape: Any) -> bool:
         return is_true(com_shape.HasTextFrame)
     except Exception:
         return False
+
+
+def _layout_default_size(layout_placeholder: Any) -> float | None:
+    """A layout placeholder's default font size in points, or `None` if unreadable."""
+    try:
+        size = float(layout_placeholder.TextFrame.TextRange.Font.Size)
+    except Exception:
+        return None
+    return size if size > 0 else None
+
+
+@dataclass(frozen=True)
+class TextFrameStatus:
+    """A shape's text-frame container state — the autofit/overflow diagnostics read.
+
+    Surfaces the state that makes a "formatting spiral" visible *before* it bites
+    (the gpt-5.4 review's ask). `autosize` is the friendly `TextFrame2.AutoSize`
+    mode; `word_wrap` is on/off; `margins` is the four inner margins in points;
+    `overflow_risk` is a **coarse, mode-derived** flag (PowerPoint exposes no
+    shrink-% on this build, so it reads the autofit *mode*, not a measured extent):
+    `"possible"` (autosize off — text can clip), `"low"` (an autofit mode is
+    active), or `"unknown"`.
+    """
+
+    autosize: str
+    word_wrap: bool
+    margins: dict[str, float]
+    overflow_risk: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "autosize": self.autosize,
+            "word_wrap": self.word_wrap,
+            "margins": self.margins,
+            "overflow_risk": self.overflow_risk,
+        }
+
+
+def _overflow_risk(autosize: str) -> str:
+    """Coarse overflow risk from the autofit mode (no measured extent available)."""
+    if autosize == "none":
+        return "possible"  # nothing shrinks the text or grows the shape — it can clip
+    if autosize in ("text_to_fit_shape", "shape_to_fit_text"):
+        return "low"  # an autofit mode keeps text and frame reconciled
+    return "unknown"
+
+
+def _autosize_of(com_shape: Any) -> str:
+    """The shape's autofit mode name, preferring the clean `TextFrame2` reading."""
+    try:
+        return autosize_name(com_shape.TextFrame2.AutoSize)
+    except Exception:
+        return _safe_autosize_classic(com_shape)
+
+
+def _safe_autosize_classic(com_shape: Any) -> str:
+    try:
+        return autosize_name(com_shape.TextFrame.AutoSize)
+    except Exception:
+        return "unknown"
 
 
 def is_placeholder(com_shape: Any) -> bool:
@@ -442,6 +506,34 @@ class Shape(Anchor):
             raise NoTextFrameError(self.anchor_id)
         return sh.TextFrame.TextRange
 
+    def text_frame_status(self) -> TextFrameStatus:
+        """Autofit / wrap / margin diagnostics for this shape's text frame.
+
+        A **read** (no view move, no edit fence) that exposes the state behind a
+        "formatting spiral": the autofit mode, word-wrap, inner margins (points),
+        and a coarse `overflow_risk` (see `TextFrameStatus`). Raises
+        `NoTextFrameError` if the shape holds no text frame.
+        """
+        with _com.translate_com_errors():
+            sh = self._com_shape()
+            if not has_text_frame(sh):
+                raise NoTextFrameError(self.anchor_id)
+            tf = sh.TextFrame
+            autosize = _autosize_of(sh)
+            margins = {
+                "left": _safe(lambda: float(tf.MarginLeft), 0.0),
+                "right": _safe(lambda: float(tf.MarginRight), 0.0),
+                "top": _safe(lambda: float(tf.MarginTop), 0.0),
+                "bottom": _safe(lambda: float(tf.MarginBottom), 0.0),
+            }
+            word_wrap = _safe(lambda: is_true(tf.WordWrap), True)
+        return TextFrameStatus(
+            autosize=autosize,
+            word_wrap=word_wrap,
+            margins=margins,
+            overflow_risk=_overflow_risk(autosize),
+        )
+
     # -- paragraphs (v0.3) -------------------------------------------------
 
     @property
@@ -484,6 +576,60 @@ class Shape(Anchor):
                 sh.Width = float(width)
             if height is not None:
                 sh.Height = float(height)
+
+    def reset_to_layout(self) -> dict[str, float]:
+        """Restore this *placeholder's* geometry (+ default font size) from its layout.
+
+        The recovery verb for a placeholder that's been manually moved/resized or
+        shrunk to an unreadable font (the gpt-5.4 review's "5 pt font, overflow off
+        the slide" case). Matches this shape to its slide's `CustomLayout`
+        placeholder by `PlaceholderFormat.Type`, then copies that placeholder's
+        `Left`/`Top`/`Width`/`Height` (and, best-effort, its default font size onto
+        the live text) — the layout's reading is the source of truth (verified in
+        `scripts/text_model_spike.py`). Returns the restored `{left, top, width,
+        height[, font_size]}` in points.
+
+        Raises `ValueError` if this shape isn't a placeholder, or
+        `AnchorNotFoundError` if the layout has no placeholder of the same kind.
+        Pairs with `reset_format` (which clears the paragraph-spacing spiral). A
+        mutation: wrap in `deck.edit(...)`.
+        """
+        with _com.translate_com_errors():
+            sh = self._com_shape()
+            try:
+                want_type = int(sh.PlaceholderFormat.Type)
+            except Exception as exc:  # not a placeholder -> no PlaceholderFormat
+                raise ValueError(
+                    f"reset_to_layout() needs a placeholder shape, got {self.anchor_id}"
+                ) from exc
+            match = self._layout_placeholder(want_type)
+            sh.Left = float(match.Left)
+            sh.Top = float(match.Top)
+            sh.Width = float(match.Width)
+            sh.Height = float(match.Height)
+            restored: dict[str, float] = {
+                "left": float(sh.Left),
+                "top": float(sh.Top),
+                "width": float(sh.Width),
+                "height": float(sh.Height),
+            }
+            size = _layout_default_size(match)
+            if size is not None and has_text_frame(sh):
+                sh.TextFrame.TextRange.Font.Size = size
+                restored["font_size"] = size
+        return restored
+
+    def _layout_placeholder(self, placeholder_type: int) -> Any:
+        """The `CustomLayout` placeholder matching `placeholder_type` (live COM)."""
+        phs = self._slide.com.CustomLayout.Shapes.Placeholders
+        for i in range(1, int(phs.Count) + 1):
+            ph = phs(i)
+            try:
+                if int(ph.PlaceholderFormat.Type) == placeholder_type:
+                    return ph
+            except Exception:
+                continue
+        raise AnchorNotFoundError("layout placeholder", self.anchor_id)
 
     def set_alt_text(self, value: str) -> None:
         """Set the shape's alternative (accessibility) text (`Shape.AlternativeText`).

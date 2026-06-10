@@ -122,6 +122,12 @@ class _FakeParagraphFormat:
         self.SpaceBefore = 0.0
         self.SpaceAfter = 0.0
         self.SpaceWithin = 1.0
+        # LineRule* select each Space*'s unit: msoTrue (-1) = multiple/lines,
+        # msoFalse (0) = points. Default within is a multiple (SpaceWithin 1.0 =
+        # single); before/after default to points (0 pt). Mirrors live COM.
+        self.LineRuleWithin = -1
+        self.LineRuleBefore = 0
+        self.LineRuleAfter = 0
         self.Bullet = _FakeBullet()
 
 
@@ -218,6 +224,12 @@ class _FakeTextRange:
             return _FakeTextRange(self._frame, s, self._length)
         return _FakeTextRange(self._frame, s + start - 1, length)
 
+    def Runs(self, start: int = -1, length: int = -1) -> _FakeTextRange:
+        # The fake models formatting at paragraph granularity (one Font per
+        # paragraph), so it exposes one run per spanned paragraph — enough to
+        # exercise the run-walk; true sub-paragraph mixed runs live in smoke.
+        return self.Paragraphs(start, length)
+
     @property
     def IndentLevel(self) -> int:
         return self._paras_in_span()[0].IndentLevel
@@ -305,6 +317,15 @@ class _FakeCharRange:
 class _FakeTextFrame:
     def __init__(self, text: str = "") -> None:
         self._paras = [_FakePara(p) for p in str(text).split("\r")]
+        # Autofit container props (text_frame_status). Classic AutoSize reads mixed
+        # on real builds (-2); the wrapper prefers TextFrame2.AutoSize. Margins in
+        # points mirror PowerPoint's defaults.
+        self.AutoSize = -2
+        self.WordWrap = _MSO_TRUE
+        self.MarginLeft = 7.2
+        self.MarginRight = 7.2
+        self.MarginTop = 3.6
+        self.MarginBottom = 3.6
 
     @property
     def TextRange(self) -> _FakeTextRange:
@@ -374,6 +395,14 @@ class _FakeShape:
         self._chart: _FakeChart | None = None
         self._smartart: _FakeSmartArt | None = None
         self._text_frame = _FakeTextFrame(text) if text is not None else None
+        # Modern TextFrame2 — the wrapper reads AutoSize off this (the classic
+        # TextFrame.AutoSize is the mixed sentinel on real builds). 1 =
+        # msoAutoSizeTextToFitShape, a content placeholder's "shrink on overflow".
+        self._text_frame2 = (
+            SimpleNamespace(AutoSize=1, WordWrap=_MSO_TRUE, HasText=_MSO_TRUE)
+            if text is not None
+            else None
+        )
         self.selected = False
         self.last_export: dict[str, Any] | None = None
         self._collection: _FakeShapes | None = None  # set when adopted by _FakeShapes
@@ -416,6 +445,12 @@ class _FakeShape:
         if self._text_frame is None:
             raise AttributeError("shape has no text frame")
         return self._text_frame
+
+    @property
+    def TextFrame2(self) -> Any:
+        if self._text_frame2 is None:
+            raise AttributeError("shape has no text frame")
+        return self._text_frame2
 
     @property
     def HasTable(self) -> int:
@@ -1299,10 +1334,11 @@ def _seeded_comments() -> list[_FakeComment]:
 
 
 class _FakeCustomLayout:
-    """A `CustomLayout` — just a name, as far as resolution cares."""
+    """A `CustomLayout` — a name plus (for reset_to_layout) its placeholders."""
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, placeholders: list[_FakeShape] | None = None) -> None:
         self.Name = name
+        self.Shapes = SimpleNamespace(Placeholders=_FakePlaceholders(placeholders or []))
 
 
 class _FakeCustomLayouts:
@@ -1382,10 +1418,11 @@ class _FakeSlide:
         shapes: list[_FakeShape],
         notes_text: str | None = "",
         comments: list[_FakeComment] | None = None,
+        layout_placeholders: list[_FakeShape] | None = None,
     ) -> None:
         self.SlideID = slide_id
         self.Shapes = _FakeShapes(shapes)
-        self.CustomLayout = _FakeCustomLayout(layout_name)
+        self.CustomLayout = _FakeCustomLayout(layout_name, layout_placeholders)
         self._notes_text = notes_text
         self.NotesPage = _FakeNotesPage(notes_text)
         self.Comments = _FakeCommentCollection(comments)
@@ -1904,10 +1941,25 @@ def _default_deck() -> _FakePresentation:
             ),
         ],
     )
+    # The layout's body placeholder carries the geometry + default font size
+    # reset_to_layout restores from (the spike's live values for this layout).
+    _layout_body = _FakeShape(
+        name="Content Placeholder 2",
+        shape_id=2,
+        shape_type=_MSO_PLACEHOLDER,
+        text="",
+        placeholder_type=_PH_BODY,
+        left=66.0,
+        top=143.75,
+        width=828.0,
+        height=342.625,
+    )
+    _layout_body.TextFrame.TextRange.Font.Size = 28.0
     slide2 = _FakeSlide(
         slide_id=257,
         layout_name="Title and Content",
         notes_text="",
+        layout_placeholders=[_layout_body],
         shapes=[
             _FakeShape(
                 name="Title 1",

@@ -124,11 +124,17 @@ chart_png = deck.slides[4].shapes["Chart 2"].export_image()   # one shape, nativ
 ```python
 with deck.edit("Polish the body copy"):
     body = deck.anchor_by_id("ph:4:body")
-    body.set_text("Revenue up 12%\nChurn down 3%\nNPS +9")
-    body.apply_list("bulleted")
-    body.paragraph(2).format_paragraph(indent_level=2, alignment="left")
+    # Safest list authoring: one item = one bullet, no newline inference.
+    body.set_paragraphs([
+        {"text": "Revenue up 12%", "list_type": "bulleted"},
+        {"text": "Churn down 3%", "list_type": "bulleted", "indent_level": 2},
+        {"text": "NPS +9", "list_type": "bulleted"},
+    ])
     body.paragraph(1).format_text(bold=True, size=24, color="#2E74B5")
-    body.insert_paragraph_after("Cash runway: 30 months")
+    # Line spacing is unit-explicit: line_spacing is a MULTIPLE, line_spacing_points
+    # is exact points. line_spacing=24 is rejected (24x!) unless force=True — the
+    # gpt-5.4 footgun. See the gotchas + field table below.
+    body.format_paragraph(line_spacing_points=24)
 
 with deck.edit("Add a metrics table"):
     table = deck.slides[4].shapes.add_table(rows=3, columns=2).table
@@ -155,6 +161,34 @@ tree = sa.read()                                      # {layout, nodes:[{text, l
 with deck.edit("Make the diagram readable on dark"):
     chart.recolor_text("#FFFFFF")   # every shown chart element: legend/axes/title/data labels
     sa.recolor_text("#FFFFFF")      # every SmartArt node label
+```
+
+## PowerPoint text-model gotchas + recovery
+PowerPoint's text model leaks sharp edges through the API. The high-value ones:
+- **Line spacing has two units.** `format_paragraph(line_spacing=1.5)` is a **multiple**; `format_paragraph(line_spacing_points=24)` is **exact points**. `line_spacing=24` (a 24× multiple) is rejected with `ValueError` unless `force=True`. Spacing before/after mirrors this: `space_before`/`space_after` are points, `space_before_lines`/`space_after_lines` are multiples.
+- **`\n` is a paragraph break, `\v` a soft one.** `set_text("a\nb")` makes two addressable `para:`s. To author a list without relying on that inference, use `set_paragraphs([...])` (one item = one paragraph; a newline *inside* an item becomes a soft break).
+- **No "clear formatting" primitive.** Re-setting text doesn't drop run overrides. Recover with `anchor.reset_format()` (paragraph spacing → single/0/0) and, for a placeholder, `shape.reset_to_layout()` (geometry + default font size from the layout).
+- **Diagnostics:** `shape.paragraphs.list()` now carries `space_before`/`space_after`/`line_spacing` as `{value, mode}` plus `run_sizes` (distinct per-run sizes — spot a stray 5 pt run). `shape.text_frame_status()` → `TextFrameStatus(autosize, word_wrap, margins, overflow_risk)` when text looks clipped.
+
+```python
+# Field reference — exact COM mapping per formatting kwarg:
+#   line_spacing        -> SpaceWithin + LineRuleWithin=msoTrue   (multiple, per-paragraph)
+#   line_spacing_points -> SpaceWithin + LineRuleWithin=msoFalse  (points,   per-paragraph)
+#   space_before/after        -> SpaceBefore/After + LineRule*=msoFalse  (points)
+#   space_before/after_lines  -> SpaceBefore/After + LineRule*=msoTrue   (multiple)
+#   indent_level (1-5)  -> TextRange.IndentLevel              (per-paragraph)
+#   alignment           -> ParagraphFormat.Alignment          (per-paragraph)
+#   size (warns < 8 pt) -> Font.Size                          (per-run)
+#   bold/italic/underline -> Font.Bold/Italic/Underline       (per-run)
+#   color (format_text) -> Font.Color.RGB                     (per-run)
+
+# Repair a placeholder spiraled into 5 pt / giant spacing / overflow:
+with deck.edit("Repair the body placeholder"):
+    body = deck.anchor_by_id("ph:4:body")
+    body.reset_format()                          # spacing -> single, 0 before/after
+    deck.slides[4].shapes["Content Placeholder 2"].reset_to_layout()  # geometry + font
+    body.set_paragraphs(["Clean point one", "Clean point two"])
+deck.slides[4].export_image("check.png")         # verify visually
 ```
 
 ## Comments — threaded review (read + add/reply/delete)

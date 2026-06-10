@@ -67,6 +67,44 @@ def normalize_paragraph_breaks(text: str) -> str:
     return text.replace("\r\n", "\r").replace("\n", "\r")
 
 
+#: Per-paragraph keys `set_paragraphs` forwards to `format_paragraph`.
+_PARA_FORMAT_KEYS = (
+    "alignment",
+    "space_before",
+    "space_after",
+    "space_before_lines",
+    "space_after_lines",
+    "line_spacing",
+    "line_spacing_points",
+    "indent_level",
+    "force",
+)
+#: Per-paragraph keys `set_paragraphs` forwards to `format_text`.
+_PARA_FONT_KEYS = ("bold", "italic", "underline", "size", "font", "color")
+
+
+def _as_single_paragraph(text: str) -> str:
+    """Collapse any newline inside one `set_paragraphs` item to a soft break.
+
+    `set_paragraphs` is *paragraph-oriented*: each item is exactly one paragraph,
+    so a newline embedded in an item must NOT split it into two (the whole point —
+    no newline inference). We fold `\\r`/`\\n` to `\\v` (`SOFT_BREAK`), keeping the
+    item a single addressable `para:` while preserving an intentional line break.
+    """
+    return str(text).replace("\r\n", SOFT_BREAK).replace("\n", SOFT_BREAK).replace("\r", SOFT_BREAK)
+
+
+def _coerce_paragraph_item(item: Any) -> dict[str, Any]:
+    """Normalise a `set_paragraphs` item (a `str` or a `{text, ...}` dict)."""
+    if isinstance(item, str):
+        return {"text": item}
+    if isinstance(item, dict):
+        if "text" not in item or not isinstance(item["text"], str):
+            raise ValueError("each paragraph dict needs a string 'text'")
+        return dict(item)
+    raise ValueError(f"each paragraph must be a string or a dict, got {type(item).__name__}")
+
+
 def _bullet_char(character: str | int) -> int:
     """A single-char string or an int code point -> the int `Bullet.Character`."""
     if isinstance(character, str):
@@ -110,6 +148,12 @@ def apply_font(
         f.Color.RGB = parse_color(color)
 
 
+#: Above this, a `line_spacing` *multiple* is almost always a points-vs-multiple
+#: confusion (the gpt-5.4 review's `line_spacing: 24` footgun — 24× line height
+#: pushes text off the slide). `format_paragraph` rejects it unless `force=True`.
+LINE_SPACING_MULTIPLE_MAX = 5.0
+
+
 def apply_paragraph_format(
     pf: Any,
     *,
@@ -117,24 +161,52 @@ def apply_paragraph_format(
     space_before: float | None = None,
     space_after: float | None = None,
     line_spacing: float | None = None,
+    line_spacing_points: float | None = None,
+    space_before_lines: float | None = None,
+    space_after_lines: float | None = None,
 ) -> None:
     """Write paragraph properties onto a COM `ParagraphFormat` object.
 
     Shared by `Anchor.format_paragraph` and `Master.format_paragraph_style`.
-    `alignment` is the resolved int (caller coerces a name first);
-    `space_before`/`space_after` are points; `line_spacing` is the line-spacing
-    multiple (`SpaceWithin`). Indent level is *not* handled here — it lives on the
-    `TextRange`, not `ParagraphFormat`, so `Anchor.format_paragraph` sets it
-    separately. Caller wraps this in `translate_com_errors()`.
+    `alignment` is the resolved int (caller coerces a name first).
+
+    PowerPoint stores each spacing value as a **bare number whose unit a companion
+    `LineRule*` flag selects** (`msoTrue` ⇒ a multiple/lines, `msoFalse` ⇒ points;
+    verified in `scripts/text_model_spike.py`). So each spacing knob comes as a
+    points/multiple pair that *also* sets the matching flag, leaving no ambiguity:
+
+    * `line_spacing` (multiple) / `line_spacing_points` (pt) → `SpaceWithin`
+      + `LineRuleWithin`
+    * `space_before` (pt) / `space_before_lines` (multiple) → `SpaceBefore`
+      + `LineRuleBefore`
+    * `space_after` (pt) / `space_after_lines` (multiple) → `SpaceAfter`
+      + `LineRuleAfter`
+
+    Pass at most one of each pair (the caller validates). Indent level is *not*
+    handled here — it lives on the `TextRange`, not `ParagraphFormat`, so
+    `Anchor.format_paragraph` sets it separately. Caller wraps this in
+    `translate_com_errors()`.
     """
     if alignment is not None:
         pf.Alignment = alignment
-    if space_before is not None:
-        pf.SpaceBefore = float(space_before)
-    if space_after is not None:
-        pf.SpaceAfter = float(space_after)
     if line_spacing is not None:
+        pf.LineRuleWithin = _tristate(True)
         pf.SpaceWithin = float(line_spacing)
+    if line_spacing_points is not None:
+        pf.LineRuleWithin = _tristate(False)
+        pf.SpaceWithin = float(line_spacing_points)
+    if space_before is not None:
+        pf.LineRuleBefore = _tristate(False)
+        pf.SpaceBefore = float(space_before)
+    if space_before_lines is not None:
+        pf.LineRuleBefore = _tristate(True)
+        pf.SpaceBefore = float(space_before_lines)
+    if space_after is not None:
+        pf.LineRuleAfter = _tristate(False)
+        pf.SpaceAfter = float(space_after)
+    if space_after_lines is not None:
+        pf.LineRuleAfter = _tristate(True)
+        pf.SpaceAfter = float(space_after_lines)
 
 
 class Anchor(ABC):
@@ -188,6 +260,51 @@ class Anchor(ABC):
         with _com.translate_com_errors():
             self._text_range().Text = normalize_paragraph_breaks(text)
 
+    def set_paragraphs(self, paragraphs: list[Any]) -> list[str]:
+        """Replace this anchor's text with a clean, per-paragraph list.
+
+        The safe alternative to newline inference for list authoring (the gpt-5.4
+        review's ask): each item is a plain string **or** a dict
+        `{"text": ..., "list_type"?, "indent_level"?, "alignment"?, "line_spacing"?,
+        "size"?, ...}` and becomes exactly one addressable `para:` — a newline
+        inside an item is folded to a soft break, never a paragraph split. Per-item
+        keys are forwarded to `format_paragraph` (spacing/alignment/indent) and
+        `format_text` (font); `list_type` applies/removes the bullet
+        (`"none"` strips it), resetting list state cleanly. Returns the new
+        paragraphs' `anchor_id`s (empty for a text anchor with no paragraph view,
+        e.g. notes). Wrap in `deck.edit(...)`.
+        """
+        items = [_coerce_paragraph_item(p) for p in paragraphs]
+        if not items:
+            raise ValueError("set_paragraphs needs at least one paragraph")
+        joined = "\r".join(_as_single_paragraph(it["text"]) for it in items)
+        with _com.translate_com_errors():
+            self._text_range().Text = joined
+        para_coll = getattr(self, "paragraphs", None)
+        if para_coll is None:
+            return []  # a text anchor without a paragraph view (notes) — text only
+        new_ids: list[str] = []
+        for idx, item in enumerate(items, start=1):
+            para = para_coll[idx]
+            new_ids.append(para.anchor_id)
+            self._apply_paragraph_item(para, item)
+        return new_ids
+
+    @staticmethod
+    def _apply_paragraph_item(para: Anchor, item: dict[str, Any]) -> None:
+        """Apply one `set_paragraphs` item's formatting to its built paragraph."""
+        list_type = item.get("list_type")
+        if list_type == "none":
+            para.remove_list()
+        elif list_type is not None:
+            para.apply_list(list_type, character=item.get("bullet_char"))
+        para_fmt = {k: item[k] for k in _PARA_FORMAT_KEYS if k in item}
+        if para_fmt:
+            para.format_paragraph(**para_fmt)
+        font_fmt = {k: item[k] for k in _PARA_FONT_KEYS if k in item}
+        if font_fmt:
+            para.format_text(**font_fmt)
+
     # -- text structure (v0.3) -------------------------------------------------
     #
     # These act on `self._text_range()`, so on a whole-shape anchor they apply to
@@ -235,20 +352,54 @@ class Anchor(ABC):
         space_before: float | None = None,
         space_after: float | None = None,
         line_spacing: float | None = None,
+        line_spacing_points: float | None = None,
+        space_before_lines: float | None = None,
+        space_after_lines: float | None = None,
         indent_level: int | None = None,
+        force: bool = False,
     ) -> None:
         """Set paragraph formatting on this anchor's paragraphs.
 
         Only the kwargs you pass are written. `alignment` is a name
         (`"left"`/`"center"`/`"right"`/`"justify"`/`"distribute"`) or int.
-        `space_before`/`space_after` are in points; `line_spacing` is a multiple
-        (`1.0` single, `1.5`, …). `indent_level` is PowerPoint's outline/bullet
-        level, 1-5 (its only notion of paragraph indent — there is no points-based
-        left indent on `ParagraphFormat`).
+
+        **Spacing is unit-explicit** (PowerPoint stores a bare number whose unit a
+        `LineRule*` flag selects, so the same number means wildly different things):
+
+        * `line_spacing` — a **multiple** (`1.0` single, `1.5`, `2.0`).
+        * `line_spacing_points` — an **exact point** height (e.g. `24` = 24 pt).
+        * `space_before` / `space_after` — **points** before/after the paragraph.
+        * `space_before_lines` / `space_after_lines` — the same as a **multiple**.
+
+        Pass at most one of each line-spacing pair (`line_spacing` xor
+        `line_spacing_points`, etc.) — passing both raises `ValueError`. A
+        `line_spacing` multiple above 5× is rejected unless `force=True` (it's
+        almost always a points-vs-multiple mix-up — pass `line_spacing_points`
+        instead). `indent_level` is PowerPoint's outline/bullet level, 1-5 (its only
+        notion of paragraph indent — there is no points-based left indent).
         """
         align_int = alignment_for(alignment) if alignment is not None else None
         if indent_level is not None and not (1 <= int(indent_level) <= 5):
             raise ValueError(f"indent_level must be between 1 and 5, got {indent_level}")
+        if line_spacing is not None and line_spacing_points is not None:
+            raise ValueError(
+                "pass line_spacing (a multiple) or line_spacing_points (exact pt), not both"
+            )
+        if space_before is not None and space_before_lines is not None:
+            raise ValueError("pass space_before (pt) or space_before_lines (a multiple), not both")
+        if space_after is not None and space_after_lines is not None:
+            raise ValueError("pass space_after (pt) or space_after_lines (a multiple), not both")
+        if (
+            line_spacing is not None
+            and float(line_spacing) > LINE_SPACING_MULTIPLE_MAX
+            and not force
+        ):
+            raise ValueError(
+                f"line_spacing={line_spacing} is a *multiple* — "
+                f"{line_spacing}× line height pushes text off the slide. "
+                f"Did you mean line_spacing_points={line_spacing} (exact pt)? "
+                "Pass force=True to set the multiple anyway."
+            )
         with _com.translate_com_errors():
             tr = self._text_range()
             apply_paragraph_format(
@@ -257,6 +408,9 @@ class Anchor(ABC):
                 space_before=space_before,
                 space_after=space_after,
                 line_spacing=line_spacing,
+                line_spacing_points=line_spacing_points,
+                space_before_lines=space_before_lines,
+                space_after_lines=space_after_lines,
             )
             if indent_level is not None:
                 tr.IndentLevel = int(indent_level)
@@ -284,6 +438,33 @@ class Anchor(ABC):
         """Strip bullets / numbering from this anchor's paragraphs."""
         with _com.translate_com_errors():
             self._text_range().ParagraphFormat.Bullet.Visible = _tristate(False)
+
+    def reset_format(self) -> None:
+        """Reset this anchor's paragraph *spacing* to clean single-spaced defaults.
+
+        The recovery verb for the line-spacing / space-before spiral — the gpt-5.4
+        review's "giant spacing, text off the slide, unrecoverable without a
+        rewrite" case. Sets single line spacing (`LineRuleWithin=msoTrue`,
+        `SpaceWithin=1.0`), zero space before/after (in points), and indent level 1.
+
+        **Honest scope (verified in `scripts/text_model_spike.py`):** PowerPoint
+        exposes *no* "clear direct formatting" primitive — re-setting the text does
+        not drop run overrides, and a run's size / typeface / colour / emphasis have
+        no readable "inherited" value to fall back to, so this resets only the
+        unambiguous paragraph-spacing knobs (where "single, 0, 0" *is* the clean
+        default). To restore a **placeholder's** geometry + default font size from
+        its layout, use `Shape.reset_to_layout()`; to set a specific font, use
+        `format_text`. A mutation: wrap in `deck.edit(...)`.
+        """
+        with _com.translate_com_errors():
+            tr = self._text_range()
+            apply_paragraph_format(
+                tr.ParagraphFormat,
+                line_spacing=1.0,
+                space_before=0.0,
+                space_after=0.0,
+            )
+            tr.IndentLevel = 1
 
     def insert_paragraph_before(self, text: str) -> None:
         """Insert `text` as a new paragraph immediately before this anchor's range.
@@ -423,13 +604,51 @@ def font_to_dict(text_range: Any) -> dict[str, Any]:
     }
 
 
+def _spacing_dict(pf: Any, value_attr: str, rule_attr: str) -> dict[str, Any]:
+    """One spacing knob as `{value, mode}` — `mode` reads the paired `LineRule*`.
+
+    PowerPoint stores a bare number whose unit a companion flag selects, so the
+    read is meaningless without it: `mode` is `"multiple"` (`LineRule* == msoTrue`)
+    or `"points"` (`msoFalse`). Defensive — a value PowerPoint can't supply for the
+    range (e.g. a mixed span) degrades to `None`.
+    """
+    return {
+        "value": _safe(lambda: float(getattr(pf, value_attr)), None),
+        "mode": _safe(lambda: "multiple" if is_true(getattr(pf, rule_attr)) else "points", None),
+    }
+
+
+def _run_sizes(para_range: Any) -> list[float]:
+    """The distinct font sizes across a paragraph's runs, in first-seen order.
+
+    The mixed-run tell the gpt-5.4 review asked for: a stray 5 pt run hiding in an
+    otherwise 18 pt paragraph shows up here as `[18.0, 5.0]`. A uniform paragraph
+    is a single-element list. Defensive (`[]` if Runs can't be walked).
+    """
+
+    def _walk() -> list[float]:
+        runs = para_range.Runs()
+        count = int(runs.Count)
+        seen: list[float] = []
+        for i in range(1, count + 1):
+            size = float(para_range.Runs(i, 1).Font.Size)
+            if size > 0 and size not in seen:  # <=0 is PowerPoint's mixed/unset sentinel
+                seen.append(size)
+        return seen
+
+    return _safe(_walk, [])
+
+
 def paragraph_to_dict(para_range: Any, anchor_id: str, index: int) -> dict[str, Any]:
     """Structured snapshot of one paragraph for `shape.paragraphs.list()`.
 
     Reads are defensive — a property PowerPoint can't supply for this range
     degrades to a sensible default rather than failing the whole listing. The
     `font` sub-dict carries the full effective font (see `font_to_dict`); the
-    top-level `bold`/`size` are kept for back-compat.
+    top-level `bold`/`size` are kept for back-compat. `space_before`/`space_after`/
+    `line_spacing` are `{value, mode}` (unit from the paired `LineRule*`), and
+    `run_sizes` lists the distinct per-run font sizes so a stray small run is
+    visible before it renders.
     """
     pf = para_range.ParagraphFormat
     font = font_to_dict(para_range)
@@ -443,6 +662,10 @@ def paragraph_to_dict(para_range: Any, anchor_id: str, index: int) -> dict[str, 
             lambda: bullet_type_name(pf.Bullet.Type) if is_true(pf.Bullet.Visible) else "none",
             "none",
         ),
+        "space_before": _spacing_dict(pf, "SpaceBefore", "LineRuleBefore"),
+        "space_after": _spacing_dict(pf, "SpaceAfter", "LineRuleAfter"),
+        "line_spacing": _spacing_dict(pf, "SpaceWithin", "LineRuleWithin"),
+        "run_sizes": _run_sizes(para_range),
         "bold": font["bold"],
         "size": font["size"],
         "font": font,

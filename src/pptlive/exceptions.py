@@ -160,6 +160,18 @@ class AmbiguousMatchError(PptliveError):
         return cls(anchor_id, candidates, message=message)
 
 
+class BatchOpError(PptliveError):
+    """A dispatch op got invalid arguments (the `invalid_args` category).
+
+    Raised inside the shared op-dispatch layer (`_batch.py`) for a bad/missing
+    argument or an unknown op/tool — the seam both the MCP server and the CLI `exec`
+    verb run on. It's a `PptliveError` so it flows through the same error boundaries:
+    the MCP server maps it to a `ToolError`, and the CLI maps it to exit 1. Kept
+    fastmcp-free (it does *not* depend on `mcp`'s `ToolError`) precisely so the CLI
+    can reuse the dispatch without the optional `mcp` extra installed.
+    """
+
+
 class PowerPointBusyError(PptliveError):
     """PowerPoint rejected the RPC — typically a modal dialog has focus.
 

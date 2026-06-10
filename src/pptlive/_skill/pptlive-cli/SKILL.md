@@ -65,9 +65,39 @@ you can re-identify after drift. Steer toward `ph:S:KIND`, `.Name`, and
 - `pptlive replace --anchor-id shape:3:1 --text "New text"` — overwrite a whole anchor.
 - `pptlive replace --find "old" --text "new" [--in slide:3] [--all|--occurrence N]` — fuzzy find/replace; rewrites just the matched span (keeps run formatting). One match auto-applies; several without `--all`/`--occurrence` is exit 5 (ambiguous, lists the matches); zero is exit 2.
 - `pptlive insert --anchor-id para:4:2:3 --text "New bullet" [--before|--after]` — new paragraph relative to an anchor.
-- `pptlive format-paragraph --anchor-id para:4:2:1 --alignment center --indent-level 2`.
+- `pptlive set-paragraphs --anchor-id ph:4:body --json '["First", {"text":"Second","list_type":"bulleted","indent_level":2}]'` — rewrite an anchor as a clean per-paragraph list (strings or `{text, list_type, indent_level, alignment, line_spacing/line_spacing_points, size, bold, ...}`). The **safe** way to author a bullet list — each item is exactly one `para:`, no `\n` inference. `--file PATH` reads the JSON instead.
+- `pptlive format-paragraph --anchor-id para:4:2:1 --alignment center --indent-level 2 [--line-spacing 1.5 | --line-spacing-points 24]` — see the line-spacing footgun below; `--line-spacing` is a *multiple*, `--line-spacing-points` is *exact points*.
 - `pptlive format-text --anchor-id ph:4:title --bold --size 40 --color "#2E74B5"`.
 - `pptlive list apply --anchor-id ph:4:body --type bulleted [--char "•"]` · `pptlive list remove --anchor-id ph:4:body`.
+- `pptlive reset-format --anchor-id ph:4:body` — recover a line-spacing spiral (reset paragraph spacing to single + zero before/after). `pptlive shape reset-to-layout --anchor-id ph:4:body` — restore a placeholder's geometry + default font size from its layout (the "5 pt font / off the slide" fix).
+- `pptlive read text-frame-status --anchor-id shape:4:3` — autofit/wrap/margin diagnostics (`autosize`, `word_wrap`, `margins`, `overflow_risk`) when text looks clipped.
+- `pptlive exec --script ops.json` — apply a whole batch script `{"label": "...", "ops": [{"op": "write", "anchor_id": ..., "text": ...}, ...]}` against one connection as **one Ctrl-Z**. Each op defaults to the `edit` tool (the op names are the MCP `ppt_edit`/`ppt_read`/... ops). Stops at the first failing op (exit code maps to its category) unless `--continue`; `--no-atomic` fences each op separately. The single-process way to build a slide without a command per change.
+
+## PowerPoint text-model gotchas (read before formatting text)
+PowerPoint's text model has sharp edges that leak through. The big ones:
+- **Line spacing has two units.** `--line-spacing` is a **multiple** (1.0 single, 1.5, 2.0). For an exact *point* height use `--line-spacing-points 24`. Passing `--line-spacing 24` means 24× line height (text shoots off the slide) — so it's **rejected** unless `--force`. Same split for spacing before/after: `--space-before/--space-after` are points, `--space-before-lines/--space-after-lines` are multiples.
+- **`\n` is a paragraph, not a soft break.** In `write`, `\n`/`\r` start a new addressable `para:`; `\v` is a soft line break within one paragraph. To author a list reliably, prefer `set-paragraphs` (one item = one bullet) over embedding newlines.
+- **Paragraph formatting applies per paragraph, font formatting per run.** A `format-text --size` on a multi-run paragraph may hit only part of it; read `paragraphs` and check `run_sizes` to spot a stray small run.
+- **There's no "clear formatting" button.** Re-writing the text does *not* drop run overrides. `reset-format` resets paragraph *spacing* to clean defaults; `shape reset-to-layout` restores a placeholder's geometry + default font. Font size/typeface otherwise need an explicit `format-text`.
+- **When text overflows,** read `text-frame-status`: `overflow_risk: "possible"` means autosize is off (text can clip); `"low"` means an autofit mode is active.
+
+### Formatting-field reference
+| field (CLI flag) | unit / values | COM mapping | scope |
+| --- | --- | --- | --- |
+| `--line-spacing` | multiple (1.0, 1.5) | `ParagraphFormat.SpaceWithin` + `LineRuleWithin=msoTrue` | paragraph |
+| `--line-spacing-points` | points (exact) | `SpaceWithin` + `LineRuleWithin=msoFalse` | paragraph |
+| `--space-before` / `--space-after` | points | `SpaceBefore`/`SpaceAfter` + `LineRuleBefore/After=msoFalse` | paragraph |
+| `--space-before-lines` / `--space-after-lines` | multiple | `SpaceBefore`/`SpaceAfter` + `LineRule*=msoTrue` | paragraph |
+| `--indent-level` | int 1–5 | `TextRange.IndentLevel` | paragraph |
+| `--alignment` | left/center/right/justify/distribute | `ParagraphFormat.Alignment` | paragraph |
+| `list apply --type` | bulleted/numbered | `ParagraphFormat.Bullet.{Visible,Type}` | paragraph |
+| `--size` | points (warns < 8) | `Font.Size` | run |
+| `--bold`/`--italic`/`--underline` | flags | `Font.{Bold,Italic,Underline}` | run |
+| `--color` (format-text) | `#RRGGBB` | `Font.Color.RGB` | run |
+
+### Safe patterns
+- **Bullet list:** `set-paragraphs --json '[{"text":"A","list_type":"bulleted"},{"text":"B","list_type":"bulleted"}]'` — don't hand-build with `\n` + a separate `list apply`.
+- **Repair a wrecked placeholder:** `read anchor` → `reset-format` (spacing) → `shape reset-to-layout` (geometry+font) → `set-paragraphs` (clean text) → `slide export` to verify.
 
 ## Slides
 - `pptlive slide layouts` — the layout names `add`/`set-layout` accept.

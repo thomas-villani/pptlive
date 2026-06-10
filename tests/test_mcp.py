@@ -177,6 +177,14 @@ def test_read_anchor_paragraph_has_effective_font(fake_powerpoint: Any) -> None:
     assert set(font) == {"bold", "italic", "underline", "size", "font", "color"}
 
 
+def test_read_text_frame_status(fake_powerpoint: Any) -> None:
+    out = ppt_read("text_frame_status", anchor_id="ph:2:body")
+    assert out["anchor_id"] == "ph:2:body"
+    assert out["autosize"] == "text_to_fit_shape"
+    assert out["overflow_risk"] == "low"
+    assert out["margins"]["top"] == 3.6
+
+
 def test_read_notes_has_no_paragraphs_key(fake_powerpoint: Any) -> None:
     out = ppt_read("anchor", anchor_id="notes:1")
     assert out["text"] == "Lead with the vision."
@@ -248,6 +256,33 @@ def test_write_insert_after_adds_paragraph(fake_powerpoint: Any) -> None:
     assert [p["text"] for p in paras] == ["Intro", "Demo", "Q&A", "Cash runway: 30 months"]
 
 
+def test_set_paragraphs_builds_a_bulleted_list(fake_powerpoint: Any) -> None:
+    out = ppt_edit(
+        "set_paragraphs",
+        anchor_id="ph:2:body",
+        paragraphs=[
+            {"text": "Launch responsibly", "list_type": "bulleted"},
+            {"text": "Measure impact", "list_type": "bulleted"},
+            "Brief legal last",
+        ],
+    )
+    assert out["ok"] is True
+    assert out["paragraphs"] == ["para:2:2:1", "para:2:2:2", "para:2:2:3"]
+    paras = ppt_read("anchor", anchor_id="ph:2:body")["paragraphs"]
+    assert [p["text"] for p in paras] == [
+        "Launch responsibly",
+        "Measure impact",
+        "Brief legal last",
+    ]
+    assert paras[0]["bullet"] == "bulleted"
+
+
+def test_set_paragraphs_requires_a_list(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("set_paragraphs", anchor_id="ph:2:body", paragraphs=[])
+    assert "invalid_args" in str(exc.value)
+
+
 def test_format_text_sets_bold(fake_powerpoint: Any) -> None:
     out = ppt_edit("format", anchor_id="ph:2:title", bold=True, size=40.0)
     assert out["ok"] is True
@@ -259,6 +294,57 @@ def test_format_text_sets_bold(fake_powerpoint: Any) -> None:
 def test_format_requires_an_option(fake_powerpoint: Any) -> None:
     with pytest.raises(ToolError) as exc:
         ppt_edit("format", anchor_id="ph:2:title")
+    assert "invalid_args" in str(exc.value)
+
+
+def test_format_line_spacing_points(fake_powerpoint: Any) -> None:
+    out = ppt_edit("format", anchor_id="ph:2:body", line_spacing_points=24.0)
+    assert out["ok"] is True
+    pf = fake_powerpoint.ActivePresentation.Slides(2).Shapes(2).TextFrame.TextRange.ParagraphFormat
+    assert pf.SpaceWithin == 24.0
+    assert pf.LineRuleWithin == 0  # msoFalse -> exact points, not 24x
+
+
+def test_format_line_spacing_guardrail(fake_powerpoint: Any) -> None:
+    # The reviewer's footgun: a bare 24 as a multiple is rejected (use points).
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("format", anchor_id="ph:2:body", line_spacing=24.0)
+    assert "line_spacing_points" in str(exc.value)
+    # ...unless explicitly forced.
+    assert ppt_edit("format", anchor_id="ph:2:body", line_spacing=24.0, force=True)["ok"] is True
+
+
+def test_format_warns_on_tiny_font(fake_powerpoint: Any) -> None:
+    out = ppt_edit("format", anchor_id="ph:2:body", size=5.0)
+    assert out["ok"] is True
+    assert any("very small" in w for w in out["warnings"])
+
+
+def test_format_no_warnings_when_clean(fake_powerpoint: Any) -> None:
+    out = ppt_edit("format", anchor_id="ph:2:body", size=18.0)
+    assert "warnings" not in out  # only present when there's something to flag
+
+
+def test_text_reset_format(fake_powerpoint: Any) -> None:
+    ppt_edit("format", anchor_id="ph:2:body", line_spacing_points=240.0, space_before=99.0)
+    out = ppt_edit("text_reset_format", anchor_id="ph:2:body")
+    assert out["ok"] is True
+    pf = fake_powerpoint.ActivePresentation.Slides(2).Shapes(2).TextFrame.TextRange.ParagraphFormat
+    assert pf.SpaceWithin == 1.0
+    assert pf.LineRuleWithin == -1  # single (multiple)
+    assert pf.SpaceBefore == 0.0
+
+
+def test_shape_reset_layout(fake_powerpoint: Any) -> None:
+    out = ppt_edit("shape_reset_layout", anchor_id="ph:2:body")
+    assert out["ok"] is True
+    assert out["restored"]["width"] == 828.0
+    assert out["restored"]["font_size"] == 28.0
+
+
+def test_shape_reset_layout_on_non_placeholder_errors(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("shape_reset_layout", anchor_id="shape:3:1")  # a textbox
     assert "invalid_args" in str(exc.value)
 
 
