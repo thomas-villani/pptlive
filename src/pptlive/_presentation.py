@@ -246,7 +246,7 @@ class Presentation:
         `slides` selects what to render: `None` (default) every slide, an `int`
         a single 1-based slide, a `(start, end)` tuple an inclusive span. Returns
         one [`Snapshot`][pptlive.Snapshot] per slide (so a single slide is a
-        one-element list); read `.png` for the bytes.
+        one-element list); read `.image` for the bytes.
 
         If `out` is given the image is also written there: a single slide to `out`
         itself, multiple slides alongside it as `<stem>-s<N><suffix>`. `fmt` is a
@@ -726,9 +726,20 @@ class PresentationCollection:
         return Presentation(self._ppt, pres)
 
     def __getitem__(self, name: str) -> Presentation:
+        """Resolve a deck by `--doc` selector: its display `Name` *or* full path.
+
+        `Name` (e.g. `Deck.pptx`) is the friendly form but is **non-unique** when
+        two open decks come from different folders; accepting `FullName` too lets a
+        caller disambiguate with the path. A `Name` hit wins first (the common case);
+        the `FullName` pass is the tie-breaker.
+        """
         with _com.translate_com_errors():
-            for pres in self._com_collection:
+            decks = list(self._com_collection)
+            for pres in decks:
                 if str(pres.Name) == name:
+                    return Presentation(self._ppt, pres)
+            for pres in decks:
+                if str(pres.FullName) == name:
                     return Presentation(self._ppt, pres)
         raise PresentationNotFoundError(name)
 

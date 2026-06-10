@@ -24,38 +24,55 @@ Python-floor bump that unblocked the cleaner typing:
    test make drift a hard failure. *(commit: "replace triplicated op Literals with
    per-tool Enum + handler registry")*
 
----
+## Minor backlog — cleared (2026-06-10)
 
-## Minor backlog (still open)
+The low-priority items the review flagged but the dispatch refactors didn't touch
+have now all been resolved (one of them as a misdiagnosis):
 
-Low-priority items the review flagged but the dispatch refactors didn't touch.
-Fold into a future cleanup session if cheap, otherwise leave noted:
-
-- **Busy-swallow in defensive reads.** `_com.safe_read` (and the `except
-  Exception` in `_comments._identity_from_comment`) swallow *every* exception,
-  including a real `PowerPointBusyError` that the taxonomy says should propagate as
-  exit 3. Letting `PptliveError` through from `safe_read` is more correct but is a
-  behavior change across many read paths — make it a deliberate decision, and note
-  wordlive's helpers swallow broadly too.
-- **Z-order-by-Id scan duplicated** in `ShapeById._com_shape` (`_shapes.py`) and
-  `_selection._zorder_index` — same `for sh in slide.Shapes: if int(sh.Id) == …`
-  loop, two places. Share one helper.
-- **`PresentationCollection` matches decks by `Name`** (`_presentation.py`), which
-  is non-unique across folders; `FullName` would disambiguate the `--doc` global.
-  Real but rare correctness edge.
-- **`_selection.read_selection` paragraph index counts only `\r`** while
-  `_slides._paragraphs` splits on `\r\v\n` — a caret after a `\v`/`\n` can compute a
-  paragraph number inconsistent with `para:S:N:P` addressing. Align the break set.
-- **`_charts.recolor_text` is non-atomic** — many discrete COM sets in one
-  `translate_com_errors` block with no `retry_on_busy`; a busy mid-recolor leaves a
-  partial. Wrap in `retry_on_busy` like `set_data`, or document best-effort.
-- **`_snapshot.Snapshot.png` field is named `png` but holds whatever `fmt` produced**
-  (jpg bytes when `fmt="jpg"`). Rename to `image`/`data` or constrain `fmt` at that
-  layer.
+1. **Busy-swallow in defensive reads — FIXED (decision: re-raise busy only).**
+   `_com.safe_read` now lets a genuine `PowerPointBusyError` propagate (the
+   taxonomy's retryable exit 3) while still degrading every *other* per-property
+   failure to its default — so a busy app surfaces honestly instead of masquerading
+   as a missing field. Scoped deliberately: the broad `except Exception` in
+   `_comments._identity_from_comment` stays (a failed identity lift *should* fall
+   back to the legacy `Add`, so swallowing is correct there). Covered by
+   `test_safe_read_propagates_busy` / `test_safe_read_degrades_a_failing_property`.
+2. **Z-order-by-Id scan deduplicated — DONE.** The "scan `Shapes` for a matching
+   `.Id`" loop is now one helper, `_shapes.find_shape_by_id(slide_com, id) ->
+   (index, shape) | None`, shared by `ShapeById._com_shape` (raises if `None`) and
+   `_selection._zorder_index` (returns the index; lazy-imports to avoid a cycle).
+3. **`--doc` selector now matches `Name` *or* full path — DONE.**
+   `PresentationCollection.__getitem__` matches the display `Name` first (common
+   case), then falls back to a `FullName` pass, so two same-named decks in different
+   folders are disambiguable by path. Covered by
+   `test_doc_selector_matches_by_name_then_full_path`.
+4. **Paragraph-break-set "inconsistency" — NOT A BUG (no change).** On inspection
+   this was a misdiagnosis. `para:S:N:P` resolves through COM
+   `TextRange.Paragraphs(P, 1)`, which breaks on `\r` **only** — `\v` is an explicit
+   *soft* break that stays within a paragraph (`_anchors.SOFT_BREAK`). So
+   `read_selection` counting only `\r` is *correct* for matching `para:` addressing;
+   "aligning" it to `\r\v\n` would have made it over-count soft breaks. `_slides.
+   _paragraphs` splits on all three **by design** — it's a tidy-display helper, not
+   an addressing one, so the two diverging is intended. *Residual open question (a
+   live smoke spike, not a code edit):* whether `\n` ever appears in a real
+   `TextRange.Text` read and, if so, whether `.Paragraphs()` treats it as a break —
+   if it does, the `\r`-only count would undercount and should add `\n` (but never
+   `\v`). Left for the next smoke session.
+5. **`_charts.recolor_text` non-atomic — FIXED.** Its core (chart-area + legend /
+   title / data-label sets) now runs under `_com.retry_on_busy`, the same idempotent
+   retry `set_data` uses, so a transient busy mid-recolor retries the whole block
+   instead of leaving a half-recolored chart. Axes stay best-effort (already
+   probe-and-skip) outside the fence.
+6. **`Snapshot.png` misnomer — FIXED (renamed to `.image`).** The field holds the
+   chosen `fmt`'s bytes (JPEG when `fmt="jpg"`), so `png` was misleading; renamed to
+   `Snapshot.image` across the dataclass, the CLI consumer, tests, and the docs /
+   SKILL guides. (MCP only reads `.slide`/`.path`, so it was untouched.)
 
 ---
 
 *Source: the 2026-06-09 comprehensive review (5 inspection agents over core
 modules, feature modules, CLI/MCP, docs, tests). The bug fixes, small cleanups,
-docs, and the two structural refactors above have all landed; this file now tracks
-only the minor backlog.*
+docs, and the two structural refactors landed first; the minor backlog above was
+then cleared on 2026-06-10. Nothing from this review remains open except the one
+`\n`-in-live-reads smoke spike noted in item 4. New product direction (the
+gpt-5.4 LLM-feedback round) lives in `roadmap.md`, not here.*

@@ -1974,6 +1974,28 @@ def fake_powerpoint(monkeypatch: pytest.MonkeyPatch) -> _FakeApplication:
 
 
 @pytest.fixture
+def fake_powerpoint_same_named_decks(monkeypatch: pytest.MonkeyPatch) -> _FakeApplication:
+    """Two open decks sharing a display `Name` but with distinct `FullName`s.
+
+    Models the real collision the `--doc` selector must disambiguate: two files
+    called `Deck.pptx` opened from different folders. The first is the active deck.
+    """
+    first = _default_deck()
+    first.Name = "Deck.pptx"
+    first.FullName = r"C:\\a\\Deck.pptx"
+    second = _default_deck()
+    second.Name = "Deck.pptx"
+    second.FullName = r"C:\\b\\Deck.pptx"
+    app = _FakeApplication([first, second])
+
+    from pptlive import _com
+
+    monkeypatch.setattr(_com, "get_active_powerpoint", lambda: app)
+    monkeypatch.setattr(_com, "launch_powerpoint", lambda: app)
+    return app
+
+
+@pytest.fixture
 def ppt(fake_powerpoint: _FakeApplication):  # type: ignore[no-untyped-def]
     """A `pptlive.PowerPoint` handle attached to the fake app (context held open)."""
     import pptlive

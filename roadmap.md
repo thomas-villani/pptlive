@@ -55,6 +55,7 @@ one-line finding, *then* harden.
 | **v1.3** | **Review loop — comments** *(SHIPPED 2026-06-09 — read + add/reply/delete, threaded; resolve-state not COM-readable)* | "Address the reviewer's comments" is a killer workflow; read is side-effect-free & polite | **Low** — read (incl. threads), add & reply all verified live; comment-less-deck identity solved via legacy-`Add` fallback |
 | **v1.4** | **Navigation & structure — hyperlinks, sections, headers/footers** | Makes multi-slide decks navigable and organized | Low |
 | **v1.5** | **Motion — transitions & animations** | Polish; transitions are trivial, animations are the long tail | Med — `TimeLine` effect enums are large/fiddly |
+| **v1.6** | **Text-model reliability — safe formatting, diagnostics, recovery** | Hardens the authoring loop agents *already* use; the gpt-5.4 review's top ask | Low — mostly `LineRule*` bools + reads; the reset primitive needs a spike |
 | **opportunistic** | deeper tables/charts, arrangement, media, tags, metadata | Pull in on demand when a workflow needs it | varies |
 | **deferred** | events / async; v0.8/v0.9 follow-ups | Real but lower leverage | — |
 
@@ -160,7 +161,7 @@ this adds the deck-level outputs that are one COM call away.
   cost (ported from wordlive's snapshot): renders slides to PNG with a `max_dim`
   **long-edge cap** so a vision model can *see* the whole deck at a predictable,
   uniform per-slide budget. `deck.snapshot(out=None, *, slides=None, fmt, max_dim)`
-  returns one `Snapshot(slide, png, path)` per slide (`slides` = all / one int /
+  returns one `Snapshot(slide, image, path)` per slide (`slides` = all / one int /
   inclusive span); CLI `snapshot --slide/--slides/--out/--max-dim`; MCP `ppt_render`
   op `deck_snapshot` (one "slide N" label + image block per slide). Built on
   `Slide.export_image` (no PDF/PyMuPDF, no new dependency). The earlier folder-based
@@ -341,6 +342,97 @@ trivial; animations are the genuine long tail** — split accordingly.
 
 ---
 
+## v1.6 — text-model reliability & safe authoring
+
+Source: the **gpt-5.4 MCP-session review** (`docs/reviews/gpt-5.4-review.md`, 2026-06-10).
+Unlike v1.2–v1.5, this tier adds **no new object-model coverage** — it hardens the
+*existing* text/formatting surface against the PowerPoint sharp edges that leak
+through the abstraction. The reviewer's verdict: *"the architecture feels right;
+the pain wasn't missing functionality — it was PowerPoint's text model leaking
+through."* That makes it the **highest-leverage open tier**: it makes the loop
+agents *already* use trustworthy, rather than adding surface they don't yet have.
+
+> **Already shipped, so de-scoped from the reviewer's list.** Two of the
+> reviewer's top items predate or partly exist in the current build:
+> - **`\n` → real paragraphs** (PPTLIVE-001). The reviewer's "multi-line text
+>   collapses into one paragraph with line breaks" was fixed before this review:
+>   `set_text`/`write` normalize `\n`/`\r\n`/`\r` to paragraph breaks, with `\v`
+>   (`SOFT_BREAK`) the explicit within-paragraph soft break. The reviewer's run
+>   almost certainly predates the fix.
+> - **Richer paragraph reads (first cut).** `paragraph_to_dict` already emits
+>   `bullet` / `indent_level` / `alignment` and the effective `font` sub-dict — the
+>   reviewer's "expose per-paragraph diagnostics" ask, partially in hand (extended
+>   by the read item below).
+> - **`--doc` disambiguation by full path** (2026-06-10) — a down payment on the
+>   reviewer's "canonical doc id" ask (the opaque-handle version is below).
+
+- [ ] **Disambiguate `line_spacing` — the headline footgun.** Today
+  `format_paragraph(line_spacing=)` writes `ParagraphFormat.SpaceWithin`, which is a
+  **multiple** (`1.0` single, `1.5`, `2.0`). The reviewer passed `24` expecting *24
+  pt* and got 24× spacing — text off the slide, unrecoverable without a rewrite.
+  PowerPoint models the two readings with a companion flag:
+  `ParagraphFormat.LineRuleWithin` (`msoTrue` = the value is in **lines/multiple**;
+  `msoFalse` = the value is in **points**), and likewise `LineRuleBefore` /
+  `LineRuleAfter` pair with `SpaceBefore` / `SpaceAfter`. **Design:** add an explicit
+  mode rather than overload one number — either `line_spacing_mode: "multiple" |
+  "exact_points"` + `line_spacing_value`, or the PowerPoint-native pair `line_spacing`
+  (multiple, *unchanged meaning*) + `line_spacing_points` (sets
+  `LineRuleWithin=msoFalse`). Keep the current `line_spacing` semantics to avoid a
+  silent break; add the points path alongside. Wire the same lines-vs-points
+  distinction onto `space_before` / `space_after`. **Guardrail (cheap, do with it):**
+  reject an absurd multiple (e.g. `> 5`) unless explicitly forced — a value that large
+  is almost always a points-vs-multiple confusion. Library + CLI + MCP + docs table.
+  Low COM risk (`LineRule*` are plain bools).
+
+- [ ] **Paragraph-structured writing — `set_paragraphs([...])`.** Even with `\n`
+  normalization, the reviewer wants to *not rely on newline inference* for list
+  authoring. A paragraph-oriented verb takes a list of `{text, list_type?,
+  indent_level?, ...}` and builds each as its own addressable `para:`, resetting list
+  state cleanly — the "safe bullet list" path. Pure plumbing over the existing
+  `set_text` + `apply_list` + `format_paragraph` verbs; no new COM. MCP op
+  `set_paragraphs` (the reviewer's `write_paragraphs`), CLI equivalent.
+
+- [ ] **Normalize / reset direct formatting — the recovery verb.** Once a placeholder
+  is in a bad state (5 pt font, giant spacing, overflow), reformatting it is
+  unreliable. Add a verb that strips *direct* run/paragraph formatting so text falls
+  back to the layout/master defaults. COM: a `TextRange`-level reset — clear run font
+  overrides (size/bold/color → inherited) and paragraph overrides
+  (`SpaceWithin`/`Before`/`After`, `IndentLevel`, bullet). PowerPoint exposes no single
+  "clear formatting" call, so **spike the reset primitive** (likely: re-set the text so
+  it re-inherits, or null each override). **Companion:** `reset_placeholder_to_layout`
+  — restore a placeholder's geometry + formatting from its `CustomLayout` placeholder.
+  CLI `text reset-format` / MCP `text_reset_format`. **Spike-first** (the reset
+  primitive is the uncertain bit).
+
+- [ ] **Text-frame / autofit diagnostics (read).** Surface the state that makes a
+  "formatting spiral" visible *before* it bites: `TextFrame.AutoSize`
+  (`ppAutoSizeNone` / `ShapeToFitText` / `TextToFitShape`), `WordWrap`, the four
+  `MarginLeft/Right/Top/Bottom`, and an overflow signal (compare text extent to the
+  frame, or read the shrink-to-fit `Font.AutoScale` / `LineSpacingReduction` when
+  present). A read op `text_frame_status`, or extend the `anchor` read with autofit +
+  margins + an overflow-risk flag. All reads; low risk.
+
+- [ ] **Extend paragraph diagnostics with spacing + run mix.** `paragraph_to_dict`
+  already carries bullet/indent/alignment/effective-font; add `space_before` /
+  `space_after` / `line_spacing` (with the lines-vs-points mode from the first item)
+  and a **mixed-run summary** (the distinct font sizes in a paragraph) so an agent can
+  *see* a stray 5 pt run before it renders. Pure read extension.
+
+- [ ] **Optional validation / warnings.** Proactively flag suspicious inputs rather
+  than silently applying them: a line-spacing multiple `> 5`, a font size `< 8` pt, a
+  list applied to a single paragraph full of soft breaks. Return as a non-fatal
+  `warnings` array on the edit result (the structured-I/O contract has room), or
+  reject-unless-forced for the catastrophic ones. Pairs with the `line_spacing`
+  guardrail above.
+
+- **Docs (do alongside the code):** a **"PowerPoint text-model gotchas"** section
+  *and* a **formatting-field reference table** (each field → unit, exact COM mapping,
+  valid range, per-paragraph-vs-per-run scope, multi-paragraph behavior) — the
+  reviewer asked for both explicitly. The single highest-value doc change for agent
+  reliability; it's what turns "trial and error" into "read the table once."
+
+---
+
 ## Opportunistic — pull in when a workflow needs it
 
 Real features, lower or situational leverage. Build on demand rather than
@@ -384,6 +476,14 @@ speculatively.
 - [ ] **Document properties / metadata.** `Presentation.BuiltInDocumentProperties`
   (title, author, subject, keywords) + `CustomDocumentProperties`. Cheap read,
   occasional write.
+- [~] **Canonical deck targeting — `--doc` now matches `Name` *or* full path
+  (2026-06-10); opaque `doc_id` still open.** The gpt-5.4 review flagged a
+  render-vs-edit lookup inconsistency when two decks shared a display name; `--doc`
+  now falls back from the (non-unique) `Name` to the `FullName` path, disambiguating
+  the common collision. **Still open:** a fully **opaque, stable `doc_id`** returned
+  by `status` and accepted everywhere — distinguishing display name / path /
+  active-doc token, and covering the never-saved-deck case where `FullName` is just a
+  bare name. Pull in if name-or-path proves insufficient in practice.
 
 ---
 

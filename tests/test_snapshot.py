@@ -60,7 +60,7 @@ def test_capped_dims_portrait_caps_the_taller_edge() -> None:
 def test_snapshot_all_slides_returns_one_per_slide(deck) -> None:  # type: ignore[no-untyped-def]
     snaps = deck.snapshot()
     assert [s.slide for s in snaps] == [1, 2, 3]
-    assert all(s.png.startswith(_PNG_SIG) for s in snaps)
+    assert all(s.image.startswith(_PNG_SIG) for s in snaps)
     assert all(s.path is None for s in snaps)  # no out -> bytes only
 
 
@@ -90,7 +90,7 @@ def test_snapshot_max_dim_caps_the_export(deck, fake_powerpoint) -> None:  # typ
     rec = _last_export(fake_powerpoint, 1)
     assert (rec["Width"], rec["Height"]) == (1000, 562)
     # ...and the returned bytes carry those dims.
-    assert _png_dims(snaps[0].png) == (1000, 562)
+    assert _png_dims(snaps[0].image) == (1000, 562)
 
 
 def test_snapshot_no_max_dim_is_native(deck, fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
@@ -121,7 +121,7 @@ def test_snapshot_out_single_writes_to_that_path(deck, tmp_path) -> None:  # typ
     snaps = deck.snapshot(out, slides=2)
     assert snaps[0].path == out
     assert out.is_file()
-    assert out.read_bytes() == snaps[0].png
+    assert out.read_bytes() == snaps[0].image
 
 
 def test_snapshot_out_multiple_writes_stem_sN(deck, tmp_path) -> None:  # type: ignore[no-untyped-def]

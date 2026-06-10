@@ -471,11 +471,11 @@ def snapshot_cmd(
     images = [
         {
             "slide": s.slide,
-            "bytes": len(s.png),
+            "bytes": len(s.image),
             **(
                 {"path": str(s.path)}
                 if s.path is not None
-                else {"base64": base64.b64encode(s.png).decode("ascii")}
+                else {"base64": base64.b64encode(s.image).decode("ascii")}
             ),
         }
         for s in snaps

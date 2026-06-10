@@ -13,7 +13,7 @@ import pytest
 
 import pptlive
 from pptlive import _com
-from pptlive.exceptions import PowerPointNotRunningError
+from pptlive.exceptions import PowerPointNotRunningError, PresentationNotFoundError
 
 
 def test_attach_yields_handle_to_running_instance(fake_powerpoint: Any) -> None:
@@ -57,6 +57,24 @@ def test_connect_launches_when_missing(
     with pptlive.connect() as handle:
         assert handle.presentations.active is not None
     assert launched["called"] is True
+
+
+def test_doc_selector_matches_by_name_then_full_path(
+    fake_powerpoint_same_named_decks: Any,
+) -> None:
+    # Two open decks share the display name "Deck.pptx" but differ by path.
+    with pptlive.attach() as handle:
+        decks = handle.presentations
+        # The bare display name resolves the first match (the common case)...
+        assert decks["Deck.pptx"].path == r"C:\\a\\Deck.pptx"
+        # ...and the full path disambiguates to the *other* same-named deck.
+        assert decks[r"C:\\b\\Deck.pptx"].path == r"C:\\b\\Deck.pptx"
+
+
+def test_doc_selector_unknown_raises_not_found(fake_powerpoint_same_named_decks: Any) -> None:
+    with pptlive.attach() as handle:
+        with pytest.raises(PresentationNotFoundError):
+            _ = handle.presentations["nope.pptx"]
 
 
 def test_connect_no_launch_reraises(no_powerpoint: None) -> None:

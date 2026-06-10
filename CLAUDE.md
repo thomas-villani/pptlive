@@ -100,7 +100,7 @@ the long edge gives a predictable per-slide budget, and since every slide shares
 one geometry that budget is *uniform* across the deck (~1000 px stays legible).
 It's the PowerPoint analog of wordlive's snapshot but **shorter** — `Slide.Export`
 already renders a sized PNG, so there's no PDF/PyMuPDF detour and no new dependency
-(it reuses `Slide.export_image`). Returns one `Snapshot(slide, png, path)` per
+(it reuses `Slide.export_image`). Returns one `Snapshot(slide, image, path)` per
 slide; `slides` is `None` (all) | `int` (one) | `(start, end)` inclusive; with
 `out` it writes files (single → that path, multiple → `<stem>-sN<suffix>`). A
 **read** — the export leaves the viewed slide + Selection untouched, so no

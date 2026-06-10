@@ -71,6 +71,23 @@ _DEFAULT_SMARTART_HEIGHT = 300.0  # ~4.2 in
 # ---------------------------------------------------------------------------
 
 
+def find_shape_by_id(slide_com: Any, shape_id: int) -> tuple[int, Any] | None:
+    """Find a shape on a slide by its stable `Shape.Id`.
+
+    Returns `(1-based z-order index, COM Shape)`, or `None` when no shape on the
+    slide carries that id. The single home for the "scan `Shapes` for a matching
+    `.Id`" loop shared by `ShapeById._com_shape` (resolving the `shapeid:S:ID`
+    anchor) and `_selection._zorder_index` (mapping a live Selection back to its
+    volatile `shape:S:N` z-order index).
+    """
+    shapes = slide_com.Shapes
+    for idx in range(1, int(shapes.Count) + 1):
+        sh = shapes(idx)
+        if int(sh.Id) == int(shape_id):
+            return idx, sh
+    return None
+
+
 def has_text_frame(com_shape: Any) -> bool:
     """True iff the shape can hold text (`Shape.HasTextFrame == msoTrue`)."""
     try:
@@ -647,12 +664,10 @@ class ShapeById(Shape):
 
     def _com_shape(self) -> Any:
         """Resolve the COM `Shape` live by stable `.Id`. Never cached."""
-        shapes = self._slide.com.Shapes
-        for i in range(1, int(shapes.Count) + 1):
-            sh = shapes(i)
-            if int(sh.Id) == self._shape_id:
-                return sh
-        raise AnchorNotFoundError("shape", self.anchor_id)
+        found = find_shape_by_id(self._slide.com, self._shape_id)
+        if found is None:
+            raise AnchorNotFoundError("shape", self.anchor_id)
+        return found[1]
 
     @property
     def index(self) -> int:

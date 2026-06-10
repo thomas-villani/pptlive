@@ -303,7 +303,7 @@ renders native.
 ```python
 # "Did my restyle land across every slide?" — cheap whole-deck review.
 for snap in deck.snapshot(max_dim=1000):
-    show_to_vision_model(snap.png)        # snap.slide, snap.png (bytes), snap.path
+    show_to_vision_model(snap.image)      # snap.slide, snap.image (bytes), snap.path
 ```
 
 Snapshotting is a **read**: the export reflects the current unsaved state but

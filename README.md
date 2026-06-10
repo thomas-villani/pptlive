@@ -134,7 +134,7 @@ with pl.attach() as ppt:
 
     # Whole-deck snapshot — one low-res PNG per slide so a vision model can SEE
     # the whole deck cheaply (max_dim caps each slide's long edge). A read — polite.
-    snaps = deck.snapshot(max_dim=1000)                  # [Snapshot(slide, png, path), ...]
+    snaps = deck.snapshot(max_dim=1000)                  # [Snapshot(slide, image, path), ...]
 
     # Output tier — explicit, never implicit (pptlive never auto-saves).
     deck.save()                                          # persist to the existing file

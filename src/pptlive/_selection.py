@@ -191,13 +191,13 @@ class SelectionInfo:
 
 def _zorder_index(slide_com: Any, shape_id: int) -> int | None:
     """Map a stable `Shape.Id` back to its 1-based z-order index on the slide."""
+    from ._shapes import find_shape_by_id  # local import avoids a module cycle
+
     try:
-        for idx, sh in enumerate(slide_com.Shapes, start=1):
-            if int(sh.Id) == int(shape_id):
-                return idx
+        found = find_shape_by_id(slide_com, shape_id)
     except Exception:
         return None
-    return None
+    return found[0] if found is not None else None
 
 
 def _shape_entry(slide_index: int | None, com_shape: Any, z: int | None) -> dict[str, Any]:
