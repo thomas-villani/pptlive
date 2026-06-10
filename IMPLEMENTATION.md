@@ -755,7 +755,7 @@ and no new dependency. The token lever is `max_dim`, a long-edge pixel cap — a
 model is billed on pixel *area* (not DPI), so capping the long edge is a predictable,
 and (since every slide shares one geometry) *uniform*, per-slide budget.
 
-- [x] **`_snapshot.py`** — `Snapshot(slide, png, path)` dataclass; `_capped_dims`
+- [x] **`_snapshot.py`** — `Snapshot(slide, image, path)` dataclass; `_capped_dims`
   (long-edge cap at the 96-DPI native scale, never upscales); `render` (per slide →
   `Slide.export_image` to a temp, read bytes, unlink), `build_snapshots` (write
   files: single → `out`, multiple → `<stem>-sN<suffix>`), `snapshot` (compose).

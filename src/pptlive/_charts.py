@@ -260,10 +260,41 @@ class Chart:
         `ColorFormat` with `.RGB`; and `Series.DataLabels` is a **method**.
         `Chart.HasAxis` is an Excel-ism PowerPoint's chart COM rejects, so axes are
         probed by attempting the set rather than asking first.
+
+        The core recolor (chart area + legend/title/data labels) runs under
+        `retry_on_busy`: every set is idempotent (recoloring to the same RGB twice
+        is a no-op), so a transient busy mid-sequence retries the whole block rather
+        than leaving a half-recolored chart — the same safety `set_data` uses. The
+        axes stay best-effort outside that fence (they're already probe-and-skip).
         """
         rgb = parse_color(color)  # ValueError before any COM
-        recolored: list[str] = []
-        labeled = 0
+
+        def _recolor_core() -> tuple[list[str], int]:
+            recolored: list[str] = []
+            labeled = 0
+            with _com.translate_com_errors():
+                chart = self.com
+                # Global default for all chart text (modern TextFrame2 path);
+                # reliably present, and covers text elements shown later.
+                chart.ChartArea.Format.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = rgb
+                recolored.append("chart_area")
+                if bool(chart.HasLegend):
+                    chart.Legend.Font.Color = rgb
+                    recolored.append("legend")
+                if bool(chart.HasTitle):
+                    chart.ChartTitle.Font.Color = rgb
+                    recolored.append("title")
+                sc = chart.SeriesCollection()
+                for i in range(1, int(sc.Count) + 1):
+                    s = sc(i)
+                    if bool(s.HasDataLabels):
+                        s.DataLabels().Font.Color = rgb
+                        labeled += 1
+                if labeled:
+                    recolored.append("data_labels")
+            return recolored, labeled
+
+        recolored, labeled = _com.retry_on_busy(_recolor_core)
 
         def _attempt_axis(axis_type: int) -> bool:
             """Set an axis's tick-label color; skip (False) if that axis is absent.
@@ -279,26 +310,6 @@ class Chart:
             except PptliveError:
                 return False
 
-        with _com.translate_com_errors():
-            chart = self.com
-            # Global default for all chart text (modern TextFrame2 path); reliably
-            # present, and covers text elements shown later.
-            chart.ChartArea.Format.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = rgb
-            recolored.append("chart_area")
-            if bool(chart.HasLegend):
-                chart.Legend.Font.Color = rgb
-                recolored.append("legend")
-            if bool(chart.HasTitle):
-                chart.ChartTitle.Font.Color = rgb
-                recolored.append("title")
-            sc = chart.SeriesCollection()
-            for i in range(1, int(sc.Count) + 1):
-                s = sc(i)
-                if bool(s.HasDataLabels):
-                    s.DataLabels().Font.Color = rgb
-                    labeled += 1
-            if labeled:
-                recolored.append("data_labels")
         for axis_type, name in (
             (XlAxisType.CATEGORY, "category_axis"),
             (XlAxisType.VALUE, "value_axis"),

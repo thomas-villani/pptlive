@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   soft line break is still available — embed `\v` (`pptlive._anchors.SOFT_BREAK`).
   Docs across the MCP `write` op, the CLI `--text` help, and both SKILL guides were
   corrected (they previously mislabeled `\n` as "paragraphs").
+- **The `--doc` deck selector now also matches a deck's full path.** Open decks are
+  matched by display `Name` first (the common case); when two decks share a name
+  across folders, passing the `FullName` (path) now disambiguates instead of always
+  resolving the first match.
 
 ### Fixed
 
@@ -50,6 +54,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   color.** `Master` text-style and background color reads now route through the
   same `color_hex_or_none` theme-sentinel guard that font and shape fill/line reads
   already used, so an inherited/automatic color reads back as `null`, not black.
+- **A busy PowerPoint during a defensive read now surfaces as exit 3, not a
+  silently degraded field.** `_com.safe_read` (used by every `to_dict`/`read()`
+  dump) previously swallowed *all* exceptions, including a genuine
+  `PowerPointBusyError` the taxonomy maps to the retryable exit 3 — masking it as a
+  missing/default value. It now lets `PowerPointBusyError` propagate while still
+  degrading every other per-property failure to its default.
+- **`Chart.recolor_text` no longer risks a half-recolored chart on a transient
+  busy.** Its core (chart-area + legend/title/data-label sets) now runs under
+  `retry_on_busy` like `set_data` — every set is idempotent, so a busy mid-recolor
+  retries the whole block instead of leaving a partial. Axes stay best-effort.
 
 ### Added
 
@@ -80,10 +94,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shares one geometry, that budget is *uniform* across the deck (~1000 px stays
   legible for "did my styling land"). The PowerPoint analog of wordlive's snapshot
   but shorter: `Slide.Export` already renders a sized PNG, so there's no PDF/PyMuPDF
-  detour and no new dependency. Returns one `Snapshot(slide, png, path)` per slide;
+  detour and no new dependency. Returns one `Snapshot(slide, image, path)` per slide;
   `slides` is `None` (all) / an `int` (one) / a `(start, end)` inclusive span; with
   `out` it writes files (single → that path, multiple → `<stem>-sN<suffix>`),
-  otherwise the bytes ride in `.png`. A read — leaves the viewed slide and Selection
+  otherwise the bytes ride in `.image`. A read — leaves the viewed slide and Selection
   untouched (no `edit()` fence). CLI `snapshot --slide/--slides/--out/--max-dim
   --format` (path per slide with `--out`, base64 inline otherwise); MCP `ppt_render`
   op `deck_snapshot` (`{slides?, max_dim?, fmt?}`) returns one "slide N" label +

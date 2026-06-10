@@ -511,9 +511,9 @@ legible). It's a **read** — no `edit()` fence, and the view doesn't move.
 with pl.attach() as ppt:
     deck = ppt.presentations.active
 
-    snaps = deck.snapshot(max_dim=1000)           # [Snapshot(slide, png, path), ...]
+    snaps = deck.snapshot(max_dim=1000)           # [Snapshot(slide, image, path), ...]
     for s in snaps:
-        ...                                        # hand s.png to your image tool, look
+        ...                                        # hand s.image to your image tool, look
 
     deck.snapshot("review.png", slides=(2, 4))    # or write to disk: review-s2/3/4.png
 ```

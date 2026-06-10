@@ -122,3 +122,22 @@ def test_retry_on_busy_passes_through_non_busy() -> None:
 
     with pytest.raises(ComError):
         _com.retry_on_busy(boom, attempts=5, delay=0)
+
+
+def test_safe_read_degrades_a_failing_property_to_default() -> None:
+    # The defensive-read contract: a property the object can't supply degrades to
+    # the default rather than failing the whole structured read.
+    def missing() -> str:
+        raise AttributeError("no such property")
+
+    assert _com.safe_read(missing, "fallback") == "fallback"
+
+
+def test_safe_read_propagates_busy() -> None:
+    # A genuine busy error is NOT a degradable field — it maps to the retryable
+    # exit 3, so it must surface rather than masquerade as a missing value.
+    def busy() -> str:
+        raise PowerPointBusyError(hresult=0x800706B5)
+
+    with pytest.raises(PowerPointBusyError):
+        _com.safe_read(busy, "fallback")

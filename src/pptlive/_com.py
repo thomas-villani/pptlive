@@ -141,9 +141,16 @@ def safe_read(fn: Callable[..., Any], default: Any) -> Any:
     object can't supply (a theme-linked color, an absent axis) degrades to `default`
     rather than failing the whole structured read. Mutations never use this — they
     must surface their failures as typed `PptliveError`s via `translate_com_errors`.
+
+    A genuine `PowerPointBusyError` is **not** swallowed: the taxonomy maps "busy"
+    to exit 3 (a transient, retryable state), and silently degrading a field to its
+    default would mask that. So a busy error propagates here even though every other
+    failure degrades — a degraded field is local, a busy app is the whole read.
     """
     try:
         return fn()
+    except PowerPointBusyError:
+        raise
     except Exception:  # noqa: BLE001
         return default
 

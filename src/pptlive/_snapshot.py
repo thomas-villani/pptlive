@@ -44,14 +44,14 @@ _NATIVE_PX_PER_PT = 96.0 / 72.0
 class Snapshot:
     """One rendered slide of a deck.
 
-    `slide` is the 1-based slide index; `png` is the PNG-encoded image bytes —
-    feed it straight to a vision model, or write it yourself. `path` is where the
-    image was written when a `snapshot(out=...)` call saved it to disk, otherwise
-    `None`.
+    `slide` is the 1-based slide index; `image` is the encoded image bytes in the
+    chosen `fmt` (PNG by default, JPEG when `fmt="jpg"`) — feed it straight to a
+    vision model, or write it yourself. `path` is where the image was written when
+    a `snapshot(out=...)` call saved it to disk, otherwise `None`.
     """
 
     slide: int
-    png: bytes
+    image: bytes
     path: Path | None = None
 
 
@@ -151,14 +151,14 @@ def build_snapshots(
     index).
     """
     if out is None:
-        return [Snapshot(slide=i, png=png, path=None) for i, png in rendered]
+        return [Snapshot(slide=i, image=img, path=None) for i, img in rendered]
     out_path = Path(os.fspath(out))
     single = len(rendered) == 1
     snaps: list[Snapshot] = []
-    for i, png in rendered:
+    for i, img in rendered:
         dest = out_path if single else out_path.with_name(f"{out_path.stem}-s{i}{out_path.suffix}")
-        dest.write_bytes(png)
-        snaps.append(Snapshot(slide=i, png=png, path=dest))
+        dest.write_bytes(img)
+        snaps.append(Snapshot(slide=i, image=img, path=dest))
     return snaps
 
 

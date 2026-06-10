@@ -195,8 +195,8 @@ png = deck.slides[4].export_image(width=1280)         # one slide -> temp PNG (o
 # Whole-deck low-res snapshot — see every slide cheaply. max_dim caps each slide's
 # long edge (a uniform, predictable per-slide token cost — a model is billed on
 # pixel area, not DPI). slides=None (all) | int (one) | (start, end) inclusive.
-for snap in deck.snapshot(max_dim=1000):              # -> [Snapshot(slide, png, path), ...]
-    review(snap.png)                                  # bytes; pass out="deck.png" to also write -sN files
+for snap in deck.snapshot(max_dim=1000):              # -> [Snapshot(slide, image, path), ...]
+    review(snap.image)                                # bytes; pass out="deck.png" to also write -sN files
 
 # Save / export — explicit, never implicit (pptlive never auto-saves). save_as
 # REBINDS the working file (the deck becomes that path); export_pdf is a READ
