@@ -129,6 +129,35 @@ def shape_type_name(value: Any) -> str:
         return "unknown"
 
 
+class MsoAutoSize(IntEnum):
+    """`TextFrame2.AutoSize` — how a text frame resizes to fit its text.
+
+    Read off the modern `TextFrame2` (the classic `TextFrame.AutoSize` returns the
+    mixed sentinel on current builds — see `scripts/text_model_spike.py`).
+    """
+
+    MIXED = -1
+    NONE = 0  # neither resizes; text can overflow the frame
+    TEXT_TO_FIT_SHAPE = 1  # shrink the text to fit the shape ("shrink text on overflow")
+    SHAPE_TO_FIT_TEXT = 2  # grow the shape to fit the text
+
+
+_AUTOSIZE_NAMES: dict[int, str] = {
+    MsoAutoSize.MIXED: "mixed",
+    MsoAutoSize.NONE: "none",
+    MsoAutoSize.TEXT_TO_FIT_SHAPE: "text_to_fit_shape",
+    MsoAutoSize.SHAPE_TO_FIT_TEXT: "shape_to_fit_text",
+}
+
+
+def autosize_name(value: Any) -> str:
+    """Friendly name for a `TextFrame2.AutoSize` int (e.g. 2 -> "shape_to_fit_text")."""
+    try:
+        return _AUTOSIZE_NAMES.get(int(value), f"autosize:{int(value)}")
+    except (TypeError, ValueError):
+        return "unknown"
+
+
 class PpPlaceholderType(IntEnum):
     """`PlaceholderFormat.Type` values — the semantic role of a placeholder.
 

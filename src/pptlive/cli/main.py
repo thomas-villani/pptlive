@@ -88,6 +88,11 @@ def _run(ctx: click.Context, fn: Any) -> None:
     except PptliveError as exc:
         click.echo(f"error: {exc}", err=True)
         sys.exit(_exit_for(exc))
+    except ValueError as exc:
+        # Library-level input validation (e.g. a line_spacing multiple > 5, an
+        # out-of-range indent level) — a clean exit 1, not a traceback.
+        click.echo(f"error: {exc}", err=True)
+        sys.exit(EXIT_OTHER)
 
 
 # Register subcommands. Import here to avoid a circular dependency at module load.

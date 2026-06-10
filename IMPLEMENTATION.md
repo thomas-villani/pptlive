@@ -813,6 +813,68 @@ builds), so the never-saved guard lives in Python on an empty `Presentation.Path
   `Save`/`SaveAs` mirroring the verified COM behavior. Live wrapper smoke confirmed
   the whole path net-zero on a throwaway deck.
 
+## v1.6 — text-model reliability & safe authoring — SHIPPED (2026-06-10)
+
+Source: the gpt-5.4 MCP-session review (`docs/reviews/gpt-5.4-review.md`, 2026-06-10).
+No new object-model coverage — this hardens the *existing* text/format surface
+against the PowerPoint sharp edges that leak through. The reviewer's catastrophe:
+`line_spacing: 24` expecting *24 pt* gave **24× line spacing** (text off the slide).
+
+- [x] **Spike RESOLVED (2026-06-10, `scripts/text_model_spike.py`, net-zero).**
+  Three findings pin the build:
+  1. **LineRule is the unit selector.** `ParagraphFormat.SpaceWithin` stores a bare
+     number; the paired `LineRuleWithin` bool picks its unit — `msoTrue (-1)` ⇒
+     **multiple/lines**, `msoFalse (0)` ⇒ **points**. `LineRuleBefore`/`LineRuleAfter`
+     pair the same way with `SpaceBefore`/`SpaceAfter`. All three `LineRule*` flags
+     **set cleanly and read back** (so a read can report the mode). Today's code never
+     touches them — it writes `SpaceWithin` only, leaving the unit at whatever the
+     paragraph already had. That's the footgun.
+  2. **No true "clear formatting" primitive — re-setting `.Text` does NOT drop run
+     overrides** (a vandalised 5 pt/bold range read back 5 pt/bold after re-setting
+     the same text). So `reset_format` must **re-apply defaults explicitly**, not hope
+     for inheritance. The matching `CustomLayout` placeholder *is* fully readable
+     (geometry `Left/Top/Width/Height` + `TextFrame.TextRange.Font.Size`, matched by
+     `PlaceholderFormat.Type`) — the body placeholder's layout default size (28 pt)
+     equalled the live baseline, so the layout placeholder is the source of truth for
+     both `reset_to_layout` (geometry) and `reset_format` (default size).
+  3. **Autofit reads.** `TextFrame2.AutoSize` returns a clean `MsoAutoSize` int
+     (classic `TextFrame.AutoSize` returns mixed `-2`, so prefer TextFrame2);
+     `WordWrap` + the four `Margin*` (points) read off classic `TextFrame`.
+     `Font.AutoScale` does **not** exist on this build → no direct shrink-% signal, so
+     overflow-risk is a coarse mode-derived heuristic, not a measured extent.
+- [x] **`line_spacing` disambiguation + guardrail.** `format_paragraph` keeps
+  `line_spacing` (multiple → `SpaceWithin` + `LineRuleWithin=msoTrue`) and adds
+  `line_spacing_points` (→ `msoFalse`); `space_before`/`space_after` now set
+  `LineRuleBefore/After=msoFalse` (honest points) with `space_before_lines`/
+  `space_after_lines` companions; the shared `apply_paragraph_format` carries all of
+  it. Passing both forms of a pair → `ValueError`; a `line_spacing` multiple `> 5`
+  (`LINE_SPACING_MULTIPLE_MAX`) → `ValueError` unless `force=True`. CLI gains
+  `--line-spacing-points`/`--space-before/after-lines`/`--force`; MCP `format` gains
+  the same. `cli/main._run` + MCP `_mcp_errors` now map a library `ValueError` to a
+  clean exit 1 / `invalid_args` (instead of a traceback / 500).
+- [x] **Extended paragraph read diagnostics.** `paragraph_to_dict` gains
+  `space_before`/`space_after`/`line_spacing` as `{value, mode}` (mode off the paired
+  `LineRule*` via `_spacing_dict`) + `run_sizes` (distinct per-run font sizes via
+  `_run_sizes`, the mixed-run tell). Flows through `ppt_read` `anchor` automatically.
+- [x] **`set_paragraphs([...])`** — `Anchor.set_paragraphs(items)` (str or
+  `{text, list_type?, indent_level?, alignment?, line_spacing?, size?, ...}`); one item
+  = one addressable `para:` (a newline inside an item folds to a soft break), per-item
+  keys forwarded to `format_paragraph`/`format_text`/`apply_list`. CLI `set-paragraphs
+  --json/--file`; MCP `ppt_edit` `set_paragraphs`.
+- [x] **Recovery verbs.** `Anchor.reset_format()` resets paragraph *spacing* to clean
+  single-spaced defaults (the only unambiguous reset — no COM "clear formatting"
+  exists). `Shape.reset_to_layout()` restores a placeholder's geometry + default font
+  size from the matching `CustomLayout` placeholder. CLI `reset-format` / `shape
+  reset-to-layout`; MCP `text_reset_format` / `shape_reset_layout`.
+- [x] **Text-frame / autofit diagnostics (read)** — `Shape.text_frame_status()` →
+  `TextFrameStatus(autosize, word_wrap, margins, overflow_risk)` (autosize off
+  `TextFrame2`; `overflow_risk` coarse + mode-derived). CLI `read text-frame-status`;
+  MCP `ppt_read` `text_frame_status`; `TextFrameStatus` + `MsoAutoSize`/`autosize_name`
+  added. Non-fatal `warnings` array on `format` edits (tiny font, big forced multiple,
+  list on a single soft-break paragraph).
+- [x] **Docs** — "PowerPoint text-model gotchas" section + formatting-field reference
+  table + safe patterns added to both `_skill` guides.
+
 ## v1.0+ — defer
 
 - [ ] Event sinks (`SlideShowNextSlide`, `WindowSelectionChange`); async wrapper.
@@ -822,7 +884,22 @@ builds), so the never-saved guard lives in Python on an empty `Presentation.Path
 
 ---
 
-## `exec` batch ops (lands with v0.1+)
+## `exec` batch ops — SHIPPED (2026-06-10)
+
+**Shipped** as the CLI `exec --script ops.json` verb, on a **fastmcp-free dispatch
+seam extracted from the MCP server**: `pptlive/_batch.py` now holds the four op
+enums, the handler registries, every `_<tool>_*` handler, the `_<tool>_core`
+dispatchers, and `run_batch(handle, deck, commands, *, atomic, stop_on_error,
+label)`. `mcp/server.py` shrank to FastMCP tool wrappers over that seam (image
+embedding + `_mcp_errors` mapping stay there); `cli/commands.py` imports `run_batch`
+for `exec`. Invalid args now raise the native `BatchOpError(PptliveError)` (instead
+of fastmcp's `ToolError`) so the base CLI never needs the `[mcp]` extra — the MCP
+server maps `BatchOpError` → `ToolError`, the CLI → exit 1, and a failed op's
+category token maps to the CLI exit code. `exec` defaults each op to the `edit`
+tool, stops at the first failure unless `--continue`, and `--no-atomic` fences each
+op separately. The op *names* are the live MCP `ppt_edit`/`ppt_read`/… ops (not the
+older proposed list below). Net behaviour of `ppt_batch` is unchanged (it now calls
+`run_batch`); the full `tests/test_mcp.py` is the regression net.
 
 Same `{"label", "ops":[…]}` shape as wordlive. **The batch is one undo entry** —
 an `exec` run is a single automation session, so it fences with

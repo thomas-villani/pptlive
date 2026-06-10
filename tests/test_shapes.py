@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from pptlive.exceptions import AnchorNotFoundError
+from pptlive.exceptions import AnchorNotFoundError, NoTextFrameError
 
 
 def test_shapes_list(deck) -> None:  # type: ignore[no-untyped-def]
@@ -78,6 +78,44 @@ def test_move_and_resize(deck) -> None:  # type: ignore[no-untyped-def]
 def test_move_with_no_args_raises(deck) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(ValueError):
         deck.slides[2].shapes[3].move()
+
+
+def test_reset_to_layout_restores_placeholder(deck) -> None:  # type: ignore[no-untyped-def]
+    body = deck.slides[2].shapes[2]  # the body placeholder, manually wrecked below
+    body.move(left=5.0, top=5.0)
+    body.resize(width=10.0, height=10.0)
+    body.format_text(size=5.0)
+    restored = body.reset_to_layout()
+    # Geometry + default font come from the slide layout's body placeholder.
+    assert restored == {
+        "left": 66.0,
+        "top": 143.75,
+        "width": 828.0,
+        "height": 342.625,
+        "font_size": 28.0,
+    }
+    assert body.geometry()["width"] == 828.0
+    assert float(body.com.TextFrame.TextRange.Font.Size) == 28.0
+
+
+def test_reset_to_layout_on_non_placeholder_raises(deck) -> None:  # type: ignore[no-untyped-def]
+    # Slide 3 shape 1 is a plain textbox, not a placeholder.
+    with pytest.raises(ValueError, match="placeholder"):
+        deck.slides[3].shapes[1].reset_to_layout()
+
+
+def test_text_frame_status(deck) -> None:  # type: ignore[no-untyped-def]
+    st = deck.slides[2].shapes[2].text_frame_status()
+    assert st.autosize == "text_to_fit_shape"  # off TextFrame2, not the classic mixed
+    assert st.word_wrap is True
+    assert st.margins == {"left": 7.2, "right": 7.2, "top": 3.6, "bottom": 3.6}
+    assert st.overflow_risk == "low"  # an autofit mode is active
+    assert st.to_dict()["autosize"] == "text_to_fit_shape"
+
+
+def test_text_frame_status_no_frame_raises(deck) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(NoTextFrameError):
+        deck.slides[3].shapes[2].text_frame_status()  # "Line 2" has no text frame
 
 
 def test_shape_type_names(deck) -> None:  # type: ignore[no-untyped-def]

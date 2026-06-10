@@ -388,6 +388,102 @@ def test_format_paragraph_no_options_exit_2(fake_powerpoint) -> None:  # type: i
     assert result.exit_code == 2  # click UsageError
 
 
+def test_format_paragraph_line_spacing_points(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main,
+        ["format-paragraph", "--anchor-id", "para:2:2:1", "--line-spacing-points", "24"],
+    )
+    assert result.exit_code == 0
+    pf = (
+        fake_powerpoint.ActivePresentation.Slides(2)
+        .Shapes(2)
+        .TextFrame.TextRange.Paragraphs(1, 1)
+        .ParagraphFormat
+    )
+    assert float(pf.SpaceWithin) == 24.0
+    assert int(pf.LineRuleWithin) == 0  # points
+
+
+def test_format_paragraph_line_spacing_guardrail_exit_1(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main,
+        ["format-paragraph", "--anchor-id", "para:2:2:1", "--line-spacing", "24"],
+    )
+    assert result.exit_code == 1  # rejected: a 24x multiple is almost surely points
+
+
+def test_format_paragraph_line_spacing_force(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main,
+        ["format-paragraph", "--anchor-id", "para:2:2:1", "--line-spacing", "24", "--force"],
+    )
+    assert result.exit_code == 0
+
+
+def test_set_paragraphs_json(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main,
+        [
+            "set-paragraphs",
+            "--anchor-id",
+            "ph:2:body",
+            "--json",
+            '["Alpha", {"text": "Beta", "list_type": "numbered"}]',
+        ],
+    )
+    assert result.exit_code == 0
+    out = json.loads(result.output)
+    assert out["paragraphs"] == ["para:2:2:1", "para:2:2:2"]
+    body = fake_powerpoint.ActivePresentation.Slides(2).Shapes(2).TextFrame.TextRange
+    assert body.Text == "Alpha\rBeta"
+
+
+def test_set_paragraphs_needs_one_source(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["set-paragraphs", "--anchor-id", "ph:2:body"])
+    assert result.exit_code == 2  # click UsageError
+
+
+def test_exec_runs_a_batch_script(fake_powerpoint, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    script = {
+        "label": "Build slide 2",
+        "ops": [
+            {"op": "write", "anchor_id": "ph:2:title", "text": "Q3 Results"},
+            {"op": "set_paragraphs", "anchor_id": "ph:2:body", "paragraphs": ["A", "B"]},
+            {"op": "format", "anchor_id": "ph:2:title", "bold": True},
+        ],
+    }
+    path = tmp_path / "ops.json"
+    path.write_text(json.dumps(script), encoding="utf-8")
+    result = CliRunner().invoke(main, ["exec", "--script", str(path)])
+    assert result.exit_code == 0
+    out = _json(result)
+    assert out["ok"] is True and out["count"] == 3
+    title = fake_powerpoint.ActivePresentation.Slides(2).Shapes(1).TextFrame.TextRange
+    assert title.Text == "Q3 Results"
+    assert title.Font.Bold != 0
+    body = fake_powerpoint.ActivePresentation.Slides(2).Shapes(2).TextFrame.TextRange
+    assert body.Text == "A\rB"
+
+
+def test_exec_failing_op_maps_exit_code(fake_powerpoint, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # A missing anchor -> not_found -> exit 2; stop_on_error by default.
+    script = {"ops": [{"op": "write", "anchor_id": "ph:2:banner", "text": "x"}]}
+    path = tmp_path / "ops.json"
+    path.write_text(json.dumps(script), encoding="utf-8")
+    result = CliRunner().invoke(main, ["exec", "--script", str(path)])
+    assert result.exit_code == 2
+    out = _json(result)
+    assert out["ok"] is False
+    assert out["results"][0]["error"] == "not_found"
+
+
+def test_exec_bad_script_is_usage_error(fake_powerpoint, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    path = tmp_path / "bad.json"
+    path.write_text('{"no_ops": true}', encoding="utf-8")
+    result = CliRunner().invoke(main, ["exec", "--script", str(path)])
+    assert result.exit_code == 2  # click UsageError (missing "ops" array)
+
+
 def test_format_text(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     result = CliRunner().invoke(
         main,

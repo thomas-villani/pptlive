@@ -47,11 +47,8 @@ from __future__ import annotations
 
 import base64
 import json
-import os
-import tempfile
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager, nullcontext
-from enum import StrEnum
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Literal
 
@@ -60,40 +57,26 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import CallToolResult, ImageContent, TextContent
 
 from .. import attach
-from .._guide import skill_body
-from .._presentation import Presentation
-from .._shapes import Shape
-from ..exceptions import (
-    AmbiguousMatchError,
-    AnchorNotFoundError,
-    NoTextFrameError,
-    PowerPointBusyError,
-    PowerPointNotRunningError,
-    PptliveError,
-    PresentationNotFoundError,
+from .._batch import (
+    EditOp,
+    ReadOp,
+    RenderOp,
+    ShowOp,
+    _edit_core,
+    _error_code,
+    _pick_deck,
+    _read_core,
+    _render_core,
+    _require,
+    _show_core,
+    run_batch,
 )
+from .._guide import skill_body
+from ..exceptions import BatchOpError, PptliveError
 
 # ---------------------------------------------------------------------------
 # Error mapping — the string analog of cli/main.py's _exit_for exit codes.
 # ---------------------------------------------------------------------------
-
-
-def _error_code(exc: PptliveError) -> str:
-    # Order mirrors cli.main._exit_for: NoTextFrameError before the generic
-    # AnchorNotFoundError (which covers SlideNotFoundError / LayoutNotFoundError).
-    if isinstance(exc, NoTextFrameError):
-        return "no_text_frame"
-    if isinstance(exc, AnchorNotFoundError):
-        return "not_found"
-    if isinstance(exc, AmbiguousMatchError):
-        return "ambiguous"
-    if isinstance(exc, PowerPointBusyError):
-        return "busy"
-    if isinstance(exc, PowerPointNotRunningError):
-        return "not_running"
-    if isinstance(exc, PresentationNotFoundError):
-        return "not_found"
-    return "error"
 
 
 @contextmanager
@@ -105,31 +88,16 @@ def _mcp_errors() -> Iterator[None]:
     """
     try:
         yield
+    except BatchOpError as exc:
+        # A dispatch-layer invalid-args error — its message already carries the
+        # "invalid_args: …" text the agent branches on; surface it verbatim.
+        raise ToolError(str(exc)) from exc
     except PptliveError as exc:
         raise ToolError(f"{type(exc).__name__} ({_error_code(exc)}): {exc}") from exc
-
-
-def _require(condition: Any, message: str) -> None:
-    """Guard a required argument; surfaces as a ToolError, not a 500."""
-    if not condition:
-        raise ToolError(f"invalid_args: {message}")
-
-
-def _pick_deck(ppt: Any, doc: str | None) -> Presentation:
-    """The active presentation, or the one named `doc` (mirrors the CLI's --doc)."""
-    if doc is None:
-        return ppt.presentations.active
-    return ppt.presentations[doc]
-
-
-def _resolve_shape(deck: Presentation, anchor_id: str | None) -> Shape:
-    """Resolve a shape/placeholder anchor to a `Shape` (else a not_found ToolError)."""
-    _require(anchor_id is not None, "this op requires `anchor_id`")
-    assert anchor_id is not None
-    anchor = deck.anchor_by_id(anchor_id)
-    if not isinstance(anchor, Shape):
-        raise AnchorNotFoundError("shape", anchor_id)
-    return anchor
+    except ValueError as exc:
+        # Library-level input validation (e.g. a line_spacing multiple > 5, an
+        # out-of-range indent level) — surface as invalid_args, not a 500.
+        raise ToolError(f"invalid_args: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -210,811 +178,9 @@ def _render_reply(results: list[dict[str, Any]], structured: dict[str, Any]) -> 
 
 
 # ===========================================================================
-# Op vocabulary — one StrEnum per tool is the SINGLE source of truth for that
-# tool's op list. The tool's `op:` parameter is typed by the enum (so FastMCP
-# derives the same enum schema the agent sees today), and the dispatch registry
-# below is keyed by it. An import-time assertion (after the cores) makes a
-# missing handler a hard error, so the Literal / dispatch / docstring
-# triplication can no longer silently drift.
-# ===========================================================================
-
-
-class ReadOp(StrEnum):
-    STATUS = "status"
-    SLIDES = "slides"
-    OUTLINE = "outline"
-    SLIDE = "slide"
-    ANCHOR = "anchor"
-    SELECTION = "selection"
-    FIND = "find"
-    TABLE = "table"
-    CHART = "chart"
-    SMARTART = "smartart"
-    COMMENTS = "comments"
-    THEME = "theme"
-    MASTER = "master"
-    LAYOUTS = "layouts"
-
-
-class EditOp(StrEnum):
-    WRITE = "write"
-    FIND_REPLACE = "find_replace"
-    FORMAT = "format"
-    SLIDE_ADD = "slide_add"
-    SLIDE_DELETE = "slide_delete"
-    SLIDE_DUPLICATE = "slide_duplicate"
-    SLIDE_MOVE = "slide_move"
-    SET_LAYOUT = "set_layout"
-    SHAPE_ADD = "shape_add"
-    SHAPE_MOVE = "shape_move"
-    SHAPE_RESIZE = "shape_resize"
-    SHAPE_DELETE = "shape_delete"
-    SHAPE_ORDER = "shape_order"
-    SET_ALT = "set_alt"
-    TABLE_ADD_ROW = "table_add_row"
-    TABLE_DELETE_ROW = "table_delete_row"
-    CHART_SET_TYPE = "chart_set_type"
-    CHART_SET_DATA = "chart_set_data"
-    CHART_RECOLOR_TEXT = "chart_recolor_text"
-    SMARTART_SET_NODES = "smartart_set_nodes"
-    SMARTART_RECOLOR_TEXT = "smartart_recolor_text"
-    COMMENT_ADD = "comment_add"
-    COMMENT_REPLY = "comment_reply"
-    COMMENT_DELETE = "comment_delete"
-    THEME_SET_COLOR = "theme_set_color"
-    THEME_SET_FONT = "theme_set_font"
-    MASTER_FORMAT_TEXT_STYLE = "master_format_text_style"
-    MASTER_FORMAT_PARAGRAPH_STYLE = "master_format_paragraph_style"
-    MASTER_SET_BACKGROUND = "master_set_background"
-
-
-class RenderOp(StrEnum):
-    SLIDE_IMAGE = "slide_image"
-    DECK_SNAPSHOT = "deck_snapshot"
-    SHAPE_IMAGE = "shape_image"
-    DECK_PDF = "deck_pdf"
-    SAVE = "save"
-    SAVE_AS = "save_as"
-    NAVIGATE = "navigate"
-
-
-class ShowOp(StrEnum):
-    STATE = "state"
-    START = "start"
-    END = "end"
-    NEXT = "next"
-    PREVIOUS = "previous"
-    GOTO = "goto"
-    BLACK = "black"
-    WHITE = "white"
-    RESUME = "resume"
-
-
-# ===========================================================================
-# Op registries — one op = one handler = one registry key. read/render handlers
-# take the app handle `(ppt, p)` and pick their own deck (status reads across
-# all decks, so it never picks one); edit/show handlers take an already-picked
-# `(deck, p)` — for edit, under the caller's open `deck.edit(...)` scope — so
-# ppt_batch can run them all under one shared attach + undo fence.
-# ===========================================================================
-
-ReadHandler = Callable[[Any, dict[str, Any]], dict[str, Any]]
-EditHandler = Callable[[Presentation, dict[str, Any]], dict[str, Any]]
-RenderHandler = Callable[[Any, dict[str, Any]], dict[str, Any]]
-ShowHandler = Callable[[Presentation, dict[str, Any]], dict[str, Any]]
-
-READ_OPS: dict[ReadOp, ReadHandler] = {}
-EDIT_OPS: dict[EditOp, EditHandler] = {}
-RENDER_OPS: dict[RenderOp, RenderHandler] = {}
-SHOW_OPS: dict[ShowOp, ShowHandler] = {}
-
-
-def read_op(op: ReadOp) -> Callable[[ReadHandler], ReadHandler]:
-    def reg(fn: ReadHandler) -> ReadHandler:
-        READ_OPS[op] = fn
-        return fn
-
-    return reg
-
-
-def edit_op(op: EditOp) -> Callable[[EditHandler], EditHandler]:
-    def reg(fn: EditHandler) -> EditHandler:
-        EDIT_OPS[op] = fn
-        return fn
-
-    return reg
-
-
-def render_op(op: RenderOp) -> Callable[[RenderHandler], RenderHandler]:
-    def reg(fn: RenderHandler) -> RenderHandler:
-        RENDER_OPS[op] = fn
-        return fn
-
-    return reg
-
-
-def show_op(op: ShowOp) -> Callable[[ShowHandler], ShowHandler]:
-    def reg(fn: ShowHandler) -> ShowHandler:
-        SHOW_OPS[op] = fn
-        return fn
-
-    return reg
-
-
-# ===========================================================================
-# Read ops (never move the view).
-# ===========================================================================
-
-
-@read_op(ReadOp.STATUS)
-def _read_status(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
-    return {"decks": ppt.presentations.list(), "viewed_slide": ppt.viewed_slide_index()}
-
-
-@read_op(ReadOp.SLIDES)
-def _read_slides(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
-    return {"slides": _pick_deck(ppt, p.get("doc")).slides.list()}
-
-
-@read_op(ReadOp.OUTLINE)
-def _read_outline(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
-    return {"outline": _pick_deck(ppt, p.get("doc")).outline()}
-
-
-@read_op(ReadOp.LAYOUTS)
-def _read_layouts(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
-    return {"layouts": _pick_deck(ppt, p.get("doc")).layouts()}
-
-
-@read_op(ReadOp.SELECTION)
-def _read_selection(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
-    return _pick_deck(ppt, p.get("doc")).selection().to_dict()
-
-
-@read_op(ReadOp.FIND)
-def _read_find(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
-    _require(p.get("text") is not None, "read op='find' requires `text`")
-    deck = _pick_deck(ppt, p.get("doc"))
-    matches = deck.find(p["text"], scope=p.get("scope"))
-    return {"count": len(matches), "matches": matches}
-
-
-@read_op(ReadOp.SLIDE)
-def _read_slide(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
-    _require(p.get("slide") is not None, "read op='slide' requires `slide`")
-    return _pick_deck(ppt, p.get("doc")).slides[p["slide"]].read()
-
-
-@read_op(ReadOp.ANCHOR)
-def _read_anchor(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
-    _require(p.get("anchor_id") is not None, "read op='anchor' requires `anchor_id`")
-    anchor = _pick_deck(ppt, p.get("doc")).anchor_by_id(p["anchor_id"])
-    payload: dict[str, Any] = {
-        "anchor_id": anchor.anchor_id,
-        "kind": anchor.kind,
-        "text": anchor.text,
-    }
-    paragraphs = getattr(anchor, "paragraphs", None)
-    if paragraphs is not None:
-        payload["paragraphs"] = paragraphs.list()
-    return payload
-
-
-@read_op(ReadOp.TABLE)
-def _read_table(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
-    return _resolve_shape(_pick_deck(ppt, p.get("doc")), p.get("anchor_id")).table.read()
-
-
-@read_op(ReadOp.CHART)
-def _read_chart(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
-    return _resolve_shape(_pick_deck(ppt, p.get("doc")), p.get("anchor_id")).chart.read()
-
-
-@read_op(ReadOp.SMARTART)
-def _read_smartart(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
-    return _resolve_shape(_pick_deck(ppt, p.get("doc")), p.get("anchor_id")).smartart.read()
-
-
-@read_op(ReadOp.COMMENTS)
-def _read_comments(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
-    deck = _pick_deck(ppt, p.get("doc"))
-    if p.get("slide") is not None:
-        return {"slide": p["slide"], "comments": deck.slides[p["slide"]].comments.list()}
-    return deck.comments()
-
-
-@read_op(ReadOp.THEME)
-def _read_theme(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
-    return _pick_deck(ppt, p.get("doc")).theme.read()
-
-
-@read_op(ReadOp.MASTER)
-def _read_master(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
-    return _pick_deck(ppt, p.get("doc")).master.read()
-
-
-def _read_core(ppt: Any, op: str, p: dict[str, Any]) -> dict[str, Any]:
-    """Read-only dispatch (never moves the view)."""
-    try:
-        key = ReadOp(op)
-    except ValueError as exc:
-        raise ToolError(f"invalid_args: unknown read op {op!r}") from exc
-    return READ_OPS[key](ppt, p)
-
-
-# ===========================================================================
-# Edit ops (each runs under the caller's open `deck.edit(...)` undo fence).
-# ===========================================================================
-
-
-@edit_op(EditOp.WRITE)
-def _edit_write(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    _require(p.get("anchor_id") is not None, "edit op='write' requires `anchor_id`")
-    _require(p.get("text") is not None, "edit op='write' requires `text`")
-    anchor = deck.anchor_by_id(p["anchor_id"])
-    mode = p.get("mode") or "set"
-    if mode == "set":
-        anchor.set_text(p["text"])
-    elif mode == "insert_after":
-        anchor.insert_paragraph_after(p["text"])
-    elif mode == "insert_before":
-        anchor.insert_paragraph_before(p["text"])
-    else:
-        raise ToolError(f"invalid_args: unknown write mode {mode!r}")
-    return {"ok": True, "anchor_id": anchor.anchor_id, "kind": anchor.kind, "mode": mode}
-
-
-@edit_op(EditOp.FIND_REPLACE)
-def _edit_find_replace(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    _require(p.get("find") is not None, "edit op='find_replace' requires `find`")
-    _require(
-        p.get("text") is not None,
-        "edit op='find_replace' requires `text` (the replacement)",
-    )
-    applied = deck.find_replace(
-        p["find"],
-        p["text"],
-        scope=p.get("scope"),
-        all=bool(p.get("replace_all")),
-        occurrence=p.get("occurrence"),
-    )
-    return {"ok": True, "count": len(applied), "replacements": applied}
-
-
-@edit_op(EditOp.FORMAT)
-def _edit_format(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    _require(p.get("anchor_id") is not None, "edit op='format' requires `anchor_id`")
-    font_opts = ("bold", "italic", "underline", "size", "font", "color")
-    para_opts = ("alignment", "space_before", "space_after", "line_spacing", "indent_level")
-    fill_opts = ("fill_color", "line_color", "line_width")
-    list_type = p.get("list_type")
-    _require(
-        any(p.get(k) is not None for k in font_opts + para_opts + fill_opts)
-        or list_type is not None,
-        "edit op='format' needs at least one font, paragraph, fill, or list option",
-    )
-    anchor = deck.anchor_by_id(p["anchor_id"])
-    if any(p.get(k) is not None for k in font_opts):
-        anchor.format_text(
-            bold=p.get("bold"),
-            italic=p.get("italic"),
-            underline=p.get("underline"),
-            size=p.get("size"),
-            font=p.get("font"),
-            color=p.get("color"),
-        )
-    if any(p.get(k) is not None for k in para_opts):
-        anchor.format_paragraph(
-            alignment=p.get("alignment"),
-            space_before=p.get("space_before"),
-            space_after=p.get("space_after"),
-            line_spacing=p.get("line_spacing"),
-            indent_level=p.get("indent_level"),
-        )
-    if any(p.get(k) is not None for k in fill_opts):
-        if not isinstance(anchor, Shape):
-            raise ToolError(
-                "invalid_args: fill_color/line_color/line_width need a shape anchor "
-                f"(shape:/shapeid:/ph:), got {p['anchor_id']!r}"
-            )
-        anchor.set_fill(
-            fill=p.get("fill_color"),
-            line=p.get("line_color"),
-            line_width=p.get("line_width"),
-        )
-    if list_type == "none":
-        anchor.remove_list()
-    elif list_type is not None:
-        anchor.apply_list(list_type, character=p.get("bullet_char"))
-    return {"ok": True, "anchor_id": anchor.anchor_id}
-
-
-@edit_op(EditOp.SLIDE_ADD)
-def _edit_slide_add(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    new = deck.slides.add(layout=p.get("layout"), index=p.get("index"))
-    return {"ok": True, "index": new.index, "id": new.id, "layout": new.layout_name}
-
-
-@edit_op(EditOp.SLIDE_DELETE)
-def _edit_slide_delete(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    _require(p.get("slide") is not None, "edit op='slide_delete' requires `slide`")
-    deck.slides[p["slide"]].delete()
-    return {"ok": True, "deleted": p["slide"]}
-
-
-@edit_op(EditOp.SLIDE_DUPLICATE)
-def _edit_slide_duplicate(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    _require(p.get("slide") is not None, "edit op='slide_duplicate' requires `slide`")
-    new = deck.slides[p["slide"]].duplicate()
-    return {"ok": True, "index": new.index, "id": new.id, "from": p["slide"]}
-
-
-@edit_op(EditOp.SLIDE_MOVE)
-def _edit_slide_move(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    _require(p.get("slide") is not None, "edit op='slide_move' requires `slide`")
-    _require(p.get("to") is not None, "edit op='slide_move' requires `to`")
-    moved = deck.slides[p["slide"]].move_to(p["to"])
-    return {"ok": True, "index": moved.index, "id": moved.id}
-
-
-@edit_op(EditOp.SET_LAYOUT)
-def _edit_set_layout(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    _require(p.get("slide") is not None, "edit op='set_layout' requires `slide`")
-    _require(p.get("layout") is not None, "edit op='set_layout' requires `layout`")
-    target = deck.slides[p["slide"]]
-    target.set_layout(p["layout"])
-    return {"ok": True, "index": p["slide"], "layout": target.layout_name}
-
-
-@edit_op(EditOp.SHAPE_ADD)
-def _edit_shape_add(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    _require(p.get("slide") is not None, "edit op='shape_add' requires `slide`")
-    kind = p.get("kind")
-    _require(kind is not None, "edit op='shape_add' requires `kind`")
-    geom = {k: p.get(k) for k in ("left", "top", "width", "height")}
-    shapes = deck.slides[p["slide"]].shapes
-    fill_kw = {
-        "fill": p.get("fill_color"),
-        "line": p.get("line_color"),
-        "line_width": p.get("line_width"),
-    }
-    if kind == "textbox":
-        created = shapes.add_textbox(p.get("text") or "", **fill_kw, **geom)
-    elif kind == "shape":
-        created = shapes.add_shape(p.get("shape_type") or "rectangle", **fill_kw, **geom)
-        if p.get("text"):
-            created.set_text(p["text"])
-    elif kind == "table":
-        _require(
-            p.get("rows") is not None and p.get("cols") is not None,
-            "edit shape_add kind='table' requires `rows` and `cols`",
-        )
-        created = shapes.add_table(p["rows"], p["cols"], **geom)
-    elif kind == "chart":
-        created = shapes.add_chart(
-            p.get("chart_type") or "column",
-            p.get("categories"),
-            p.get("series"),
-            **geom,
-        )
-    elif kind == "smartart":
-        created = shapes.add_smartart(p.get("smartart_kind") or "process", p.get("nodes"), **geom)
-    elif kind == "picture":
-        _require(p.get("path") is not None, "edit shape_add kind='picture' requires `path`")
-        created = shapes.add_picture(p["path"], alt_text=p.get("alt_text"), **geom)
-    else:
-        raise ToolError(f"invalid_args: unknown shape kind {kind!r}")
-    return {"ok": True, **created.to_dict()}
-
-
-@edit_op(EditOp.SHAPE_MOVE)
-def _edit_shape_move(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    sh = _resolve_shape(deck, p.get("anchor_id"))
-    _require(
-        p.get("left") is not None or p.get("top") is not None,
-        "edit op='shape_move' requires `left`/`top`",
-    )
-    sh.move(left=p.get("left"), top=p.get("top"))
-    return {"ok": True, "anchor_id": sh.anchor_id, "geometry": sh.geometry()}
-
-
-@edit_op(EditOp.SHAPE_RESIZE)
-def _edit_shape_resize(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    sh = _resolve_shape(deck, p.get("anchor_id"))
-    _require(
-        p.get("width") is not None or p.get("height") is not None,
-        "edit op='shape_resize' requires `width`/`height`",
-    )
-    sh.resize(width=p.get("width"), height=p.get("height"))
-    return {"ok": True, "anchor_id": sh.anchor_id, "geometry": sh.geometry()}
-
-
-@edit_op(EditOp.SET_ALT)
-def _edit_set_alt(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    sh = _resolve_shape(deck, p.get("anchor_id"))
-    _require(p.get("alt_text") is not None, "edit op='set_alt' requires `alt_text`")
-    sh.set_alt_text(p["alt_text"])
-    return {"ok": True, "anchor_id": sh.anchor_id, "alt_text": sh.alt_text}
-
-
-@edit_op(EditOp.SHAPE_DELETE)
-def _edit_shape_delete(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    sh = _resolve_shape(deck, p.get("anchor_id"))
-    info = {"anchor_id": sh.anchor_id, "name": sh.name, "id": sh.shape_id}
-    sh.delete()
-    return {"ok": True, **info}
-
-
-@edit_op(EditOp.SHAPE_ORDER)
-def _edit_shape_order(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    sh = _resolve_shape(deck, p.get("anchor_id"))
-    _require(
-        p.get("order") is not None,
-        "edit op='shape_order' requires `order` (front/back/forward/backward)",
-    )
-    new_index = sh.reorder(p["order"])
-    return {"ok": True, "anchor_id": sh.anchor_id, "name": sh.name, "index": new_index}
-
-
-@edit_op(EditOp.TABLE_ADD_ROW)
-def _edit_table_add_row(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    table = _resolve_shape(deck, p.get("anchor_id")).table
-    table.add_row(p.get("values"))
-    return {"ok": True, "anchor_id": table.shape.anchor_id, "rows": table.row_count}
-
-
-@edit_op(EditOp.TABLE_DELETE_ROW)
-def _edit_table_delete_row(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    table = _resolve_shape(deck, p.get("anchor_id")).table
-    _require(p.get("row") is not None, "edit op='table_delete_row' requires `row`")
-    table.delete_row(p["row"])
-    return {"ok": True, "anchor_id": table.shape.anchor_id, "rows": table.row_count}
-
-
-@edit_op(EditOp.CHART_SET_TYPE)
-def _edit_chart_set_type(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    chart = _resolve_shape(deck, p.get("anchor_id")).chart
-    _require(p.get("chart_type") is not None, "edit op='chart_set_type' requires `chart_type`")
-    chart.set_type(p["chart_type"])
-    return {"ok": True, "anchor_id": chart.shape.anchor_id, "chart_type": chart.chart_type}
-
-
-@edit_op(EditOp.CHART_SET_DATA)
-def _edit_chart_set_data(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    chart = _resolve_shape(deck, p.get("anchor_id")).chart
-    _require(
-        p.get("categories") is not None and p.get("series") is not None,
-        "edit op='chart_set_data' requires `categories` and `series`",
-    )
-    chart.set_data(p["categories"], p["series"])
-    return chart.read()
-
-
-@edit_op(EditOp.CHART_RECOLOR_TEXT)
-def _edit_chart_recolor_text(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    chart = _resolve_shape(deck, p.get("anchor_id")).chart
-    _require(p.get("color") is not None, "edit op='chart_recolor_text' requires `color`")
-    return chart.recolor_text(p["color"])
-
-
-@edit_op(EditOp.SMARTART_SET_NODES)
-def _edit_smartart_set_nodes(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    sa = _resolve_shape(deck, p.get("anchor_id")).smartart
-    _require(p.get("nodes") is not None, "edit op='smartart_set_nodes' requires `nodes`")
-    sa.set_nodes(p["nodes"])
-    return sa.read()
-
-
-@edit_op(EditOp.SMARTART_RECOLOR_TEXT)
-def _edit_smartart_recolor_text(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    sa = _resolve_shape(deck, p.get("anchor_id")).smartart
-    _require(p.get("color") is not None, "edit op='smartart_recolor_text' requires `color`")
-    return sa.recolor_text(p["color"])
-
-
-@edit_op(EditOp.COMMENT_ADD)
-def _edit_comment_add(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    _require(p.get("slide") is not None, "edit op='comment_add' requires `slide`")
-    _require(p.get("text") is not None, "edit op='comment_add' requires `text`")
-    kwargs: dict[str, Any] = {"author": p.get("author"), "initials": p.get("initials")}
-    if p.get("left") is not None:
-        kwargs["left"] = p["left"]
-    if p.get("top") is not None:
-        kwargs["top"] = p["top"]
-    c = deck.slides[p["slide"]].comments.add(p["text"], **kwargs)
-    return {"ok": True, "slide": p["slide"], "comment": c.to_dict()}
-
-
-@edit_op(EditOp.COMMENT_REPLY)
-def _edit_comment_reply(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    _require(p.get("slide") is not None, "edit op='comment_reply' requires `slide`")
-    _require(p.get("index") is not None, "edit op='comment_reply' requires `index`")
-    _require(p.get("text") is not None, "edit op='comment_reply' requires `text`")
-    rep = deck.slides[p["slide"]].comments[p["index"]].reply(p["text"])
-    return {"ok": True, "slide": p["slide"], "parent": p["index"], "reply": rep.to_dict()}
-
-
-@edit_op(EditOp.COMMENT_DELETE)
-def _edit_comment_delete(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    _require(p.get("slide") is not None, "edit op='comment_delete' requires `slide`")
-    _require(p.get("index") is not None, "edit op='comment_delete' requires `index`")
-    deck.slides[p["slide"]].comments[p["index"]].delete()
-    return {"ok": True, "slide": p["slide"], "index": p["index"]}
-
-
-@edit_op(EditOp.THEME_SET_COLOR)
-def _edit_theme_set_color(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    _require(p.get("slot") is not None, "edit op='theme_set_color' requires `slot`")
-    _require(p.get("color") is not None, "edit op='theme_set_color' requires `color`")
-    deck.theme.set_color(p["slot"], p["color"])
-    return deck.theme.read()
-
-
-@edit_op(EditOp.THEME_SET_FONT)
-def _edit_theme_set_font(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    _require(p.get("which") is not None, "edit op='theme_set_font' requires `which`")
-    _require(p.get("name") is not None, "edit op='theme_set_font' requires `name`")
-    deck.theme.set_font(p["which"], p["name"], script=p.get("script") or "latin")
-    return deck.theme.read()
-
-
-@edit_op(EditOp.MASTER_FORMAT_TEXT_STYLE)
-def _edit_master_format_text_style(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    _require(p.get("style") is not None, "edit op='master_format_text_style' requires `style`")
-    level = 1 if p.get("level") is None else p["level"]  # default outline level
-    style_font_opts = ("bold", "italic", "underline", "size", "font", "color")
-    _require(
-        any(p.get(k) is not None for k in style_font_opts),
-        "edit op='master_format_text_style' needs at least one font option",
-    )
-    deck.master.format_text_style(
-        p["style"],
-        level,
-        bold=p.get("bold"),
-        italic=p.get("italic"),
-        underline=p.get("underline"),
-        size=p.get("size"),
-        font=p.get("font"),
-        color=p.get("color"),
-    )
-    return {"ok": True, "style": p["style"], "level": level}
-
-
-@edit_op(EditOp.MASTER_FORMAT_PARAGRAPH_STYLE)
-def _edit_master_format_paragraph_style(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    _require(p.get("style") is not None, "edit op='master_format_paragraph_style' requires `style`")
-    level = 1 if p.get("level") is None else p["level"]  # default outline level
-    style_para_opts = ("alignment", "space_before", "space_after", "line_spacing")
-    _require(
-        any(p.get(k) is not None for k in style_para_opts),
-        "edit op='master_format_paragraph_style' needs at least one paragraph option",
-    )
-    deck.master.format_paragraph_style(
-        p["style"],
-        level,
-        alignment=p.get("alignment"),
-        space_before=p.get("space_before"),
-        space_after=p.get("space_after"),
-        line_spacing=p.get("line_spacing"),
-    )
-    return {"ok": True, "style": p["style"], "level": level}
-
-
-@edit_op(EditOp.MASTER_SET_BACKGROUND)
-def _edit_master_set_background(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    _require(p.get("color") is not None, "edit op='master_set_background' requires `color`")
-    deck.master.set_background(p["color"])
-    return {"ok": True, "background": deck.master.read().get("background", {})}
-
-
-def _edit_core(deck: Presentation, op: str, p: dict[str, Any]) -> dict[str, Any]:
-    """Mutation dispatch. The caller MUST have an open `deck.edit(...)` scope."""
-    try:
-        key = EditOp(op)
-    except ValueError as exc:
-        raise ToolError(f"invalid_args: unknown edit op {op!r}") from exc
-    return EDIT_OPS[key](deck, p)
-
-
-#: Batch commands that deliberately move what the user sees — a `render navigate`
-#: or any `show` control verb (everything but the read-only `state`). When one of
-#: these runs inside an atomic batch, the scope must NOT snap the view back.
-_MOVING_SHOW_OPS = frozenset(
-    {"start", "end", "next", "previous", "goto", "black", "white", "resume"}
-)
-
-
-def _moves_view(tool: str, op: str | None) -> bool:
-    """True if a batch command intentionally changes the viewed slide / screen."""
-    return (tool == "render" and op == "navigate") or (tool == "show" and op in _MOVING_SHOW_OPS)
-
-
-def _parse_slide_selector(slides: Any) -> int | tuple[int, int] | None:
-    """Parse a `deck_snapshot` `slides` arg into a `snapshot()` selector.
-
-    Accepts `None` (all slides), an `int` (single 1-based slide), or a string —
-    `"3"` (single) or `"2-4"` (inclusive span). A malformed string is an
-    `invalid_args` ToolError.
-    """
-    if slides is None:
-        return None
-    if isinstance(slides, bool):
-        raise ToolError("invalid_args: `slides` must be an int or a span string like '2-4'")
-    if isinstance(slides, int):
-        return slides
-    s = str(slides).strip()
-    try:
-        if "-" in s:
-            a, _, b = s.partition("-")
-            return int(a), int(b)
-        return int(s)
-    except ValueError as e:
-        raise ToolError(
-            f"invalid_args: `slides` must be an int or a span like '2-4', got {slides!r}"
-        ) from e
-
-
-# ===========================================================================
-# Render ops — render-to-image + the one deliberate view move (`navigate`).
-# Each picks its own deck; `fmt` defaults to PNG (save_as overrides with its own
-# file format).
-# ===========================================================================
-
-
-@render_op(RenderOp.SLIDE_IMAGE)
-def _render_slide_image(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
-    deck = _pick_deck(ppt, p.get("doc"))
-    fmt = p.get("fmt") or "png"
-    _require(p.get("slide") is not None, "render op='slide_image' requires `slide`")
-    path = deck.slides[p["slide"]].export_image(
-        p.get("out"), width=p.get("width"), height=p.get("height"), fmt=fmt
-    )
-    return {"ok": True, "slide": p["slide"], "path": str(path), "format": fmt}
-
-
-@render_op(RenderOp.DECK_SNAPSHOT)
-def _render_deck_snapshot(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
-    deck = _pick_deck(ppt, p.get("doc"))
-    fmt = p.get("fmt") or "png"
-    selector = _parse_slide_selector(p.get("slides"))
-    out_dir = tempfile.mkdtemp(prefix="pptlive_snap_")
-    base = os.path.join(out_dir, f"snap.{fmt}")
-    snaps = deck.snapshot(base, slides=selector, fmt=fmt, max_dim=p.get("max_dim"))
-    return {
-        "ok": True,
-        "count": len(snaps),
-        "format": fmt,
-        "max_dim": p.get("max_dim"),
-        "images": [{"slide": s.slide, "path": str(s.path), "format": fmt} for s in snaps],
-    }
-
-
-@render_op(RenderOp.SHAPE_IMAGE)
-def _render_shape_image(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
-    deck = _pick_deck(ppt, p.get("doc"))
-    fmt = p.get("fmt") or "png"
-    sh = _resolve_shape(deck, p.get("anchor_id"))
-    path = sh.export_image(p.get("out"), fmt=fmt)
-    return {"ok": True, "anchor_id": sh.anchor_id, "path": str(path), "format": fmt}
-
-
-@render_op(RenderOp.DECK_PDF)
-def _render_deck_pdf(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
-    deck = _pick_deck(ppt, p.get("doc"))
-    _require(p.get("out") is not None, "render op='deck_pdf' requires `out` (the PDF path)")
-    written = deck.export_pdf(p["out"])
-    # `format: "pdf"` keeps _render_reply from mis-embedding the PDF as an image.
-    return {"ok": True, "path": written, "format": "pdf"}
-
-
-@render_op(RenderOp.SAVE)
-def _render_save(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
-    saved_path = _pick_deck(ppt, p.get("doc")).save()
-    return {"ok": True, "path": saved_path, "saved": True, "format": "pptx"}
-
-
-@render_op(RenderOp.SAVE_AS)
-def _render_save_as(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
-    deck = _pick_deck(ppt, p.get("doc"))
-    _require(p.get("out") is not None, "render op='save_as' requires `out` (the .pptx path)")
-    fmt = str(p.get("save_format", "pptx"))
-    try:
-        written = deck.save_as(p["out"], fmt=fmt, overwrite=bool(p.get("overwrite", False)))
-    except (FileExistsError, ValueError) as exc:
-        raise ToolError(f"invalid_args: {exc}") from exc
-    return {"ok": True, "path": written, "format": fmt}
-
-
-@render_op(RenderOp.NAVIGATE)
-def _render_navigate(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
-    deck = _pick_deck(ppt, p.get("doc"))
-    _require(p.get("anchor_id") is not None, "render op='navigate' requires `anchor_id`")
-    anchor = deck.anchor_by_id(p["anchor_id"])
-    deck.go_to(anchor, select=p.get("select", True))
-    return {"ok": True, "anchor_id": anchor.anchor_id, "kind": anchor.kind}
-
-
-def _render_core(ppt: Any, op: str, p: dict[str, Any]) -> dict[str, Any]:
-    """Render-to-image + the one deliberate view move (`navigate`)."""
-    try:
-        key = RenderOp(op)
-    except ValueError as exc:
-        raise ToolError(f"invalid_args: unknown render op {op!r}") from exc
-    return RENDER_OPS[key](ppt, p)
-
-
-# ===========================================================================
-# Show ops — live slide-show control (deliberately drives the user's screen).
-# ===========================================================================
-
-
-@show_op(ShowOp.STATE)
-def _show_state(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    return deck.show.state()
-
-
-@show_op(ShowOp.START)
-def _show_start(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    return deck.show.start(from_slide=p.get("slide"))
-
-
-@show_op(ShowOp.END)
-def _show_end(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    return deck.show.end()
-
-
-@show_op(ShowOp.NEXT)
-def _show_next(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    return deck.show.next()
-
-
-@show_op(ShowOp.PREVIOUS)
-def _show_previous(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    return deck.show.previous()
-
-
-@show_op(ShowOp.GOTO)
-def _show_goto(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    _require(p.get("slide") is not None, "show op='goto' requires `slide`")
-    return deck.show.goto(p["slide"])
-
-
-@show_op(ShowOp.BLACK)
-def _show_black(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    return deck.show.black()
-
-
-@show_op(ShowOp.WHITE)
-def _show_white(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    return deck.show.white()
-
-
-@show_op(ShowOp.RESUME)
-def _show_resume(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    return deck.show.resume()
-
-
-def _show_core(deck: Presentation, op: str, p: dict[str, Any]) -> dict[str, Any]:
-    """Live slide-show control (deliberately drives the user's screen)."""
-    try:
-        key = ShowOp(op)
-    except ValueError as exc:
-        raise ToolError(f"invalid_args: unknown show op {op!r}") from exc
-    return SHOW_OPS[key](deck, p)
-
-
-# Drift guard: every enum member must have a registered handler. Turns a missing
-# op (or an enum/registry mismatch) into an import-time failure instead of a
-# silent gap the agent only discovers at call time.
-assert set(READ_OPS) == set(ReadOp), f"READ_OPS missing {set(ReadOp) - set(READ_OPS)}"
-assert set(EDIT_OPS) == set(EditOp), f"EDIT_OPS missing {set(EditOp) - set(EDIT_OPS)}"
-assert set(RENDER_OPS) == set(RenderOp), f"RENDER_OPS missing {set(RenderOp) - set(RENDER_OPS)}"
-assert set(SHOW_OPS) == set(ShowOp), f"SHOW_OPS missing {set(ShowOp) - set(SHOW_OPS)}"
-
-
-# ===========================================================================
-# Public tools — the typed schema the agent sees. Each wraps a core in
-# attach() (+ an edit() fence for mutations).
+# Public tools — the typed schema the agent sees. Each wraps a `_<tool>_core`
+# (from `_dispatch`) in attach() (+ an edit() fence for mutations); `op` is typed
+# by the enum so FastMCP derives the schema the agent sees.
 # ===========================================================================
 
 
@@ -1043,6 +209,11 @@ def ppt_read(
       `font` name, `color` `#RRGGBB` or null for a theme/auto color). These are
       *rendered* values; COM doesn't expose a per-run "directly set vs inherited"
       flag (only color distinguishes a literal RGB from an inherited theme color).
+    - "text_frame_status": autofit diagnostics for the shape at `anchor_id` —
+      `{autosize, word_wrap, margins:{left,right,top,bottom}, overflow_risk}`. The
+      read to run when text looks clipped or overflowing: `overflow_risk` is
+      "possible" when autosize is off (text can clip), "low" when an autofit mode
+      is active. A coarse, mode-derived flag (no measured extent).
     - "selection": what the user currently has selected, resolved to anchors.
     - "find": every fuzzy occurrence of `text` (smart-quote / whitespace tolerant)
       across the deck — each hit a `{anchor_id, start, length, text, context}`,
@@ -1073,6 +244,7 @@ def ppt_edit(
     op: EditOp,
     anchor_id: str | None = None,
     text: str | None = None,
+    paragraphs: list[Any] | None = None,
     mode: Literal["set", "insert_after", "insert_before"] = "set",
     find: str | None = None,
     scope: str | None = None,
@@ -1087,8 +259,12 @@ def ppt_edit(
     alignment: Literal["left", "center", "right", "justify", "distribute"] | None = None,
     space_before: float | None = None,
     space_after: float | None = None,
+    space_before_lines: float | None = None,
+    space_after_lines: float | None = None,
     line_spacing: float | None = None,
+    line_spacing_points: float | None = None,
     indent_level: int | None = None,
+    force: bool = False,
     fill_color: str | None = None,
     line_color: str | None = None,
     line_width: float | None = None,
@@ -1136,6 +312,12 @@ def ppt_edit(
       `\\r`) to start a new paragraph (each line becomes its own addressable
       `para:S:N:P`), or `\\v` for a soft line break within one paragraph.
       "insert_after"/"insert_before" add a paragraph relative to the anchor instead.
+    - "set_paragraphs": replace the anchor's text with `paragraphs` — a list whose
+      items are strings or `{"text", "list_type"?, "indent_level"?, "alignment"?,
+      "line_spacing"?/"line_spacing_points"?, "size"?, "bold"?, ...}` objects. Each
+      item becomes exactly one bullet/paragraph (a newline inside an item is a soft
+      break, never a split) with its formatting applied — the safe way to author a
+      list without relying on `\\n` inference. Returns the new `para:` anchor ids.
     - "find_replace": fuzzy-locate `find` across the deck and rewrite the matched
       spans with `text` (only the span changes, so run formatting is preserved).
       Scope with `scope` (a `slide:S` / anchor id). One match auto-applies; for
@@ -1143,13 +325,22 @@ def ppt_edit(
       errors `ambiguous`. Zero matches errors `not_found`. Use op="find" first to
       preview the hits.
     - "format": font (`bold`/`italic`/`underline`/`size`/`font`/`color` — `color` is
-      *font* color), paragraph (`alignment`/`space_before`/`space_after`/`line_spacing`
-      in points/`indent_level` 1-5), shape fill/border on a shape anchor
+      *font* color), paragraph, shape fill/border on a shape anchor
       (`fill_color`/`line_color` — a hex or "none" for transparent/no border;
       `line_width` in points), and/or list (`list_type` "bulleted"/"numbered", or
-      "none" to strip; `bullet_char` for a custom bullet). PowerPoint has no named
-      styles, so this direct formatting is its "apply a style". Pass at least one
-      option.
+      "none" to strip; `bullet_char` for a custom bullet). Paragraph spacing is
+      **unit-explicit** — `line_spacing` is a MULTIPLE (1.5), `line_spacing_points`
+      is EXACT POINTS (24); `space_before`/`space_after` are points and
+      `space_before_lines`/`space_after_lines` are multiples (pass one of each pair).
+      A `line_spacing` multiple > 5 is rejected unless `force=true` (it's almost
+      always a points-vs-multiple mix-up — use `line_spacing_points`). Plus
+      `alignment` and `indent_level` (1-5). PowerPoint has no named styles, so this
+      direct formatting is its "apply a style". Pass at least one option.
+    - "text_reset_format": reset the anchor's paragraph spacing to clean
+      single-spaced defaults (zero before/after, indent 1) — the recovery for a
+      line-spacing spiral that pushed text off the slide. Does NOT reset font
+      size/typeface (PowerPoint has no inheritance primitive); for a placeholder's
+      geometry + default font size use "shape_reset_layout".
 
     Slide lifecycle:
     - "slide_add": add a slide (`layout` name, optional 1-based `index`; default end).
@@ -1167,6 +358,9 @@ def ppt_edit(
     - "shape_move": move to absolute `left`/`top`. "shape_resize": set `width`/`height`.
     - "shape_order": restack by `order`="front"/"back"/"forward"/"backward" (e.g.
       send a new background panel to the back, behind existing content).
+    - "shape_reset_layout": restore a placeholder's geometry (and default font
+      size) from its slide layout — the fix for a placeholder manually moved/resized
+      or shrunk to an unreadable font. Errors if the shape isn't a placeholder.
     - "shape_delete": delete it. "set_alt": set `alt_text` (a drift-proof handle).
       Address a shape that must survive a delete/restack by `shapeid:S:ID` (the
       stable `id` from any shape listing), not the positional `shape:S:N`.
@@ -1217,6 +411,7 @@ def ppt_edit(
     params = {
         "anchor_id": anchor_id,
         "text": text,
+        "paragraphs": paragraphs,
         "mode": mode,
         "find": find,
         "scope": scope,
@@ -1231,8 +426,12 @@ def ppt_edit(
         "alignment": alignment,
         "space_before": space_before,
         "space_after": space_after,
+        "space_before_lines": space_before_lines,
+        "space_after_lines": space_after_lines,
         "line_spacing": line_spacing,
+        "line_spacing_points": line_spacing_points,
         "indent_level": indent_level,
+        "force": force,
         "fill_color": fill_color,
         "line_color": line_color,
         "line_width": line_width,
@@ -1414,74 +613,34 @@ def ppt_batch(
     `{..., "ok": false, "error": <category>, "message"}` on failure (same category
     tokens as the other tools' ToolErrors). When `embed` surfaces images, the reply
     carries those image blocks alongside this summary as its structured content."""
-    _require(
-        isinstance(commands, list) and len(commands) > 0,
-        "ppt_batch requires a non-empty `commands` list",
-    )
     with _mcp_errors(), attach() as ppt:
-        deck = _pick_deck(ppt, doc)
-        has_edit = any(cmd.get("tool", "edit") == "edit" for cmd in commands)
-        scope: Any = (
-            deck.edit(f"MCP: batch ({len(commands)} ops)")
-            if (atomic and has_edit)
-            else nullcontext()
+        _require(
+            isinstance(commands, list) and len(commands) > 0,
+            "ppt_batch requires a non-empty `commands` list",
         )
-        results: list[dict[str, Any]] = []
-        with scope as edit_scope:
-            for i, cmd in enumerate(commands):
-                tool = cmd.get("tool", "edit")
-                op = cmd.get("op")
-                p = {k: v for k, v in cmd.items() if k not in ("tool", "op")}
-                p["doc"] = doc
-                if (
-                    embed
-                    and tool == "render"
-                    and op == "slide_image"
-                    and p.get("width") is None
-                    and p.get("height") is None
-                ):
-                    p["width"] = _EMBED_DEFAULT_WIDTH
-                if (
-                    embed
-                    and tool == "render"
-                    and op == "deck_snapshot"
-                    and p.get("max_dim") is None
-                ):
-                    p["max_dim"] = _EMBED_DEFAULT_MAX_DIM
-                entry: dict[str, Any] = {"index": i, "tool": tool, "op": op}
-                try:
-                    _require(op is not None, f"command #{i} is missing `op`")
-                    assert op is not None
-                    if tool == "read":
-                        result = _read_core(ppt, op, p)
-                    elif tool == "edit":
-                        if atomic:
-                            result = _edit_core(deck, op, p)
-                        else:
-                            with deck.edit(f"MCP: batch #{i} {op}"):
-                                result = _edit_core(deck, op, p)
-                    elif tool == "render":
-                        result = _render_core(ppt, op, p)
-                    elif tool == "show":
-                        result = _show_core(deck, op, p)
-                    else:
-                        raise ToolError(f"invalid_args: command #{i} unknown tool {tool!r}")
-                    # A deliberate view-move inside an atomic batch must survive the
-                    # scope's restore — otherwise a `navigate`/`show` is snapped back
-                    # to the pre-batch slide on exit. Opt the whole scope out of the
-                    # view restore once such a command runs (mirrors how a bare
-                    # `go_to` requires `allow_view_move()` inside a `deck.edit`).
-                    if _moves_view(tool, op) and edit_scope is not None:
-                        edit_scope.allow_view_move()
-                    entry.update(ok=True, result=result)
-                except (PptliveError, ToolError) as exc:
-                    code = _error_code(exc) if isinstance(exc, PptliveError) else "invalid_args"
-                    entry.update(ok=False, error=code, message=str(exc))
-                    results.append(entry)
-                    if stop_on_error:
-                        break
-                    continue
-                results.append(entry)
+        deck = _pick_deck(ppt, doc)
+        # Inline-embed defaults: a render slide_image/deck_snapshot in an embedding
+        # batch gets a sensible size unless the command set one. Inject into the
+        # command copies so the shared `run_batch` stays render-agnostic.
+        prepared: list[dict[str, Any]] = []
+        for cmd in commands:
+            c = dict(cmd)
+            tool, op = c.get("tool", "edit"), c.get("op")
+            if embed and tool == "render":
+                if op == "slide_image" and c.get("width") is None and c.get("height") is None:
+                    c["width"] = _EMBED_DEFAULT_WIDTH
+                elif op == "deck_snapshot" and c.get("max_dim") is None:
+                    c["max_dim"] = _EMBED_DEFAULT_MAX_DIM
+            prepared.append(c)
+        results = run_batch(
+            ppt,
+            deck,
+            prepared,
+            doc=doc,
+            atomic=atomic,
+            stop_on_error=stop_on_error,
+            label=f"MCP: batch ({len(commands)} ops)",
+        )
         summary = {
             "ok": all(r["ok"] for r in results),
             "atomic": atomic,

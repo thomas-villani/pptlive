@@ -29,7 +29,7 @@ from ._comments import Comment, CommentCollection
 from ._edit import EditScope
 from ._presentation import Presentation, PresentationCollection
 from ._selection import SelectionInfo, SelectionSnapshot
-from ._shapes import PlaceholderShape, Shape, ShapeById, ShapeCollection
+from ._shapes import PlaceholderShape, Shape, ShapeById, ShapeCollection, TextFrameStatus
 from ._show import SlideShow
 from ._slides import Slide, SlideCollection
 from ._smartart import SmartArt
@@ -88,6 +88,7 @@ __all__ = [
     "SmartArt",
     "Snapshot",
     "Table",
+    "TextFrameStatus",
     "Theme",
     "UnsavedPresentationError",
     "attach",

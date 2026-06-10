@@ -36,8 +36,13 @@ honestly, and sketches the wrapper shape so it slots into the established
 > won't marshal under the late-bound `_com` dispatch.
 >
 > What's still thin is the rest of **appearance and behaviour** (gradients,
-> effects, motion, navigation) and one **specced-but-unbuilt** item (the standalone
-> CLI `exec` verb; MCP `ppt_batch` already covers batch).
+> effects, motion, navigation).
+>
+> **Shipped 2026-06-10:** the **v1.6 text-model reliability** tier (line-spacing
+> points-vs-multiple + guardrail, `set_paragraphs`, `reset_format` /
+> `reset_to_layout`, `text_frame_status` + edit warnings, richer paragraph
+> diagnostics, docs) **and** the last specced-but-unbuilt item — the CLI **`exec`**
+> verb, on a fastmcp-free `_batch.py` dispatch seam extracted from the MCP server.
 
 **Status legend:** `[ ]` not started · `[~]` in progress · `[x]` shipped.
 Spike-first remains the rule: confirm each COM behaviour on a live deck, write a
@@ -125,13 +130,16 @@ last thing keeping pptlive from full wordlive surface parity.
       (the known v0.5 z-order quirk), not a Find limitation. Grouped-shape /
       SmartArt / chart-text reach is determined by *our traversal depth*, not by
       `Find` — decide it when the traversal is written.
-- [ ] **`exec --script ops.json` at the CLI.** The batch surface is **already
-  built for MCP** (`ppt_batch`, one shared `attach()`, `atomic` fences each
-  `edit` into one undo entry) but the **CLI `exec`** specced in `spec.md` /
-  `IMPLEMENTATION.md` never landed. Lift the MCP `_*_core` helpers behind a CLI
-  `exec` verb so a single process applies a `{"label", "ops":[…]}` script as one
-  Ctrl-Z. Op set already proposed in `IMPLEMENTATION.md`. No new COM — pure
-  plumbing reuse. (Symbolic `shape:@label` binding stays deferred, Open Q #3.)
+- [x] **`exec --script ops.json` at the CLI — SHIPPED (2026-06-10).** The MCP
+  `_*_core` dispatch + the batch loop were **extracted into a fastmcp-free
+  `pptlive/_batch.py`** (the four op enums, registries, every handler, the cores,
+  and a new `run_batch`); `mcp/server.py` now wraps that seam and `cli/commands.py`
+  imports it for `exec` — so a single process applies a `{"label", "ops":[…]}`
+  script as one Ctrl-Z without the optional `[mcp]` extra. Invalid args raise the
+  native `BatchOpError` (the MCP server maps it to `ToolError`, the CLI to exit 1);
+  a failing op's category maps to the CLI exit code. `--continue` / `--no-atomic`
+  knobs. No new COM — pure plumbing reuse. (Symbolic `shape:@label` binding stays
+  deferred, Open Q #3.)
 
 ---
 
@@ -342,7 +350,13 @@ trivial; animations are the genuine long tail** — split accordingly.
 
 ---
 
-## v1.6 — text-model reliability & safe authoring
+## v1.6 — text-model reliability & safe authoring — SHIPPED (2026-06-10)
+
+> **Shipped (2026-06-10).** All items below landed — `line_spacing`
+> disambiguation + guardrail, `set_paragraphs`, `reset_format` /
+> `reset_to_layout`, `text_frame_status` + edit `warnings`, extended paragraph
+> diagnostics, and the docs. See `IMPLEMENTATION.md` §v1.6. The checkboxes below are
+> retained for the design rationale.
 
 Source: the **gpt-5.4 MCP-session review** (`docs/reviews/gpt-5.4-review.md`, 2026-06-10).
 Unlike v1.2–v1.5, this tier adds **no new object-model coverage** — it hardens the
@@ -366,7 +380,7 @@ agents *already* use trustworthy, rather than adding surface they don't yet have
 > - **`--doc` disambiguation by full path** (2026-06-10) — a down payment on the
 >   reviewer's "canonical doc id" ask (the opaque-handle version is below).
 
-- [ ] **Disambiguate `line_spacing` — the headline footgun.** Today
+- [x] **Disambiguate `line_spacing` — the headline footgun.** Today
   `format_paragraph(line_spacing=)` writes `ParagraphFormat.SpaceWithin`, which is a
   **multiple** (`1.0` single, `1.5`, `2.0`). The reviewer passed `24` expecting *24
   pt* and got 24× spacing — text off the slide, unrecoverable without a rewrite.
@@ -382,9 +396,17 @@ agents *already* use trustworthy, rather than adding surface they don't yet have
   distinction onto `space_before` / `space_after`. **Guardrail (cheap, do with it):**
   reject an absurd multiple (e.g. `> 5`) unless explicitly forced — a value that large
   is almost always a points-vs-multiple confusion. Library + CLI + MCP + docs table.
-  Low COM risk (`LineRule*` are plain bools).
+  Low COM risk (`LineRule*` are plain bools). **Spike CONFIRMED (2026-06-10,
+  `scripts/text_model_spike.py`):** all three `LineRule*` flags set cleanly and read
+  back (`msoTrue=-1` multiple / `msoFalse=0` points); `SpaceWithin` stores a bare
+  number whose unit `LineRuleWithin` selects. Adopting the PowerPoint-native pair
+  (`line_spacing` multiple + `line_spacing_points`). The same spike also pinned the
+  **reset primitive** (re-setting `.Text` does *not* clear run overrides → reset
+  re-applies layout/master defaults; the `CustomLayout` placeholder is the readable
+  source of truth) and the **autofit reads** (`TextFrame2.AutoSize` clean; classic
+  `Margin*`/`WordWrap` readable; no `Font.AutoScale` → coarse overflow heuristic).
 
-- [ ] **Paragraph-structured writing — `set_paragraphs([...])`.** Even with `\n`
+- [x] **Paragraph-structured writing — `set_paragraphs([...])`.** Even with `\n`
   normalization, the reviewer wants to *not rely on newline inference* for list
   authoring. A paragraph-oriented verb takes a list of `{text, list_type?,
   indent_level?, ...}` and builds each as its own addressable `para:`, resetting list
@@ -392,7 +414,7 @@ agents *already* use trustworthy, rather than adding surface they don't yet have
   `set_text` + `apply_list` + `format_paragraph` verbs; no new COM. MCP op
   `set_paragraphs` (the reviewer's `write_paragraphs`), CLI equivalent.
 
-- [ ] **Normalize / reset direct formatting — the recovery verb.** Once a placeholder
+- [x] **Normalize / reset direct formatting — the recovery verb.** Once a placeholder
   is in a bad state (5 pt font, giant spacing, overflow), reformatting it is
   unreliable. Add a verb that strips *direct* run/paragraph formatting so text falls
   back to the layout/master defaults. COM: a `TextRange`-level reset — clear run font
@@ -404,7 +426,7 @@ agents *already* use trustworthy, rather than adding surface they don't yet have
   CLI `text reset-format` / MCP `text_reset_format`. **Spike-first** (the reset
   primitive is the uncertain bit).
 
-- [ ] **Text-frame / autofit diagnostics (read).** Surface the state that makes a
+- [x] **Text-frame / autofit diagnostics (read).** Surface the state that makes a
   "formatting spiral" visible *before* it bites: `TextFrame.AutoSize`
   (`ppAutoSizeNone` / `ShapeToFitText` / `TextToFitShape`), `WordWrap`, the four
   `MarginLeft/Right/Top/Bottom`, and an overflow signal (compare text extent to the
@@ -412,13 +434,13 @@ agents *already* use trustworthy, rather than adding surface they don't yet have
   present). A read op `text_frame_status`, or extend the `anchor` read with autofit +
   margins + an overflow-risk flag. All reads; low risk.
 
-- [ ] **Extend paragraph diagnostics with spacing + run mix.** `paragraph_to_dict`
+- [x] **Extend paragraph diagnostics with spacing + run mix.** `paragraph_to_dict`
   already carries bullet/indent/alignment/effective-font; add `space_before` /
   `space_after` / `line_spacing` (with the lines-vs-points mode from the first item)
   and a **mixed-run summary** (the distinct font sizes in a paragraph) so an agent can
   *see* a stray 5 pt run before it renders. Pure read extension.
 
-- [ ] **Optional validation / warnings.** Proactively flag suspicious inputs rather
+- [x] **Optional validation / warnings.** Proactively flag suspicious inputs rather
   than silently applying them: a line-spacing multiple `> 5`, a font size `< 8` pt, a
   list applied to a single paragraph full of soft breaks. Return as a non-fatal
   `warnings` array on the edit result (the structured-I/O contract has room), or
