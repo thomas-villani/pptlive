@@ -52,7 +52,7 @@ src/pptlive/
   _presentation.py   Presentation (the wordlive Document analog) + PresentationCollection
   _slides.py         SlideCollection / Slide  (add/delete/duplicate/move_to/set_layout, notes, read())
   _shapes.py         ShapeCollection / Shape / ShapeById  (a Shape IS an Anchor when it has a text frame; geometry + fill/line + z-order verbs)
-  _anchors.py        Anchor base + Paragraph, Cell, Notes
+  _anchors.py        Anchor base + Paragraph, Cell, Notes  (set_paragraphs / reset_format + line-spacing unit knobs [v1.6])
   _tables.py         Table / Cell  (a table is a shape; cell:S:N:R:C anchors)         [v0.5]
   _charts.py         Chart       (a chart is a shape; data via embedded Excel)         [v0.7]
   _smartart.py       SmartArt    (a diagram is a shape; node tree read/set_nodes)      [v0.8]
@@ -60,14 +60,16 @@ src/pptlive/
   _findreplace.py    fuzzy match core (find_matches/normalize); find()/find_replace() on Presentation [v1.0]
   _comments.py       Comment / CommentCollection (slide.comments; threaded, identity-bound add/reply) [v1.3]
   _snapshot.py       Snapshot + deck.snapshot() — whole-deck low-res PNGs, max_dim token cap [v1.1]
+  _batch.py          fastmcp-free dispatch seam: op StrEnums + handler registries + _<tool>_core
+                     dispatchers + run_batch(); imported by BOTH cli `exec` and mcp/server [v1.0/v1.6]
   _selection.py      viewed-slide + Selection snapshot/restore
   _edit.py           EditScope — view/Selection preservation + atomic undo via StartNewUndoEntry (see below)
   _show.py           SlideShow control (deck.show)
   _guide.py          loads the bundled SKILL.md guides (cli/python); shared by CLI + MCP
   _skill/pptlive-cli/SKILL.md, _skill/pptlive-python/SKILL.md   the two agent skills
   cli/{__init__,__main__,main,commands}.py   + llm-help / install-skill / install-mcp
-  mcp/{__init__,__main__,server}.py   five op-dispatch tools (ppt_read/edit/render/show/batch)
-                     + pptlive://guide resources; pptlive[mcp]
+  mcp/{__init__,__main__,server}.py   thin FastMCP wrappers over _batch.py: five op-dispatch
+                     tools (ppt_read/edit/render/show/batch) + image embed + pptlive://guide; pptlive[mcp]
 mcpb/                one-click `.mcpb` bundle (manifest.json, pyproject.toml, src/server.py)
 tests/conftest.py    fake_powerpoint fixture (MagicMock COM), no_powerpoint, real_powerpoint
 ```
@@ -88,9 +90,34 @@ passed `author`/`initials` are best-effort — even the legacy `Add` binds to th
 signed-in account on a modern build, so they may be ignored), and there is **no
 resolve/reopen verb** — `Comment.Status`/`.Resolved` are not COM-readable on
 current builds. Library + CLI (`comment list/add/reply/delete`) + MCP (`ppt_read`
-`comments`; `ppt_edit` `comment_add`/`comment_reply`/`comment_delete`). Still in
-`spec.md` but unbuilt: the standalone CLI `exec` batch verb (MCP `ppt_batch`
-covers batch).
+`comments`; `ppt_edit` `comment_add`/`comment_reply`/`comment_delete`).
+
+**Text-model reliability (v1.6) + the `exec` CLI (v1.0) shipped 2026-06-10.** v1.6
+hardens the *existing* text/format surface (no new object-model coverage) against
+PowerPoint's sharp edges — the headline footgun being `line_spacing`: it is a
+**multiple**, so `line_spacing=24` meant 24× line height (text off the slide).
+`format_paragraph` now keeps `line_spacing` (multiple → `SpaceWithin` +
+`LineRuleWithin=msoTrue`) and adds `line_spacing_points` (→ `msoFalse`); the
+`space_before`/`space_after` points-intent is made honest (sets
+`LineRuleBefore/After=msoFalse`) with `space_before_lines`/`space_after_lines`
+companions; passing both forms of a pair is a `ValueError`, as is a `line_spacing`
+multiple `> 5` unless `force=True`. New verbs: `Anchor.set_paragraphs(items)` (one
+item = one addressable `para:`, the safe bullet-list path), `Anchor.reset_format()`
+(reset paragraph *spacing* to clean defaults — the only unambiguous reset, since
+PowerPoint exposes no "clear formatting"), `Shape.reset_to_layout()` (restore a
+placeholder's geometry + default font size from its `CustomLayout` placeholder),
+and `Shape.text_frame_status()` → `TextFrameStatus` (autosize/wrap/margins/
+overflow-risk). `paragraph_to_dict` gained `space_before`/`space_after`/
+`line_spacing` as `{value, mode}` + `run_sizes` (the mixed-run tell); edits return a
+non-fatal `warnings` array (tiny font, big forced multiple, list on a soft-break
+paragraph). A library `ValueError` now maps to a clean CLI exit 1 / MCP
+`invalid_args` instead of a traceback. The **`exec` CLI verb** (the last
+specced-but-unbuilt item) applies a `{"label", "ops":[…]}` script as one Ctrl-Z; it
+runs on **`pptlive/_batch.py`** — a fastmcp-free dispatch seam (the op enums,
+handler registries, `_<tool>_core` dispatchers, and `run_batch`) extracted from
+`mcp/server.py` so the base CLI never needs the `[mcp]` extra. Invalid args raise
+the native `BatchOpError` (the MCP server maps it to `ToolError`, the CLI to exit
+1). All four front-ends + both SKILL guides updated.
 
 **Deck snapshot (`_snapshot.py`) shipped in v1.1.** `deck.snapshot(out=None, *,
 slides=None, fmt="png", max_dim=None)` renders slides to PNG so a vision model can
@@ -127,7 +154,7 @@ raises `UnsavedPresentationError` (exit 1) instead; (3) `save_as` to `.pptx` (24
 clean at CLI/MCP). Library + CLI (`save`, `save-as PATH [--format/--overwrite]`,
 `export-pdf PATH`) + MCP (`ppt_render` ops `save`/`save_as`/`deck_pdf`).
 Constants: `PpSaveAsFileType` (`OPEN_XML_PRESENTATION=24`, `PDF=32`) +
-`save_format_for`. Still in `spec.md` but unbuilt: the standalone CLI `exec` verb.
+`save_format_for`.
 
 Agent skills shipped as **two** guides (`pptlive-cli` + `pptlive-python`), not
 wordlive's single one — `llm-help [--python]` dumps one, `install-skill` writes

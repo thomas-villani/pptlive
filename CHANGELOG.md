@@ -20,7 +20,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   moved from three hand-synced op lists (the `Literal`, the `if op == …` chain,
   the docstring) to a per-tool `StrEnum` + handler registry — one op is now one
   function, and a missing handler is an import-time error. The CLI behavior, MCP
-  op vocabulary, and the agent-facing tool schema are all unchanged.
+  op vocabulary, and the agent-facing tool schema are all unchanged. **And the whole
+  dispatch layer (op enums, registries, every handler, the `_<tool>_core`
+  dispatchers, and a new `run_batch`) was extracted into a fastmcp-free
+  `pptlive/_batch.py`** that both `mcp/server.py` (now a thin FastMCP wrapper) and
+  the CLI `exec` verb import — so the base CLI never pulls in the `[mcp]` extra.
+  Invalid op args raise a native `BatchOpError` (the MCP server maps it to
+  `ToolError`, the CLI to exit 1); `ppt_batch`'s behavior is unchanged (it now calls
+  `run_batch`).
+- **A library `ValueError` from a formatting verb now maps to a clean failure** — CLI
+  exit 1 and MCP `invalid_args` — instead of a stack trace / 500. This surfaces the
+  new v1.6 input guards (e.g. an out-of-range `line_spacing` multiple, or passing
+  both the multiple and the points form of a spacing knob) as actionable errors.
 - **`write` (`set_text`) now treats `\n` as a real paragraph break** (PPTLIVE-001).
   An LLM building a bullet body with `"a\nb\nc"` previously got **one** paragraph
   full of soft line breaks (`<a:br>`), so the lines were not individually
@@ -67,6 +78,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Text-model reliability & safe authoring** (v1.6) — hardens the *existing*
+  text/format surface against the PowerPoint sharp edges that leak through, adding
+  no new object-model coverage. Across library + CLI + MCP + both SKILL guides.
+  - **`line_spacing` is disambiguated.** It is a **multiple** (1.0 single, 1.5,
+    2.0), so the reviewer's `line_spacing=24` meant 24× line height — text off the
+    slide. `format_paragraph` keeps that meaning (multiple → `SpaceWithin` +
+    `LineRuleWithin=msoTrue`) and adds **`line_spacing_points`** for an exact point
+    height (→ `LineRuleWithin=msoFalse`). The `space_before`/`space_after`
+    points-intent is now honest (sets `LineRuleBefore/After=msoFalse`), with
+    `space_before_lines`/`space_after_lines` companions for the multiple form.
+    Passing both forms of a pair raises `ValueError`; so does a `line_spacing`
+    multiple `> 5` unless `force=True` (almost always a points-vs-multiple mix-up).
+    CLI gains `--line-spacing-points` / `--space-before-lines` /
+    `--space-after-lines` / `--force`; MCP `format` gains the same params.
+  - **`set_paragraphs([...])`** — `Anchor.set_paragraphs` takes a list of strings or
+    `{text, list_type?, indent_level?, alignment?, line_spacing?, size?, ...}` and
+    builds each as its own addressable `para:` (a newline inside an item folds to a
+    soft break) — the safe bullet-list path that doesn't rely on newline inference.
+    CLI `set-paragraphs --json/--file`; MCP `ppt_edit` op `set_paragraphs`.
+  - **Recovery verbs.** `Anchor.reset_format()` resets paragraph *spacing* to clean
+    single-spaced defaults — the only unambiguous reset, since PowerPoint exposes no
+    "clear formatting" call (re-setting `.Text` does **not** drop run overrides).
+    `Shape.reset_to_layout()` restores a placeholder's geometry + default font size
+    from its matching `CustomLayout` placeholder (the "5 pt font / shape off the
+    slide" repair). CLI `reset-format` / `shape reset-to-layout`; MCP
+    `text_reset_format` / `shape_reset_layout`.
+  - **Text-frame / autofit diagnostics (read).** `Shape.text_frame_status()` →
+    `TextFrameStatus(autosize, word_wrap, margins, overflow_risk)` (autosize read off
+    `TextFrame2`; `overflow_risk` is a coarse, mode-derived heuristic — PowerPoint
+    exposes no shrink-% on this build). CLI `read text-frame-status`; MCP `ppt_read`
+    op `text_frame_status`. New `TextFrameStatus` export + `MsoAutoSize` constant.
+  - **Richer paragraph diagnostics.** `paragraph_to_dict` now carries `space_before`
+    / `space_after` / `line_spacing` as `{value, mode}` (mode read off the paired
+    `LineRule*`) and `run_sizes` (the distinct per-run font sizes — so an agent can
+    *see* a stray 5 pt run before it renders). Flows through `ppt_read` op `anchor`.
+  - **Non-fatal `warnings` on edits.** `format` edits return a `warnings` array for
+    suspicious-but-applied inputs: a forced large line-spacing multiple, a font size
+    `< 8` pt, a list applied to a single soft-break paragraph.
+  - **Docs.** A "PowerPoint text-model gotchas" section + a formatting-field
+    reference table (field → unit → exact COM mapping → per-paragraph-vs-per-run
+    scope) + two safe patterns (bullet-list authoring, placeholder repair) in both
+    SKILL guides. Grounded by a live, net-zero spike (`scripts/text_model_spike.py`).
+- **`exec` — apply a batch script from the CLI as one Ctrl-Z** (v1.0, the last
+  specced-but-unbuilt verb). `pptlive exec --script ops.json` runs a
+  `{"label", "ops":[...]}` script against one connection and one undo entry. Each op
+  defaults to the `edit` tool and uses the live MCP op names; it stops at the first
+  failing op (its category maps to the exit code) unless `--continue`, and
+  `--no-atomic` fences each op separately. The single-process way to build a slide
+  without a command per change. Symbolic `shape:@label` binding stays deferred.
 - **Save & PDF export — the explicit file-output verbs** (v1.1, completing the
   output tier). Three never-implicit verbs on `Presentation` (pptlive never
   auto-saves): `deck.save()` persists to the existing file; `deck.save_as(path, *,

@@ -141,6 +141,17 @@ pptlive read notes --slide 2                   # == --anchor-id notes:2
 Exits `2` if the anchor doesn't resolve, `6` if it names a shape with no text
 frame.
 
+`read text-frame-status --anchor-id shape:4:3` reports a shape's autofit state
+when text looks clipped or overflowing — `autosize` (the autofit mode),
+`word_wrap`, the four `margins` (points), and an `overflow_risk` flag
+(`"possible"` when autosize is off so text can clip, `"low"` when an autofit mode
+is active). All reads; the view never moves.
+
+```json
+{"anchor_id": "shape:4:3", "autosize": "none", "word_wrap": true,
+ "margins": {"left": 7.2, "right": 7.2, "top": 3.6, "bottom": 3.6}, "overflow_risk": "possible"}
+```
+
 ## `find --text "…"`
 
 Fuzzy, deck-wide search. PowerPoint has no document-wide character stream, so
@@ -448,7 +459,11 @@ level, bullet, alignment, and effective `font` (`bold`/`italic`/`underline` as
 `true`/`false`/`"mixed"`, `size`, `font` name, `color` `#RRGGBB` or `null` for a
 theme/automatic color). The `font` values are *rendered* — COM exposes no
 "directly set vs inherited" flag (only color distinguishes a literal from a theme
-color).
+color). Each paragraph also carries `space_before` / `space_after` /
+`line_spacing` as `{value, mode}` (where `mode` is `"multiple"` or `"points"` —
+see the line-spacing note under `format-paragraph`) and `run_sizes`, the distinct
+per-run font sizes — so a stray 5 pt run hiding in an otherwise-18 pt paragraph
+shows up as `"run_sizes": [18.0, 5.0]` before it ever renders.
 
 ```bash
 pptlive paragraphs --anchor-id ph:4:body
@@ -485,6 +500,54 @@ pptlive format-paragraph --anchor-id para:4:2:1 \
 
 `--alignment` ∈ `left` / `center` / `right` / `justify`; `--indent-level` is
 1–5 (PowerPoint's only paragraph-indent notion).
+
+!!! warning "Line spacing has two units"
+    `--line-spacing` is a **multiple** (`1.0` single, `1.5`, `2.0`). For an exact
+    *point* height use **`--line-spacing-points 24`**. Passing `--line-spacing 24`
+    means 24× line height — text shoots off the slide — so a multiple `> 5` is
+    **rejected** (exit 1) unless you add `--force`. The same split applies to
+    spacing before/after: `--space-before` / `--space-after` are **points**,
+    `--space-before-lines` / `--space-after-lines` are **multiples**. Passing both
+    the point and the multiple form of the same knob is an error.
+
+### `set-paragraphs --anchor-id ID --json '[...]'`
+
+Rewrite an anchor as a clean per-paragraph list — the **safe** way to author a
+bullet list. Each item is a plain string or an object
+`{text, list_type?, indent_level?, alignment?, line_spacing?/line_spacing_points?,
+size?, bold?, ...}`; one item becomes exactly one addressable `para:S:N:P` (a
+newline *inside* an item folds to a soft break), so there's no `\n`-inference and
+no separate `list apply` pass. `--file PATH` reads the JSON array from a file.
+
+```bash
+pptlive set-paragraphs --anchor-id ph:4:body --json \
+  '["Overview", {"text": "Revenue up 12%", "list_type": "bulleted", "indent_level": 1},
+                 {"text": "Churn down 3%",  "list_type": "bulleted", "indent_level": 1}]'
+```
+
+```json
+{"ok": true, "anchor_id": "ph:4:body", "paragraphs": ["para:4:2:1", "para:4:2:2", "para:4:2:3"]}
+```
+
+### `reset-format --anchor-id ID` · `shape reset-to-layout --anchor-id ID`
+
+Recover a placeholder that's spiralled into a bad state (giant line spacing, 5 pt
+font, off the slide). PowerPoint has no "clear formatting" button, so the two
+verbs split the job:
+
+- **`reset-format`** resets paragraph *spacing* to clean defaults (single
+  line-spacing, zero before/after) — the only unambiguous reset.
+- **`shape reset-to-layout`** restores a placeholder's geometry **and** default
+  font size from its layout's matching placeholder (the "5 pt font / shape off the
+  slide" fix). It only works on a placeholder anchor.
+
+```bash
+pptlive reset-format --anchor-id ph:4:body
+pptlive shape reset-to-layout --anchor-id ph:4:body
+```
+
+The reliable repair sequence is **`read anchor` → `reset-format` → `shape
+reset-to-layout` → `set-paragraphs` → `slide export`** (render and check).
 
 ### `format-text --anchor-id ID [...]`
 
@@ -767,3 +830,58 @@ pptlive show end
 ```
 
 An out-of-range `--from` / `--slide` is exit `2`.
+
+---
+
+## `exec --script ops.json` — a batch as one Ctrl-Z
+
+Apply a whole batch script against **one** connection in **one** undo entry — the
+single-process way to build or restyle a slide without a command per change. The
+script is a JSON object `{"label": "...", "ops": [...]}`; each op is one of the
+edit/read verbs, named by its MCP op (`write`, `set_paragraphs`, `format`,
+`shape_add`, `find_replace`, …) and addressed by `anchor_id` / the same params the
+[MCP](mcp.md) ops take. Every op defaults to the `edit` tool.
+
+Each op's keys are **flat** (the op's params sit right alongside `"op"`), exactly
+the fields the matching [MCP](mcp.md) op takes — so `set_paragraphs` takes
+`paragraphs`, `write` takes `anchor_id` / `text`, and so on:
+
+```json
+{
+  "label": "Build Q3 slide",
+  "ops": [
+    {"op": "slide_add", "layout": "title_and_content", "index": 4},
+    {"op": "write", "anchor_id": "ph:4:title", "text": "Q3 Results"},
+    {"op": "set_paragraphs", "anchor_id": "ph:4:body",
+     "paragraphs": [{"text": "Revenue up 12%", "list_type": "bulleted"},
+                    {"text": "Churn down 3%",  "list_type": "bulleted"}]}
+  ]
+}
+```
+
+```bash
+pptlive exec --script ops.json
+```
+
+- The batch is **one Ctrl-Z** — a single automation session, so a partial run
+  (some ops applied before a failure) reverts with one undo.
+- It **stops at the first failing op** by default — that op's category sets the
+  exit code (`2` not-found, `5` ambiguous, …). Pass `--continue` to run every op
+  and report each outcome.
+- `--no-atomic` fences each op as its own undo entry instead of one.
+
+Each result entry carries its `index`, `tool`, `op`, `ok`, and either the op's
+`result` payload or an `error` token + `message`:
+
+```json
+{"ok": true, "label": "Build Q3 slide", "atomic": true, "count": 3,
+ "results": [
+   {"index": 0, "tool": "edit", "op": "slide_add",      "ok": true, "result": {"index": 4, "id": 261}},
+   {"index": 1, "tool": "edit", "op": "write",          "ok": true, "result": {"ok": true, "anchor_id": "ph:4:title"}},
+   {"index": 2, "tool": "edit", "op": "set_paragraphs", "ok": true, "result": {"ok": true, "paragraphs": ["para:4:2:1", "para:4:2:2"]}}
+ ]}
+```
+
+A malformed script or unknown op is exit `1` (`invalid_args`). `shape:S:N` refs
+resolve **live** as each op runs, so address anything you didn't just create by
+`ph:S:KIND` / `.Name` / `shapeid:S:ID`.

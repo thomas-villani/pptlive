@@ -675,8 +675,8 @@ slides × shapes → each text frame, table cells, and speaker notes; there is n
   and adds the fuzzy matching native Find lacks. See `roadmap.md` §v1.0.
 
 **Deferred:** a within-shape `range:S:N:START-END` anchor (until a real
-mid-paragraph workflow needs it); the CLI `exec` batch verb (MCP `ppt_batch`
-already covers batch; the standalone CLI `exec` stays on the roadmap).
+mid-paragraph workflow needs it). *(The CLI `exec` batch verb shipped 2026-06-10 —
+see the `exec` batch ops section below.)*
 
 ## v1.2 — shape styling: fill / border, z-order, shapeid, composite recolor — SHIPPED
 
@@ -926,6 +926,13 @@ create by `ph:S:KIND` or `.Name`. Symbolic binding (`add_shape "as": "label"` �
   real `com_error`s show up in smoke runs (add the slide-show-running rejection).
 - [ ] **Smoke fixtures** — a real `.pptx` checked in with known slides /
   placeholders / a table / notes, so smoke tests have a stable target.
+- [ ] **`\n`-in-live-reads smoke spike** (carried over from the retired
+  `REFACTOR-PLAN.md`). Confirm whether a raw `TextRange.Text` read ever contains a
+  bare `\n` and, if so, whether COM `.Paragraphs()` treats it as a break. If it
+  does, `_selection.read_selection`'s `\r`-only paragraph count would undercount and
+  should add `\n` (but never `\v`, which is an explicit *soft* break). A live check,
+  not a code edit — the current `\r`-only count is correct for `para:` addressing as
+  far as the unit tests and prior spikes show.
 - [x] **Docs** — MkDocs Material site under `docs/` (mirrors wordlive's setup:
   `mkdocs.yml`, `docs` extra in `pyproject.toml`, mkdocstrings autodoc of the
   public surface). Pages: Home (README include), Getting started, Concepts,
