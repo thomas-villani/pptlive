@@ -1,7 +1,14 @@
 # pptlive
 
+[![PyPI version](https://img.shields.io/pypi/v/pptlive.svg)](https://pypi.org/project/pptlive/)
+[![Python versions](https://img.shields.io/pypi/pyversions/pptlive.svg)](https://pypi.org/project/pptlive/)
+[![License: MIT](https://img.shields.io/pypi/l/pptlive.svg)](https://github.com/thomas-villani/pptlive/blob/main/LICENSE)
+[![Docs](https://img.shields.io/badge/docs-github.io-blue.svg)](https://thomas-villani.github.io/pptlive/)
+
 Drive a running Microsoft PowerPoint instance from Python — `xlwings`, but for
 PowerPoint. Built for both human scripting and LLM agents. Windows-only.
+
+📖 **[Documentation](https://thomas-villani.github.io/pptlive/)** — full Python API, CLI, MCP server, and cookbook.
 
 The live-app sibling of [`python-pptx`](https://python-pptx.readthedocs.io/)
 (which works the `.pptx` on disk) and the PowerPoint counterpart of
@@ -25,7 +32,7 @@ pip install "pptlive[mcp]"
 uv add pptlive
 ```
 
-(Requires Python 3.10+ and `pywin32` on Windows.)
+(Requires Python 3.11+ and `pywin32` on Windows.)
 
 ## Python
 
@@ -388,8 +395,10 @@ uv run ruff check . && uv run ruff format .
 uv run mypy
 ```
 
-The library targets Python 3.10+ (dev pins 3.13). See `spec.md` for the design
+The library targets Python 3.11+ (dev pins 3.13). See `spec.md` for the design
 and `IMPLEMENTATION.md` for staged build progress. Windows + COM only.
+
+Full documentation: <https://thomas-villani.github.io/pptlive/>
 
 ## A Review From the Other End of the Wire
 
