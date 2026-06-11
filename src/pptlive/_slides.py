@@ -24,8 +24,17 @@ from typing import TYPE_CHECKING, Any
 from . import _com
 from ._anchors import Notes
 from ._comments import CommentCollection
-from ._shapes import PlaceholderShape, ShapeCollection, is_placeholder
-from .constants import DEFAULT_LEGACY_LAYOUT, image_filter_for, is_true, placeholder_types_for
+from ._shapes import PlaceholderShape, ShapeCollection, background_to_dict, is_placeholder
+from .constants import (
+    DEFAULT_LEGACY_LAYOUT,
+    MsoTriState,
+    entry_effect_for,
+    entry_effect_name,
+    image_filter_for,
+    is_true,
+    parse_color,
+    placeholder_types_for,
+)
 from .exceptions import (
     AmbiguousMatchError,
     AnchorNotFoundError,
@@ -75,6 +84,11 @@ class Slide:
         """Stable `SlideID` — survives reordering, unlike `index`."""
         with _com.translate_com_errors():
             return int(self._slide.SlideID)
+
+    @property
+    def deck(self) -> Presentation:
+        """The owning `Presentation` (e.g. for resolving sibling slides)."""
+        return self._deck
 
     @property
     def shapes(self) -> ShapeCollection:
@@ -196,8 +210,41 @@ class Slide:
             "id": self.id,
             "layout": self.layout_name,
             "title": self.title,
+            "transition": self.transition(),
+            "background": self.background(),
             "shapes": self.shapes.list(),
         }
+
+    def transition(self) -> dict[str, Any]:
+        """The slide's entrance transition — `{effect, duration, advance_on_click,
+        advance_on_time, advance_time}`.
+
+        `effect` is the friendly `PpEntryEffect` name (`"fade"`, `"none"`, …);
+        `duration` is the transition animation length in seconds; the `advance_*`
+        fields describe auto-advance (`advance_on_time` + `advance_time` seconds)
+        vs. click-to-advance (`advance_on_click`). A read — no view move.
+        """
+        with _com.translate_com_errors():
+            t = self._slide.SlideShowTransition
+            return {
+                "effect": entry_effect_name(int(t.EntryEffect)),
+                "duration": float(t.Duration),
+                "advance_on_click": is_true(t.AdvanceOnClick),
+                "advance_on_time": is_true(t.AdvanceOnTime),
+                "advance_time": float(t.AdvanceTime),
+            }
+
+    def background(self) -> dict[str, Any]:
+        """The slide's background — `{follows_master, type, color}`.
+
+        `follows_master` is True when the slide inherits the master/layout
+        background (the default); when False it carries its own `{type, color}`
+        fill (set via `set_background`). A read — no view move.
+        """
+        with _com.translate_com_errors():
+            follows = is_true(self._slide.FollowMasterBackground)
+            bg = background_to_dict(self._slide)
+        return {"follows_master": follows, **bg}
 
     # -- render (v0.4; a read — no mutation, polite by nature) -----------------
 
@@ -301,6 +348,81 @@ class Slide:
         with _com.translate_com_errors():
             self._slide.CustomLayout = custom
         return self
+
+    def set_transition(
+        self,
+        effect: str | int | None = None,
+        *,
+        duration: float | None = None,
+        advance_after: float | None = None,
+        advance_on_click: bool | None = None,
+    ) -> dict[str, Any]:
+        """Set the slide's entrance transition; return the resulting transition dict.
+
+        `effect` is a friendly `PpEntryEffect` name (`"fade"`, `"cut"`,
+        `"cover_left"`, … — see `constants.ENTRY_EFFECT_CHOICES`) or a raw int.
+        `duration` is the transition animation length in seconds. `advance_after`
+        is the auto-advance delay in seconds — passing it sets **both**
+        `AdvanceOnTime=msoTrue` and `AdvanceTime` (the spike confirmed both are
+        needed); pass `0` to keep the timing but require a click. `advance_on_click`
+        toggles click-to-advance independently. Only the kwargs passed are written.
+
+        Raises `ValueError` (before any COM) for an unknown effect name or if
+        nothing is passed. A mutation: wrap in `deck.edit(...)`.
+        """
+        if (
+            effect is None
+            and duration is None
+            and advance_after is None
+            and advance_on_click is None
+        ):
+            raise ValueError(
+                "set_transition() requires at least one of effect, duration, "
+                "advance_after, or advance_on_click"
+            )
+        effect_int = entry_effect_for(effect) if effect is not None else None  # ValueError first
+        with _com.translate_com_errors():
+            t = self._slide.SlideShowTransition
+            if effect_int is not None:
+                t.EntryEffect = effect_int
+            if duration is not None:
+                t.Duration = float(duration)
+            if advance_after is not None:
+                # Auto-advance needs the flag AND the seconds (spike finding).
+                t.AdvanceOnTime = int(MsoTriState.TRUE)
+                t.AdvanceTime = float(advance_after)
+            if advance_on_click is not None:
+                t.AdvanceOnClick = (
+                    int(MsoTriState.TRUE) if advance_on_click else int(MsoTriState.FALSE)
+                )
+        return self.transition()
+
+    def set_background(self, color: str | int | tuple[int, int, int]) -> dict[str, Any]:
+        """Give the slide its own solid background color; return the background dict.
+
+        The per-slide override of the deck-wide master background (`deck.master.
+        set_background`). `color` is `"#RRGGBB"`, an `(r, g, b)` tuple, or a raw RGB
+        int. Sets `FollowMasterBackground=msoFalse` then a solid fill of that color.
+        Raises `ValueError` for a bad color (before any COM). Revert with
+        `follow_master_background()`. A mutation: wrap in `deck.edit(...)`.
+        """
+        rgb = parse_color(color)  # ValueError before any COM
+        with _com.translate_com_errors():
+            self._slide.FollowMasterBackground = int(MsoTriState.FALSE)
+            fill = self._slide.Background.Fill
+            fill.Solid()
+            fill.ForeColor.RGB = rgb
+        return self.background()
+
+    def follow_master_background(self) -> dict[str, Any]:
+        """Drop any per-slide background override and inherit the master's again.
+
+        Sets `FollowMasterBackground=msoTrue` (the spike-verified revert). A
+        mutation: wrap in `deck.edit(...)`.
+        """
+        with _com.translate_com_errors():
+            self._slide.FollowMasterBackground = int(MsoTriState.TRUE)
+        return self.background()
 
     def __repr__(self) -> str:
         return f"<Slide index={self.index}>"

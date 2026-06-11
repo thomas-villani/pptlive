@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import _com
 from ._anchors import apply_font, apply_paragraph_format
+from ._shapes import background_to_dict
 from .constants import (
     THEME_COLOR_CHOICES,
     alignment_for,
@@ -57,18 +58,6 @@ if TYPE_CHECKING:
 
 
 _safe = _com.safe_read  # defensive COM-property read (returns a default on failure)
-
-
-# msoFillType ints -> a friendly name (read-back only; we only *set* solid fills).
-_FILL_TYPE_NAMES: dict[int, str] = {
-    -2: "mixed",
-    1: "solid",
-    2: "patterned",
-    3: "gradient",
-    4: "textured",
-    5: "background",
-    6: "picture",
-}
 
 
 class Theme:
@@ -200,14 +189,7 @@ class Master:
                 ts = master.TextStyles(text_style_for(style))
                 levels = [self._level_dict(ts.Levels(lvl), lvl) for lvl in range(1, 6)]
                 text_styles[style] = {"levels": levels}
-            fill = master.Background.Fill
-            fill_type = _safe(lambda: int(fill.Type), None)
-            background = {
-                "type": _FILL_TYPE_NAMES.get(fill_type, fill_type)
-                if fill_type is not None
-                else None,
-                "color": _safe(lambda: color_hex_or_none(fill.ForeColor.RGB), None),
-            }
+            background = background_to_dict(master)
         return {"text_styles": text_styles, "background": background}
 
     def _level(self, style: str, level: int) -> Any:

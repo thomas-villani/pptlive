@@ -1253,3 +1253,176 @@ def theme_font_script_for(script: str) -> int:
         choices = ", ".join(THEME_FONT_SCRIPT_CHOICES)
         raise ValueError(f"unknown font script {script!r}; expected one of: {choices}")
     return idx
+
+
+# ---------------------------------------------------------------------------
+# Navigation — hyperlinks / actions (v0.4.0, the v1.4 cut)
+# ---------------------------------------------------------------------------
+#
+# A shape-level hyperlink lives on `Shape.ActionSettings(ppMouseClick).Hyperlink`
+# (`.Address` for a URL/file, `.SubAddress` for a slide jump). Spike findings
+# (scripts/hyperlink_spike.py): setting `.Address` auto-flips `.Action` to
+# `ppActionHyperlink`; `Hyperlink.Delete()` reverts `.Action` to `ppActionNone`
+# and `.Address` to `""`; the slide-jump `SubAddress` form is `"<SlideID>,<index>,<title>"`.
+
+
+class PpMouseActivation(IntEnum):
+    """`Shape.ActionSettings(activation)` — which mouse event the action fires on.
+
+    Only `MOUSE_CLICK` is used (the common "click to follow the link"); `MOUSE_OVER`
+    is named for the `.com` escape hatch but not wired into a verb yet.
+    """
+
+    MOUSE_CLICK = 1
+    MOUSE_OVER = 2
+
+
+class PpActionType(IntEnum):
+    """`ActionSetting.Action` — what the click does.
+
+    Only the two pptlive sets/reads: `NONE` (no action — what `Hyperlink.Delete()`
+    leaves behind) and `HYPERLINK` (follow `.Hyperlink.Address`/`.SubAddress`, which
+    PowerPoint sets implicitly when an address is assigned). Widen on demand.
+    """
+
+    NONE = 0
+    HYPERLINK = 7
+
+
+# ---------------------------------------------------------------------------
+# Motion — slide transitions (v0.4.0, the v1.5 cut)
+# ---------------------------------------------------------------------------
+#
+# `Slide.SlideShowTransition.EntryEffect` takes a `PpEntryEffect` int. The enum is
+# huge; we expose a **curated** subset of the common, well-documented families and
+# fall back to a raw-int passthrough for anything exotic (the chart_type_for rule).
+# Every value below is round-trip-verified on a live build (scripts/transition_spike.py)
+# — PowerPoint *validates* EntryEffect (the "wipe" family 3329-3332 is rejected as
+# "not valid for transitions"), so only verified families are named here.
+
+
+class PpEntryEffect(IntEnum):
+    """`Slide.SlideShowTransition.EntryEffect` — the slide's entrance transition.
+
+    A curated subset of the documented `PpEntryEffect` enum (the families this
+    build accepts): cut, blinds, checkerboard, cover, dissolve, fade, uncover.
+    `NONE` is no transition. Pass a raw int to reach any value pptlive hasn't named.
+    """
+
+    NONE = 0
+    CUT = 257
+    CUT_THROUGH_BLACK = 258
+    RANDOM = 513
+    BLINDS_HORIZONTAL = 769
+    BLINDS_VERTICAL = 770
+    CHECKERBOARD_ACROSS = 1025
+    CHECKERBOARD_DOWN = 1026
+    COVER_LEFT = 1281
+    COVER_UP = 1282
+    COVER_RIGHT = 1283
+    COVER_DOWN = 1284
+    DISSOLVE = 1537
+    FADE = 1793
+    UNCOVER_LEFT = 2049
+    UNCOVER_UP = 2050
+    UNCOVER_RIGHT = 2051
+    UNCOVER_DOWN = 2052
+
+
+# Friendly token -> PpEntryEffect int. Short aliases ("blinds", "checkerboard",
+# "cover", "uncover") map to a sensible default direction; explicit names resolve
+# to themselves.
+_ENTRY_EFFECTS: dict[str, int] = {
+    "none": int(PpEntryEffect.NONE),
+    "cut": int(PpEntryEffect.CUT),
+    "cut_through_black": int(PpEntryEffect.CUT_THROUGH_BLACK),
+    "random": int(PpEntryEffect.RANDOM),
+    "blinds": int(PpEntryEffect.BLINDS_HORIZONTAL),
+    "blinds_horizontal": int(PpEntryEffect.BLINDS_HORIZONTAL),
+    "blinds_vertical": int(PpEntryEffect.BLINDS_VERTICAL),
+    "checkerboard": int(PpEntryEffect.CHECKERBOARD_ACROSS),
+    "checkerboard_across": int(PpEntryEffect.CHECKERBOARD_ACROSS),
+    "checkerboard_down": int(PpEntryEffect.CHECKERBOARD_DOWN),
+    "cover": int(PpEntryEffect.COVER_LEFT),
+    "cover_left": int(PpEntryEffect.COVER_LEFT),
+    "cover_up": int(PpEntryEffect.COVER_UP),
+    "cover_right": int(PpEntryEffect.COVER_RIGHT),
+    "cover_down": int(PpEntryEffect.COVER_DOWN),
+    "dissolve": int(PpEntryEffect.DISSOLVE),
+    "fade": int(PpEntryEffect.FADE),
+    "uncover": int(PpEntryEffect.UNCOVER_LEFT),
+    "uncover_left": int(PpEntryEffect.UNCOVER_LEFT),
+    "uncover_up": int(PpEntryEffect.UNCOVER_UP),
+    "uncover_right": int(PpEntryEffect.UNCOVER_RIGHT),
+    "uncover_down": int(PpEntryEffect.UNCOVER_DOWN),
+}
+
+# The friendly names offered as a CLI choice (canonical spellings, ordered).
+ENTRY_EFFECT_CHOICES: tuple[str, ...] = (
+    "none",
+    "fade",
+    "cut",
+    "dissolve",
+    "random",
+    "blinds_horizontal",
+    "blinds_vertical",
+    "checkerboard_across",
+    "checkerboard_down",
+    "cover_left",
+    "cover_up",
+    "cover_right",
+    "cover_down",
+    "uncover_left",
+    "uncover_up",
+    "uncover_right",
+    "uncover_down",
+)
+
+# Reverse map (int -> a canonical friendly name) for read-backs.
+_ENTRY_EFFECT_NAMES: dict[int, str] = {
+    int(PpEntryEffect.NONE): "none",
+    int(PpEntryEffect.CUT): "cut",
+    int(PpEntryEffect.CUT_THROUGH_BLACK): "cut_through_black",
+    int(PpEntryEffect.RANDOM): "random",
+    int(PpEntryEffect.BLINDS_HORIZONTAL): "blinds_horizontal",
+    int(PpEntryEffect.BLINDS_VERTICAL): "blinds_vertical",
+    int(PpEntryEffect.CHECKERBOARD_ACROSS): "checkerboard_across",
+    int(PpEntryEffect.CHECKERBOARD_DOWN): "checkerboard_down",
+    int(PpEntryEffect.COVER_LEFT): "cover_left",
+    int(PpEntryEffect.COVER_UP): "cover_up",
+    int(PpEntryEffect.COVER_RIGHT): "cover_right",
+    int(PpEntryEffect.COVER_DOWN): "cover_down",
+    int(PpEntryEffect.DISSOLVE): "dissolve",
+    int(PpEntryEffect.FADE): "fade",
+    int(PpEntryEffect.UNCOVER_LEFT): "uncover_left",
+    int(PpEntryEffect.UNCOVER_UP): "uncover_up",
+    int(PpEntryEffect.UNCOVER_RIGHT): "uncover_right",
+    int(PpEntryEffect.UNCOVER_DOWN): "uncover_down",
+}
+
+
+def entry_effect_for(effect: str | int) -> int:
+    """Resolve a friendly transition name (or raw int) to its `PpEntryEffect` int.
+
+    Accepts `"fade"`/`"cut"`/`"cover_left"`/… (case- and separator-insensitive) or
+    a raw int (passed through, so exotic `PpEntryEffect` values still work). Raises
+    `ValueError` for an unknown name — symmetric with `chart_type_for`.
+    """
+    if isinstance(effect, bool):  # guard: bool is an int subclass
+        raise ValueError(f"invalid transition effect: {effect!r}")
+    if isinstance(effect, int):
+        return int(effect)
+    key = str(effect).strip().lower().replace(" ", "_").replace("-", "_")
+    found = _ENTRY_EFFECTS.get(key)
+    if found is None:
+        choices = ", ".join(ENTRY_EFFECT_CHOICES)
+        raise ValueError(f"unknown transition effect {effect!r}; expected one of: {choices}")
+    return found
+
+
+def entry_effect_name(value: Any) -> str:
+    """Friendly name for a `PpEntryEffect` int (e.g. 1793 -> "fade")."""
+    try:
+        return _ENTRY_EFFECT_NAMES.get(int(value), f"effect:{int(value)}")
+    except (TypeError, ValueError):
+        return "unknown"

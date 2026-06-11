@@ -114,6 +114,10 @@ class EditOp(StrEnum):
     SHAPE_DELETE = "shape_delete"
     SHAPE_ORDER = "shape_order"
     SHAPE_RESET_LAYOUT = "shape_reset_layout"
+    SHAPE_SET_HYPERLINK = "shape_set_hyperlink"
+    SHAPE_REMOVE_HYPERLINK = "shape_remove_hyperlink"
+    SLIDE_SET_TRANSITION = "slide_set_transition"
+    SLIDE_SET_BACKGROUND = "slide_set_background"
     SET_ALT = "set_alt"
     TABLE_ADD_ROW = "table_add_row"
     TABLE_DELETE_ROW = "table_delete_row"
@@ -600,6 +604,58 @@ def _edit_shape_reset_layout(deck: Presentation, p: dict[str, Any]) -> dict[str,
     sh = _resolve_shape(deck, p.get("anchor_id"))
     restored = sh.reset_to_layout()
     return {"ok": True, "anchor_id": sh.anchor_id, "restored": restored}
+
+
+@edit_op(EditOp.SHAPE_SET_HYPERLINK)
+def _edit_shape_set_hyperlink(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    sh = _resolve_shape(deck, p.get("anchor_id"))
+    _require(
+        (p.get("url") is None) != (p.get("slide") is None),
+        "edit op='shape_set_hyperlink' requires exactly one of `url` or `slide`",
+    )
+    link = sh.set_hyperlink(url=p.get("url"), slide=p.get("slide"), screen_tip=p.get("screen_tip"))
+    return {"ok": True, "anchor_id": sh.anchor_id, "hyperlink": link}
+
+
+@edit_op(EditOp.SHAPE_REMOVE_HYPERLINK)
+def _edit_shape_remove_hyperlink(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    sh = _resolve_shape(deck, p.get("anchor_id"))
+    sh.remove_hyperlink()
+    return {"ok": True, "anchor_id": sh.anchor_id, "hyperlink": None}
+
+
+@edit_op(EditOp.SLIDE_SET_TRANSITION)
+def _edit_slide_set_transition(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    _require(p.get("slide") is not None, "edit op='slide_set_transition' requires `slide`")
+    _require(
+        any(
+            p.get(k) is not None
+            for k in ("effect", "duration", "advance_after", "advance_on_click")
+        ),
+        "edit op='slide_set_transition' needs at least one of effect / duration / "
+        "advance_after / advance_on_click",
+    )
+    target = deck.slides[p["slide"]]
+    trans = target.set_transition(
+        p.get("effect"),
+        duration=p.get("duration"),
+        advance_after=p.get("advance_after"),
+        advance_on_click=p.get("advance_on_click"),
+    )
+    return {"ok": True, "index": p["slide"], "transition": trans}
+
+
+@edit_op(EditOp.SLIDE_SET_BACKGROUND)
+def _edit_slide_set_background(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    _require(p.get("slide") is not None, "edit op='slide_set_background' requires `slide`")
+    follow_master = bool(p.get("follow_master", False))
+    _require(
+        (p.get("color") is not None) != follow_master,
+        "edit op='slide_set_background' requires exactly one of `color` or `follow_master`",
+    )
+    target = deck.slides[p["slide"]]
+    bg = target.follow_master_background() if follow_master else target.set_background(p["color"])
+    return {"ok": True, "index": p["slide"], "background": bg}
 
 
 @edit_op(EditOp.TABLE_ADD_ROW)

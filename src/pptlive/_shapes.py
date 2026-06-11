@@ -30,6 +30,8 @@ from .constants import (
     MsoShapeType,
     MsoTextOrientation,
     MsoTriState,
+    PpActionType,
+    PpMouseActivation,
     autoshape_type_for,
     autosize_name,
     chart_type_for,
@@ -311,6 +313,59 @@ def _line_to_dict(com_shape: Any) -> dict[str, Any] | None:
     }
 
 
+# msoFillType ints -> a friendly name (read-back only; we only *set* solid fills).
+# Shared by the shape-fill, master-background, and slide-background readers.
+_FILL_TYPE_NAMES: dict[int, str] = {
+    -2: "mixed",
+    1: "solid",
+    2: "patterned",
+    3: "gradient",
+    4: "textured",
+    5: "background",
+    6: "picture",
+}
+
+
+def background_to_dict(com_with_background: Any) -> dict[str, Any]:
+    """`{type, color}` for any object that exposes a `.Background.Fill` (slide / master).
+
+    `type` is the friendly `msoFillType` name (solid/gradient/picture/…) and `color`
+    is the literal `"#RRGGBB"`, or `None` for a theme/automatic fill (the same honest
+    `color_hex_or_none` guard as font / shape fill). Best-effort: a property that
+    won't read returns `None` rather than raising, so a read never blows up.
+    """
+    fill = _safe(lambda: com_with_background.Background.Fill, None)
+    if fill is None:
+        return {"type": None, "color": None}
+    fill_type = _safe(lambda: int(fill.Type), None)
+    return {
+        "type": _FILL_TYPE_NAMES.get(fill_type, fill_type) if fill_type is not None else None,
+        "color": _safe(lambda: color_hex_or_none(fill.ForeColor.RGB), None),
+    }
+
+
+def _hyperlink_to_dict(com_shape: Any) -> dict[str, Any] | None:
+    """`{address, sub_address}` for the shape's mouse-click hyperlink, or None when unset.
+
+    Reads `ActionSettings(ppMouseClick)`: a shape carries a link only when its
+    `.Action` is `ppActionHyperlink`. `address` is an external URL/file target;
+    `sub_address` is the in-deck jump (`"<SlideID>,<index>,<title>"`). Both empty
+    strings collapse to `None`. Guarded — a frameless / action-less shape returns None.
+    """
+    try:
+        acts = com_shape.ActionSettings(int(PpMouseActivation.MOUSE_CLICK))
+        if int(acts.Action) != int(PpActionType.HYPERLINK):
+            return None
+        link = acts.Hyperlink
+        address = str(_safe(lambda: link.Address, "") or "")
+        sub_address = str(_safe(lambda: link.SubAddress, "") or "")
+    except Exception:
+        return None
+    if not address and not sub_address:
+        return None
+    return {"address": address or None, "sub_address": sub_address or None}
+
+
 def shape_to_dict(com_shape: Any, slide_index: int, z_index: int) -> dict[str, Any]:
     """Structured snapshot of one shape for `slide.read()` / `shapes.list()`.
 
@@ -328,6 +383,7 @@ def shape_to_dict(com_shape: Any, slide_index: int, z_index: int) -> dict[str, A
         "geometry": _geometry_of(com_shape),
         "fill": _fill_to_dict(com_shape),
         "line": _line_to_dict(com_shape),
+        "hyperlink": _hyperlink_to_dict(com_shape),
     }
     if is_placeholder(com_shape):
         try:
@@ -677,6 +733,77 @@ class Shape(Anchor):
             sh = self._com_shape()  # raw ref tracks the shape across the restack
             sh.ZOrder(cmd)
             return int(sh.ZOrderPosition)
+
+    def set_hyperlink(
+        self,
+        *,
+        url: str | None = None,
+        slide: int | None = None,
+        screen_tip: str | None = None,
+    ) -> dict[str, Any]:
+        """Make this shape a clickable hyperlink; return the resulting link dict.
+
+        Pass **exactly one** destination: `url` for an external link (a URL,
+        `mailto:`, or file path) or `slide` for an in-deck jump to a 1-based slide
+        index ("back to TOC" / agenda navigation). `screen_tip` is the optional
+        hover tooltip. The link fires on mouse click (`ppMouseClick`); setting it
+        implicitly flips the shape's action to `ppActionHyperlink`. A shape needs
+        no text frame to carry a link (it's a shape-level action).
+
+        Raises `ValueError` (before any COM) if neither or both destinations are
+        given, `url` is blank, or `slide` is out of range. A mutation: wrap in
+        `deck.edit(...)` for the one-Ctrl-Z fence.
+        """
+        if (url is None) == (slide is None):
+            raise ValueError("set_hyperlink() requires exactly one of url= or slide=")
+        sub_address: str | None = None
+        if url is not None:
+            if not str(url).strip():
+                raise ValueError("set_hyperlink(url=) must be a non-empty string")
+            url = str(url)
+        else:
+            assert slide is not None  # narrowed by the exactly-one check above
+            sub_address = self._slide_jump_subaddress(int(slide))  # ValueError if out of range
+        with _com.translate_com_errors():
+            acts = self._com_shape().ActionSettings(int(PpMouseActivation.MOUSE_CLICK))
+            link = acts.Hyperlink
+            if url is not None:
+                link.Address = url
+            else:
+                # SubAddress alone makes it an in-deck jump; clear any stale Address.
+                link.Address = ""
+                link.SubAddress = sub_address
+            if screen_tip is not None:
+                link.ScreenTip = str(screen_tip)
+            return _hyperlink_to_dict(self._com_shape()) or {}
+
+    def _slide_jump_subaddress(self, slide_index: int) -> str:
+        """Build the `"<SlideID>,<index>,<title>"` SubAddress for an in-deck jump.
+
+        Resolves the target slide live (so a bad index raises `SlideNotFoundError`
+        before any mutation) and reads its stable `SlideID`, position, and title —
+        the canonical PowerPoint slide-jump encoding (verified in hyperlink_spike).
+        """
+        target = self._slide.deck.slides[slide_index]  # SlideNotFoundError (exit 2) if missing
+        tcom = target.com
+        with _com.translate_com_errors():
+            slide_id = int(tcom.SlideID)
+            index = int(tcom.SlideIndex)
+            try:
+                title = str(tcom.Shapes.Title.TextFrame.TextRange.Text)
+            except Exception:
+                title = ""
+        return f"{slide_id},{index},{title}"
+
+    def remove_hyperlink(self) -> None:
+        """Remove this shape's mouse-click hyperlink (`Hyperlink.Delete`).
+
+        Reverts the shape's action to `ppActionNone` and clears the address. A
+        no-op if the shape has no link. A mutation: wrap in `deck.edit(...)`.
+        """
+        with _com.translate_com_errors():
+            acts = self._com_shape().ActionSettings(int(PpMouseActivation.MOUSE_CLICK))
+            acts.Hyperlink.Delete()
 
     def delete(self) -> None:
         """Delete this shape from its slide (`Shape.Delete`).

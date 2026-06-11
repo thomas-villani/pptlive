@@ -361,6 +361,57 @@ class _FakeShapeLine:
         self.ForeColor = SimpleNamespace(RGB=0x80000000)
 
 
+class _FakeHyperlink:
+    """`ActionSetting.Hyperlink` — Address / SubAddress / ScreenTip + Delete().
+
+    Mirrors the live finding (scripts/hyperlink_spike.py): assigning a non-empty
+    `Address` or `SubAddress` flips the owning action to `ppActionHyperlink` (7);
+    `Delete()` reverts the action to `ppActionNone` (0) and clears the address.
+    """
+
+    def __init__(self, action: _FakeActionSetting) -> None:
+        self._action = action
+        self._address = ""
+        self._sub_address = ""
+        self.ScreenTip = ""
+
+    @property
+    def Address(self) -> str:
+        return self._address
+
+    @Address.setter
+    def Address(self, value: str) -> None:
+        self._address = str(value or "")
+        self._action._refresh()
+
+    @property
+    def SubAddress(self) -> str:
+        return self._sub_address
+
+    @SubAddress.setter
+    def SubAddress(self, value: str) -> None:
+        self._sub_address = str(value or "")
+        self._action._refresh()
+
+    def Delete(self) -> None:
+        self._address = ""
+        self._sub_address = ""
+        self.ScreenTip = ""
+        self._action.Action = 0  # ppActionNone
+
+
+class _FakeActionSetting:
+    """`Shape.ActionSettings(ppMouseClick)` — `.Action` + `.Hyperlink`."""
+
+    def __init__(self) -> None:
+        self.Action = 0  # ppActionNone until a link is assigned
+        self.Hyperlink = _FakeHyperlink(self)
+
+    def _refresh(self) -> None:
+        linked = bool(self.Hyperlink._address or self.Hyperlink._sub_address)
+        self.Action = 7 if linked else 0  # ppActionHyperlink / ppActionNone
+
+
 class _FakeShape:
     """A shape. `text=None` means no text frame (picture/line)."""
 
@@ -406,6 +457,14 @@ class _FakeShape:
         self.selected = False
         self.last_export: dict[str, Any] | None = None
         self._collection: _FakeShapes | None = None  # set when adopted by _FakeShapes
+        self._action_settings: dict[int, _FakeActionSetting] = {}
+
+    def ActionSettings(self, activation: int) -> _FakeActionSetting:
+        """`Shape.ActionSettings(ppMouseClick=1)` — created on first access."""
+        key = int(activation)
+        if key not in self._action_settings:
+            self._action_settings[key] = _FakeActionSetting()
+        return self._action_settings[key]
 
     def Delete(self) -> None:
         assert self._collection is not None
@@ -1406,6 +1465,21 @@ class _FakePlaceholders:
         return self._items[index - 1]
 
 
+class _FakeSlideTransition:
+    """`Slide.SlideShowTransition` — entry effect + duration + advance model.
+
+    Defaults match the live spike (scripts/transition_spike.py): no effect,
+    click-to-advance on, timed-advance off.
+    """
+
+    def __init__(self) -> None:
+        self.EntryEffect = 0  # ppEffectNone
+        self.Duration = 0.0
+        self.AdvanceOnClick = _MSO_TRUE
+        self.AdvanceOnTime = _MSO_FALSE
+        self.AdvanceTime = 0.0
+
+
 class _FakeSlide:
     """A slide. `SlideIndex` is derived from list position so add/move/delete
     shift indices the way real PowerPoint does; `SlideID` stays stable."""
@@ -1426,6 +1500,11 @@ class _FakeSlide:
         self._notes_text = notes_text
         self.NotesPage = _FakeNotesPage(notes_text)
         self.Comments = _FakeCommentCollection(comments)
+        self.SlideShowTransition = _FakeSlideTransition()
+        # Per-slide background: inherits the master by default (msoTrue), with its
+        # own solid-fill object for when an override is set.
+        self.FollowMasterBackground = _MSO_TRUE
+        self.Background = SimpleNamespace(Fill=_FakeFillFormat())
         self._collection: _FakeSlides | None = None
         self._app: _FakeApplication | None = None
 

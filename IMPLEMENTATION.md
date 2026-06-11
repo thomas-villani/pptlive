@@ -918,6 +918,49 @@ applied and sit in that one entry, so a single Ctrl-Z reverts the partial batch
 create by `ph:S:KIND` or `.Name`. Symbolic binding (`add_shape "as": "label"` →
 `shape:@label`) is deferred (Open Q #3).
 
+## v0.4.0 — cross-tier quick wins (hyperlinks · transitions · per-slide bg) — SHIPPED (2026-06-10)
+
+The cheapest, highest-leverage, *independent* cut from three different open
+roadmap tiers, shipped together. Each was spiked-first on a live deck (net-zero)
+before hardening; the spike findings live in `roadmap.md`.
+
+- [x] **Shape hyperlinks (v1.4 navigation cut)** — `Shape.set_hyperlink(*, url=None,
+  slide=None, screen_tip=None)` + `Shape.remove_hyperlink()` over
+  `ActionSettings(ppMouseClick).Hyperlink`. Pass exactly one destination: `url`
+  (external) or `slide` (an in-deck jump). **Spike (`scripts/hyperlink_spike.py`):**
+  setting `.Address` auto-flips `.Action` to `ppActionHyperlink (7)`; `Hyperlink.Delete()`
+  reverts to `ppActionNone`/`""`; the slide-jump `SubAddress` form is
+  `"<SlideID>,<index>,<title>"` (PowerPoint canonicalizes a bare index too, but the
+  wrapper builds the explicit form). A link needs no text frame (shape-level action).
+  Every shape read gains a `hyperlink` field via `_hyperlink_to_dict`. New constants
+  `PpMouseActivation` / `PpActionType`. *Text-run-level links deferred.*
+- [x] **Slide transitions (v1.5 motion cut)** — `Slide.set_transition(effect, *,
+  duration=None, advance_after=None, advance_on_click=None)` + `Slide.transition()`
+  over `Slide.SlideShowTransition`. `effect` resolves through a **curated**
+  `PpEntryEffect` map (`entry_effect_for`/`entry_effect_name`/`ENTRY_EFFECT_CHOICES`,
+  the `chart_type_for` pattern) + raw-int passthrough. **Spike
+  (`scripts/transition_spike.py`):** the cut/blinds/checkerboard/cover/dissolve/fade/
+  uncover families round-trip, but PowerPoint *validates* — the "wipe" family
+  (3329-3332) is rejected, so the curated set is restricted to verified families;
+  auto-advance needs **both** `AdvanceOnTime=msoTrue` and `AdvanceTime`, so
+  `advance_after=N` sets both. Slide reads gain a `transition` dict. *Animations
+  (the v1.5 long tail) deferred.*
+- [x] **Per-slide background (v1.2 styling cut)** — `Slide.set_background(color)` +
+  `Slide.follow_master_background()` — the per-slide override of v0.9's deck-wide
+  `Master.set_background`. **Spike (`scripts/slide_background_spike.py`):**
+  `FollowMasterBackground` defaults `msoTrue`; setting it `msoFalse` + a
+  `Background.Fill.Solid()` colour overrides, and re-setting `msoTrue` reverts. The
+  master-background read logic was extracted into a shared `background_to_dict`
+  (`_shapes.py`) reused by both the master read and the new slide read. Slide reads
+  gain a `background` dict. Solid only (gradient/picture deferred).
+- [x] **Library + CLI (`shape set-link`/`remove-link`, `slide set-transition`/
+  `set-background`) + MCP (`ppt_edit` ops `shape_set_hyperlink`/`shape_remove_hyperlink`/
+  `slide_set_transition`/`slide_set_background`).** Unit-tested in
+  `tests/test_hyperlinks.py` / `test_transitions.py` / `test_slide_background.py`
+  (42 tests) against the extended fake-COM fixture; both SKILL guides + `CHANGELOG`
+  updated; version bumped `0.3.0 → 0.4.0` (mcpb pins in lockstep). Live end-to-end
+  exercise on a real deck confirmed. See `roadmap.md` for the spike one-liners.
+
 ---
 
 ## Cross-cutting (any release)

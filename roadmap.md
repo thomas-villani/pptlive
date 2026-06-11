@@ -43,6 +43,18 @@ honestly, and sketches the wrapper shape so it slots into the established
 > `reset_to_layout`, `text_frame_status` + edit warnings, richer paragraph
 > diagnostics, docs) **and** the last specced-but-unbuilt item — the CLI **`exec`**
 > verb, on a fastmcp-free `_batch.py` dispatch seam extracted from the MCP server.
+>
+> **Shipped 2026-06-10 (v0.4.0) — the cross-tier quick-wins release:** the cheapest
+> high-leverage cut from three *different* open tiers, each spiked-first and shipped
+> across all four front-ends. **Shape hyperlinks** (v1.4 navigation —
+> `Shape.set_hyperlink(url=/slide=)` + `remove_hyperlink`, shape-level click action,
+> URL or in-deck slide-jump; `hyperlink` on every shape read). **Slide transitions**
+> (v1.5 motion — `Slide.set_transition(effect, duration, advance_after)` over a curated
+> `PpEntryEffect` map; `transition` on every slide read; animations still deferred).
+> **Per-slide background** (v1.2 styling — `Slide.set_background(color)` /
+> `follow_master_background()`, the per-slide override of the master; `background` on
+> every slide read). So v1.2/v1.4/v1.5 are each **partway open** now, with their
+> remaining cuts (effects/gradients, sections/headers-footers, animations) still ahead.
 
 **Status legend:** `[ ]` not started · `[~]` in progress · `[x]` shipped.
 Spike-first remains the rule: confirm each COM behaviour on a live deck, write a
@@ -213,10 +225,15 @@ v0.3's `format_text` and v0.9's theme palette.
 - [ ] **Effects (second cut):** `Shape.Shadow` (`MsoShadowFormat`),
   `.Glow`, `.SoftEdge`, `.Reflection`, `.ThreeD`. Start with shadow (the common
   ask); the rest are opportunistic.
-- [ ] **Per-slide background:** `Slide.FollowMasterBackground = msoFalse` +
-  `Slide.Background.Fill` — the per-slide override of v0.9's master background
-  (which is deck-wide). Same `MsoFillFormat` surface as shape fill, so it falls
-  out of the same helper.
+- [x] **Per-slide background — SHIPPED (v0.4.0).** `Slide.FollowMasterBackground
+  = msoFalse` + `Slide.Background.Fill` — the per-slide override of v0.9's master
+  background (which is deck-wide). Same `MsoFillFormat` surface as shape fill, so it
+  falls out of the same helper. **Spike CONFIRMED (2026-06-10,
+  `scripts/slide_background_spike.py`, net-zero):** `FollowMasterBackground` defaults
+  to `msoTrue` (-1); setting it `msoFalse` (0) then `Slide.Background.Fill.Solid()` +
+  `.ForeColor.RGB = rgb` sets the slide's own solid colour (read back exact, `Fill.Type=1`
+  solid); **re-setting `FollowMasterBackground = msoTrue` cleanly reverts** to the master
+  background (the revert verb). Solid only this cut (gradient/picture deferred).
 - **Constants:** `MsoFillType`, `MsoGradientStyle`/`MsoPresetGradientType`,
   `MsoLineDashStyle`, `MsoPatternType`, `MsoShadowType` — added as each verb
   needs them (don't pre-populate, per convention #7).
@@ -306,11 +323,20 @@ this version".
 The connective tissue of a real deck. None of this is in the object model yet
 and all of it is low-risk COM.
 
-- [ ] **Hyperlinks & actions.** `Shape.ActionSettings(ppMouseClick).Hyperlink`
-  (`.Address` for URLs/files, `.SubAddress` for "jump to slide N") and the
-  text-level `TextRange.ActionSettings`. Lets an agent build clickable
-  navigation, agenda links, "back to TOC" buttons. `set_hyperlink(anchor, *,
-  url=None, slide=None)`; reads emit any existing link per shape/run.
+- [x] **Hyperlinks & actions — SHAPE-LEVEL CUT SHIPPED (v0.4.0).**
+  `Shape.ActionSettings(ppMouseClick).Hyperlink` (`.Address` for URLs/files,
+  `.SubAddress` for "jump to slide N"). Lets an agent build clickable navigation,
+  agenda links, "back to TOC" buttons. `set_hyperlink(anchor, *, url=None,
+  slide=None)`; reads emit any existing link per shape. **Spike CONFIRMED
+  (2026-06-10, `scripts/hyperlink_spike.py`, net-zero):** setting
+  `ActionSettings(1).Hyperlink.Address = url` **auto-flips `.Action` to
+  `ppActionHyperlink` (7)**; `Hyperlink.Delete()` reverts `.Action` to 0 and
+  `.Address` to `""` (an un-linked shape reads `.Address` as `""`, not a raise).
+  **`SubAddress` slide-jump format = `"<SlideID>,<index>,<title>"`** (the
+  PowerPoint-UI form); it round-trips, and a *bare index* string is auto-canonicalized
+  by PowerPoint to the full form (`"1"` read back `"256,1,Slide 1"`) — the wrapper
+  builds the explicit `SlideID,index,title` form for determinism. *Text-run-level
+  `TextRange.ActionSettings` deferred (shape-level only this cut).*
 - [ ] **Sections.** `Presentation.SectionProperties`: `.Count`, `.Name(i)`,
   `.SlidesCount(i)`, `.AddSection(index, name)`, `.Rename`, `.Delete`,
   `.Move`. Organizing large decks — a `deck.sections` read + add/rename/move
@@ -331,11 +357,23 @@ and all of it is low-risk COM.
 Pure PowerPoint, no Word analog (like slide-show control). **Transitions are
 trivial; animations are the genuine long tail** — split accordingly.
 
-- [ ] **Slide transitions (easy, ship first).** `Slide.SlideShowTransition`:
+- [x] **Slide transitions — SHIPPED (v0.4.0).** `Slide.SlideShowTransition`:
   `.EntryEffect` (`PpEntryEffect`, a large but flat enum), `.Duration`,
-  `.AdvanceOnTime`/`.AdvanceTime` (auto-advance), `.AdvanceOnClick`, sound.
+  `.AdvanceOnTime`/`.AdvanceTime` (auto-advance), `.AdvanceOnClick`.
   `slide.set_transition(effect, *, duration, advance_after)`; reads round-trip
-  cleanly. Friendly names → `PpEntryEffect` (the `chart_type_for` pattern).
+  cleanly. Friendly names → `PpEntryEffect` (the `chart_type_for` pattern, a
+  **curated** common subset + raw-int passthrough). **Spike CONFIRMED (2026-06-10,
+  `scripts/transition_spike.py`, net-zero):** `EntryEffect` write/read round-trips for
+  the documented cut / blinds / checkerboard / cover / dissolve / fade / uncover
+  families (e.g. cut=257, blinds_horizontal=769, cover_left=1281, dissolve=1537,
+  fade=1793, uncover_left=2049) — **but PowerPoint *validates*: the "wipe" family
+  ints (3329-3332) are rejected with "this enumeration value is not valid for
+  transitions"** (so the spike's first-pass guessed labels were wrong; the curated
+  set is restricted to round-trip-verified families, and the raw-int passthrough is
+  the escape hatch for anything exotic). `Duration` round-trips; **auto-advance needs
+  BOTH `AdvanceOnTime=msoTrue` AND `AdvanceTime=<seconds>`** (default
+  `AdvanceOnClick=msoTrue`/`AdvanceOnTime=msoFalse`), so `advance_after=N` sets
+  `AdvanceOnTime=-1` + `AdvanceTime=N` together. *Animations (next item) stay deferred.*
 - [ ] **Animations (fiddly, second cut).** Modern path: `Slide.TimeLine.
   MainSequence.AddEffect(Shape, EffectId, Level, Trigger)` →
   `Effect.Timing`/`.EffectType`/`.Exit`/`.EffectParameters`. `MsoAnimEffect` is a
