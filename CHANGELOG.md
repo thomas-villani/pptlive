@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-06-10
+
 ### Changed
 
 - **Minimum Python is now 3.11** (was 3.10). The library and the `pptlive[mcp]`
@@ -384,7 +386,8 @@ error taxonomy, `EditScope` shape, CLI contract, `_com` seam, and test approach.
 - **Release automation** — `bump-my-version` syncs the root and MCPB bundle
   versions; a `v*` tag publishes to PyPI via trusted publishing.
 
-[Unreleased]: https://github.com/thomas-villani/pptlive/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/thomas-villani/pptlive/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/thomas-villani/pptlive/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/thomas-villani/pptlive/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/thomas-villani/pptlive/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/thomas-villani/pptlive/compare/v0.1.1...v0.1.2
