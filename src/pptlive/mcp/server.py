@@ -268,6 +268,13 @@ def ppt_edit(
     fill_color: str | None = None,
     line_color: str | None = None,
     line_width: float | None = None,
+    url: str | None = None,
+    screen_tip: str | None = None,
+    effect: str | None = None,
+    duration: float | None = None,
+    advance_after: float | None = None,
+    advance_on_click: bool | None = None,
+    follow_master: bool = False,
     order: Literal["front", "back", "forward", "backward"] | None = None,
     list_type: Literal["bulleted", "numbered", "none"] | None = None,
     bullet_char: str | None = None,
@@ -347,6 +354,13 @@ def ppt_edit(
     - "slide_delete" / "slide_duplicate": delete / duplicate slide `slide`.
     - "slide_move": move slide `slide` to position `to`.
     - "set_layout": re-apply layout `layout` to slide `slide`.
+    - "slide_set_transition": set slide `slide`'s entrance transition — `effect`
+      (e.g. "fade"/"cut"/"dissolve"/"cover_left"), `duration` (seconds),
+      `advance_after` (auto-advance after N seconds), `advance_on_click` (bool).
+      Pass at least one.
+    - "slide_set_background": give slide `slide` its own solid `color` background
+      (overriding the master), or pass `follow_master`=true to revert to the master
+      background. Exactly one of the two.
 
     Shapes (create on `slide`; move/resize/delete/order/tag by `anchor_id`):
     - "shape_add": add `kind`="textbox" (with `text`), "shape" (autoshape via
@@ -364,6 +378,10 @@ def ppt_edit(
     - "shape_delete": delete it. "set_alt": set `alt_text` (a drift-proof handle).
       Address a shape that must survive a delete/restack by `shapeid:S:ID` (the
       stable `id` from any shape listing), not the positional `shape:S:N`.
+    - "shape_set_hyperlink": make the shape a clickable link — pass EXACTLY one of
+      `url` (external URL/file/mailto) or `slide` (1-based in-deck jump, e.g. a
+      "back to agenda" button); optional `screen_tip` hover text. A shape needs no
+      text frame to carry a link. "shape_remove_hyperlink": clear the link.
 
     Tables, charts & SmartArt (target the shape by its `anchor_id`, a shape:S:N):
     - "table_add_row": append a row, optionally filled from `values`.
@@ -435,6 +453,13 @@ def ppt_edit(
         "fill_color": fill_color,
         "line_color": line_color,
         "line_width": line_width,
+        "url": url,
+        "screen_tip": screen_tip,
+        "effect": effect,
+        "duration": duration,
+        "advance_after": advance_after,
+        "advance_on_click": advance_on_click,
+        "follow_master": follow_master,
         "order": order,
         "list_type": list_type,
         "bullet_char": bullet_char,

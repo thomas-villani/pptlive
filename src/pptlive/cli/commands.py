@@ -37,6 +37,7 @@ from ..constants import (
     ALIGNMENT_CHOICES,
     AUTOSHAPE_CHOICES,
     CHART_TYPE_CHOICES,
+    ENTRY_EFFECT_CHOICES,
     IMAGE_FORMAT_CHOICES,
     LIST_TYPE_CHOICES,
     SAVE_FORMAT_CHOICES,
@@ -848,6 +849,100 @@ def slide_set_layout(ctx: click.Context, deck: Presentation, slide_index: int, l
     )
 
 
+@slide.command(name="set-transition")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--effect",
+    "effect",
+    type=click.Choice(ENTRY_EFFECT_CHOICES),
+    default=None,
+    help="Entrance transition effect.",
+)
+@click.option("--duration", type=float, default=None, help="Transition length in seconds.")
+@click.option(
+    "--advance-after",
+    "advance_after",
+    type=float,
+    default=None,
+    help="Auto-advance after N seconds (sets the timer + flag).",
+)
+@click.option(
+    "--on-click/--no-on-click",
+    "advance_on_click",
+    default=None,
+    help="Whether a click advances the slide.",
+)
+@_deck_command
+def slide_set_transition(
+    ctx: click.Context,
+    deck: Presentation,
+    slide_index: int,
+    effect: str | None,
+    duration: float | None,
+    advance_after: float | None,
+    advance_on_click: bool | None,
+) -> None:
+    """Set a slide's entrance transition (effect / duration / auto-advance)."""
+    if effect is None and duration is None and advance_after is None and advance_on_click is None:
+        raise click.UsageError(
+            "slide set-transition requires --effect, --duration, --advance-after, "
+            "and/or --on-click/--no-on-click"
+        )
+    target = deck.slides[slide_index]
+    with deck.edit(f"CLI: set transition of slide {slide_index}"):
+        trans = target.set_transition(
+            effect,
+            duration=duration,
+            advance_after=advance_after,
+            advance_on_click=advance_on_click,
+        )
+    emit(
+        {"ok": True, "index": slide_index, "transition": trans},
+        as_text=not ctx.obj["as_json"],
+        text=f"slide {slide_index} transition -> {trans['effect']}",
+    )
+
+
+@slide.command(name="set-background")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--color", "color", default=None, help="Solid background color (#RRGGBB). Overrides the master."
+)
+@click.option(
+    "--follow-master",
+    "follow_master",
+    is_flag=True,
+    default=False,
+    help="Drop the per-slide override; inherit the master background.",
+)
+@_deck_command
+def slide_set_background(
+    ctx: click.Context,
+    deck: Presentation,
+    slide_index: int,
+    color: str | None,
+    follow_master: bool,
+) -> None:
+    """Give a slide its own solid background color, or revert it to the master."""
+    if (color is None) == (not follow_master):
+        raise click.UsageError(
+            "slide set-background requires exactly one of --color or --follow-master"
+        )
+    target = deck.slides[slide_index]
+    with deck.edit(f"CLI: set background of slide {slide_index}"):
+        if follow_master:
+            bg = target.follow_master_background()
+        else:
+            assert color is not None  # narrowed by the exactly-one check above
+            bg = target.set_background(color)
+    dest = "master" if follow_master else color
+    emit(
+        {"ok": True, "index": slide_index, "background": bg},
+        as_text=not ctx.obj["as_json"],
+        text=f"slide {slide_index} background -> {dest}",
+    )
+
+
 # ---------------------------------------------------------------------------
 # shapes --slide S
 # ---------------------------------------------------------------------------
@@ -1242,6 +1337,61 @@ def shape_order(ctx: click.Context, deck: Presentation, anchor_id: str, to: str)
         {"ok": True, "anchor_id": sh.anchor_id, "name": sh.name, "index": new_index},
         as_text=not ctx.obj["as_json"],
         text=f"sent {sh.anchor_id} to {to} (now z-index {new_index})",
+    )
+
+
+@shape.command(name="set-link")
+@click.option(
+    "--anchor-id",
+    "anchor_id",
+    required=True,
+    help="Shape to link (shape:S:N / shapeid:S:ID / ph).",
+)
+@click.option("--url", "url", default=None, help="External link target (URL / mailto / file path).")
+@click.option(
+    "--slide", "slide_index", type=int, default=None, help="In-deck jump to this 1-based slide."
+)
+@click.option("--screen-tip", "screen_tip", default=None, help="Hover tooltip (optional).")
+@_deck_command
+def shape_set_link(
+    ctx: click.Context,
+    deck: Presentation,
+    anchor_id: str,
+    url: str | None,
+    slide_index: int | None,
+    screen_tip: str | None,
+) -> None:
+    """Make a shape a clickable hyperlink — an external --url or an in-deck --slide jump."""
+    if (url is None) == (slide_index is None):
+        raise click.UsageError("shape set-link requires exactly one of --url or --slide")
+    sh = _resolve_shape(deck, anchor_id)
+    with deck.edit(f"CLI: set link {anchor_id}"):
+        link = sh.set_hyperlink(url=url, slide=slide_index, screen_tip=screen_tip)
+    dest = url if url is not None else f"slide {slide_index}"
+    emit(
+        {"ok": True, "anchor_id": sh.anchor_id, "hyperlink": link},
+        as_text=not ctx.obj["as_json"],
+        text=f"linked {sh.anchor_id} -> {dest}",
+    )
+
+
+@shape.command(name="remove-link")
+@click.option(
+    "--anchor-id",
+    "anchor_id",
+    required=True,
+    help="Shape to unlink (shape:S:N / shapeid:S:ID / ph).",
+)
+@_deck_command
+def shape_remove_link(ctx: click.Context, deck: Presentation, anchor_id: str) -> None:
+    """Remove a shape's mouse-click hyperlink (a no-op if it has none)."""
+    sh = _resolve_shape(deck, anchor_id)
+    with deck.edit(f"CLI: remove link {anchor_id}"):
+        sh.remove_hyperlink()
+    emit(
+        {"ok": True, "anchor_id": sh.anchor_id, "hyperlink": None},
+        as_text=not ctx.obj["as_json"],
+        text=f"unlinked {sh.anchor_id}",
     )
 
 

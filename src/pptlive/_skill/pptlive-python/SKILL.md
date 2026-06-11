@@ -115,9 +115,19 @@ with deck.edit("Build the results slide"):
     panel.reorder("back")                             # tuck the panel behind existing content
     star.delete()
 
+    arrow = shapes.add_shape("right_arrow", left=72, top=300)
+    arrow.set_hyperlink(url="https://acme.com")        # or slide=2 for an in-deck jump; no text frame needed
+    deck.slides[4].set_transition("fade", duration=0.5, advance_after=3)   # entrance + auto-advance
+    deck.slides[4].set_background("#1A2B3C")            # per-slide solid bg; follow_master_background() reverts
+
 logo.set_alt_text("Acme logo (top-right)")            # alt text = drift-proof re-id handle
+logo.remove_hyperlink()                               # clear a link (set_hyperlink's inverse)
 chart_png = deck.slides[4].shapes["Chart 2"].export_image()   # one shape, native size
 ```
+
+Reads surface the new state: every shape carries `hyperlink` (`{address, sub_address}`
+or `None`); each slide read carries `transition` (`{effect, duration, advance_*}`) and
+`background` (`{follows_master, type, color}`).
 
 ## Text structure, tables, charts, SmartArt
 

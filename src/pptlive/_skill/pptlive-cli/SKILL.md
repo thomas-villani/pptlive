@@ -104,6 +104,8 @@ PowerPoint's text model has sharp edges that leak through. The big ones:
 - `pptlive slide add --layout two_content [--index 4]`.
 - `pptlive slide duplicate --slide 7` · `pptlive slide move --slide 9 --to 2` · `pptlive slide delete --slide 5`.
 - `pptlive slide set-layout --slide 4 --layout title_and_content`.
+- `pptlive slide set-transition --slide 4 --effect fade [--duration 0.5] [--advance-after 3] [--on-click/--no-on-click]` — entrance transition (`fade`/`cut`/`dissolve`/`cover_left`/… or `none`); `--advance-after N` auto-advances after N s. Slide reads carry a `transition` dict.
+- `pptlive slide set-background --slide 4 --color "#1A2B3C"` (per-slide solid override of the master) · `--follow-master` reverts. Slide reads carry a `background` dict (`{follows_master, type, color}`).
 - `pptlive slide export --slide 2 --out slide2.png [--width 1280] [--format png]` — render one slide to an image so a vision model can *see* it.
 - `pptlive snapshot [--slide N | --slides A-B] [--out deck.png] [--max-dim 1000]` — render the **whole deck** (one PNG per slide) so you can check styling across every slide cheaply. `--max-dim` caps each slide's long edge (a uniform, predictable per-slide token cost); with `--out` it writes `<stem>-sN<suffix>`, otherwise base64 inline. The "did my restyle land everywhere?" read.
 
@@ -121,8 +123,9 @@ PowerPoint's text model has sharp edges that leak through. The big ones:
 - `pptlive shape fill --anchor-id shape:4:3 --fill "#102030" --line none` — shape fill/border (NOT font color; that's `format-text`).
 - `pptlive shape order --anchor-id shape:4:3 --to back` — restack (`front`/`back`/`forward`/`backward`); send a new background panel behind existing content.
 - `pptlive shape set-alt --anchor-id shape:4:3 --alt-text "Acme logo"` — alt text doubles as a drift-proof re-id handle.
+- `pptlive shape set-link --anchor-id shape:4:3 --url https://acme.com` (or `--slide 2` for an in-deck "back to agenda" jump; `--screen-tip "Acme"`). `pptlive shape remove-link --anchor-id shape:4:3`. A link needs no text frame; reads carry a `hyperlink` field (`{address, sub_address}` or null).
 - `pptlive shape export --anchor-id shape:4:3 --out logo.png` — render one shape (native size).
-- Every shape read carries `fill`/`line` (`{color, visible[, weight]}`); a theme/automatic color is `color: null`. Delete/restack shifts `shape:S:N` — address by `shapeid:S:ID` to survive it.
+- Every shape read carries `fill`/`line` (`{color, visible[, weight]}`) + `hyperlink`; a theme/automatic color is `color: null`. Delete/restack shifts `shape:S:N` — address by `shapeid:S:ID` to survive it.
 
 ## Tables, charts, SmartArt
 - Tables: `pptlive shape add --slide 4 --kind table --rows 3 --cols 2 --left 72 --top 120`; `pptlive table add-row --slide 4 --shape 5 --values '["Revenue","$4.2M"]'`; `pptlive table delete-row --slide 4 --shape 5 --row 2`; write cells with `pptlive write --anchor-id cell:4:5:1:1 --text "Metric"`.

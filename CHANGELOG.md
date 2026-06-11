@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-06-10
+
+### Added
+
+A **cross-tier quick-wins** release: the cheapest, highest-leverage, independent
+cut from three open roadmap tiers — each low-COM-risk, spiked-first on a live deck,
+and shipped across all four front-ends (library, CLI, MCP, tests).
+
+- **Shape hyperlinks (the v1.4 navigation cut).** `Shape.set_hyperlink(*, url=None,
+  slide=None, screen_tip=None)` makes a shape a clickable link — an external `url`
+  (URL / `mailto:` / file path) or an in-deck jump to a 1-based `slide` ("back to
+  agenda" navigation); `Shape.remove_hyperlink()` clears it. A shape needs no text
+  frame (it's a shape-level `ActionSettings(ppMouseClick)` action), and setting an
+  address implicitly flips the action to `ppActionHyperlink`. Every shape read now
+  carries a `hyperlink` field (`{address, sub_address}` or `null`). The slide-jump
+  `SubAddress` uses the canonical `"<SlideID>,<index>,<title>"` form (spike-verified).
+  CLI `shape set-link --url/--slide [--screen-tip]` / `shape remove-link`; MCP
+  `ppt_edit` ops `shape_set_hyperlink` / `shape_remove_hyperlink`.
+- **Slide transitions (the v1.5 motion cut).** `Slide.set_transition(effect, *,
+  duration=None, advance_after=None, advance_on_click=None)` sets a slide's entrance
+  transition; `Slide.transition()` reads it back. `effect` is a friendly
+  `PpEntryEffect` name (`"fade"`, `"cut"`, `"dissolve"`, `"cover_left"`, … — a curated,
+  round-trip-verified subset; raw int passthrough for exotic values) or `"none"`.
+  `advance_after=N` sets auto-advance (both `AdvanceOnTime` and the `AdvanceTime`
+  seconds, per the spike). Slide reads now include a `transition` sub-dict. CLI
+  `slide set-transition --effect/--duration/--advance-after/--on-click`; MCP
+  `ppt_edit` op `slide_set_transition`. *Animations remain deferred (the v1.5 long
+  tail).*
+- **Per-slide background (the v1.2 styling cut).** `Slide.set_background(color)` gives
+  a slide its own solid background (the per-slide override of v0.9's deck-wide
+  `Master.set_background`); `Slide.follow_master_background()` reverts to inheriting
+  the master. Slide reads now include a `background` dict (`{follows_master, type,
+  color}`). CLI `slide set-background --color/--follow-master`; MCP `ppt_edit` op
+  `slide_set_background`. Solid fills only (gradient/picture deferred).
+
+New constants (added on demand, per convention): `PpMouseActivation`, `PpActionType`,
+and `PpEntryEffect` + `entry_effect_for` / `entry_effect_name` / `ENTRY_EFFECT_CHOICES`
+(the `chart_type_for` friendly-name pattern). The master-background read helper was
+extracted into a shared `background_to_dict` reused by both the master and per-slide
+reads. Spikes: `scripts/{hyperlink,transition,slide_background}_spike.py`.
+
 ## [0.3.0] — 2026-06-10
 
 ### Changed
