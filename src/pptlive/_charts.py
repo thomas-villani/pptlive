@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import _com
 from .constants import XlAxisType, chart_type_for, chart_type_name, color_hex, parse_color
-from .exceptions import PptliveError
+from .exceptions import PowerPointBusyError, PptliveError
 
 if TYPE_CHECKING:
     from ._shapes import Shape
@@ -226,11 +226,44 @@ class Chart:
                     chart.SetSourceData(target)
                 finally:
                     wb.Close()
+            # The embedded-Excel commit can SILENTLY race: a first-chance
+            # RPC_S_CALL_FAILED (0x800706BE) during the workbook teardown leaves
+            # SetSourceData bound to an empty range with *no* Python exception, so
+            # the chart reads back blank (SeriesCollection empty). Verify the write
+            # actually landed; if not, raise a retryable busy so retry_on_busy
+            # re-runs the whole idempotent sequence (a fresh ChartData.Activate
+            # re-establishes the workbook). Observed live ~50% of the time on the
+            # chart smoke test before this guard.
+            if not self._reflects_data(len(norm), len(cats)):
+                raise PowerPointBusyError(
+                    "chart data did not commit (embedded-Excel teardown raced); retrying"
+                )
 
         # The embedded workbook can be momentarily unavailable right after the
-        # chart is created (RPC_S_UNKNOWN_IF); the write is a clean rewrite, so
-        # retrying the whole sequence is safe. See `_com.retry_on_busy`.
-        _com.retry_on_busy(_write)
+        # chart is created (RPC_S_UNKNOWN_IF), and the commit above can race; the
+        # write is a clean rewrite, so retrying the whole sequence is safe. See
+        # `_com.retry_on_busy`.
+        _com.retry_on_busy(_write, attempts=5)
+
+    def _reflects_data(self, nseries: int, ncats: int) -> bool:
+        """True if the plotted chart now reflects a just-written shape (count check).
+
+        The minimal read-back `set_data` uses to detect the silent embedded-Excel
+        commit race — the write no-ops with no exception, leaving `SeriesCollection`
+        empty. Compares only counts (series count and the first series' category
+        count), not values: the observed failure is *total* (an empty collection),
+        so counts catch it without false-retrying a valid write whose labels happen
+        to round-trip oddly. Any COM hiccup during the check counts as "not yet
+        reflected", so the idempotent write is simply retried.
+        """
+        try:
+            with _com.translate_com_errors():
+                sc = self.com.SeriesCollection()
+                if int(sc.Count) != nseries:
+                    return False
+                return len(list(sc(1).XValues)) == ncats
+        except PptliveError:
+            return False
 
     def recolor_text(self, color: str | int | tuple[int, int, int]) -> dict[str, Any]:
         """Set the font color of **every shown** chart text element (one Ctrl-Z).

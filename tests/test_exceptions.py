@@ -61,6 +61,26 @@ def test_rpc_unknown_if_classifies_as_busy() -> None:
         assert exc.retryable is True
 
 
+def test_rpc_call_failed_classifies_as_busy() -> None:
+    # 0x800706BE (RPC_S_CALL_FAILED) — a transient failure during the embedded-Excel
+    # workbook teardown; retryable (re-runs the idempotent chart-data write).
+    for hresult in (0x800706BE, -2147023170):
+        exc = from_com_error(_com_error(hresult, "The remote procedure call failed."))
+        assert isinstance(exc, PowerPointBusyError), hex(hresult & 0xFFFFFFFF)
+        assert exc.retryable is True
+
+
+def test_rpc_server_unavailable_is_not_busy() -> None:
+    # 0x800706BA (RPC_S_SERVER_UNAVAILABLE) is deliberately NOT busy: the embedded
+    # server is gone and the whole connection is poisoned for the process, so a
+    # retry is futile and would mask a dead connection. It must surface as a plain
+    # ComError (exit 1), not a retryable busy.
+    for hresult in (0x800706BA, -2147023174):
+        exc = from_com_error(_com_error(hresult, "The RPC server is unavailable."))
+        assert isinstance(exc, ComError), hex(hresult & 0xFFFFFFFF)
+        assert not isinstance(exc, PowerPointBusyError)
+
+
 def test_slide_not_found_is_anchor_not_found() -> None:
     err = SlideNotFoundError(9)
     assert isinstance(err, AnchorNotFoundError)

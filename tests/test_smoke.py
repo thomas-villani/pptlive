@@ -34,12 +34,19 @@ def fresh_deck(real_powerpoint: pl.PowerPoint) -> Iterator[pl.Presentation]:
         yield deck
     finally:
         # Close without saving; suppress the dialog by clearing the dirty flag.
+        # Both calls are best-effort: a chart-automation stress failure can leave
+        # the connection's COM proxies dead (RPC_S_SERVER_UNAVAILABLE), in which
+        # case there's nothing left to close — don't turn that into a teardown error
+        # on top of the test failure.
         com = deck.com
         try:
             com.Saved = True
         except Exception:
             pass
-        com.Close()
+        try:
+            com.Close()
+        except Exception:
+            pass
 
 
 def test_chart_set_data_round_trips_and_closes_cleanly(fresh_deck: pl.Presentation) -> None:
@@ -48,6 +55,16 @@ def test_chart_set_data_round_trips_and_closes_cleanly(fresh_deck: pl.Presentati
     Exercises the `ChartData.Activate()` → write cells → `SetSourceData` →
     `wb.Close()` sequence against real Excel. A non-English first-sheet name or a
     Close prompt would surface here as a COM error rather than a silent pass.
+
+    Reliability note (2026-06-10): PowerPoint's embedded-Excel chart automation is
+    fragile under *repeated* use — a chart's data write spins up and tears down an
+    Excel server, and a tight create/rewrite loop eventually trips transient RPC
+    failures (RPC_S_CALL_FAILED) or, under enough stress, takes the whole COM
+    connection down (RPC_S_SERVER_UNAVAILABLE — unrecoverable in-process, so not
+    retried). `Chart.set_data` now reads the data back and retries the *recoverable*
+    silent-commit race, which makes a single run reliable; but stress-looping this
+    test many times in quick succession can still destabilize the live instance.
+    Run it once (as the smoke suite does), not in a hammer loop.
     """
     with fresh_deck.edit("smoke: add chart"):
         slide = fresh_deck.slides.add("title_and_content")

@@ -208,20 +208,32 @@ class ComError(PptliveError):
 # real error. Carried over from wordlive verbatim; widened as smoke runs surface
 # new transient rejection codes.
 #
-# 0x800706B5 (RPC_S_UNKNOWN_IF) is the PowerPoint diff: a chart's embedded-Excel
-# workbook interface is briefly unavailable right after `AddChart2`, and an
-# occasional `ChartData.Activate()` hits it too (observed live 2026-05-29 driving
-# `chart add`/`chart set-data`). It is transient — a short retry clears it — so we
-# treat it as busy and `_com.retry_on_busy` re-attempts the chart-data write.
+# The 0x800706Bx (RPC_S_*) codes are the PowerPoint diff: a chart's embedded-Excel
+# automation server is transiently unavailable around `AddChart2` / `ChartData`
+# work (the server is spun up and torn down per data write). The *transient* ones
+# clear on a short retry that re-establishes a fresh `ChartData.Workbook`, so we
+# treat them as busy and `_com.retry_on_busy` re-attempts the idempotent write:
+#   0x800706B5 RPC_S_UNKNOWN_IF  — embedded-Excel interface not yet ready
+#                                  (observed 2026-05-29, `chart add`/`set-data`)
+#   0x800706BE RPC_S_CALL_FAILED — RPC failed during the workbook teardown; also the
+#                                  *silent* commit race `set_data` guards against
+#                                  with a read-back retry (see `_charts.py`)
+# NOT included on purpose: 0x800706BA RPC_S_SERVER_UNAVAILABLE — that is the embedded
+# server *gone* (not "busy"), which poisons every proxy on the connection for the
+# rest of the process, so a retry is futile and would only mask a dead connection;
+# it surfaces as a plain ComError. (BE/BA observed live 2026-06-10 stress-looping
+# the chart smoke test.)
 _BUSY_HRESULTS: frozenset[int] = frozenset(
     {
         0x80010001,  # RPC_E_CALL_REJECTED — call rejected by callee (modal dialog, busy)
         0x8001010A,  # RPC_E_SERVERCALL_RETRYLATER — server busy, retry later
         0x80010005,  # RPC_E_SERVERCALL_REJECTED — server rejected the call
         0x800706B5,  # RPC_S_UNKNOWN_IF — embedded-Excel interface not yet ready
+        0x800706BE,  # RPC_S_CALL_FAILED — RPC failed during embedded-Excel teardown
         -2147418111,  # signed form of RPC_E_CALL_REJECTED
         -2147417846,  # signed form of RPC_E_SERVERCALL_RETRYLATER
         -2147023179,  # signed form of RPC_S_UNKNOWN_IF
+        -2147023170,  # signed form of RPC_S_CALL_FAILED
     }
 )
 
