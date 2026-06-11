@@ -139,6 +139,35 @@ def test_set_data_references_worksheet_by_actual_name(deck) -> None:  # type: ig
     assert shape.chart.read()["categories"] == ["A", "B"]
 
 
+def test_set_data_retries_silent_commit_race(deck, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    # Regression: the embedded-Excel commit can SILENTLY race — the write no-ops
+    # (SetSourceData binds an empty range) with no COM exception, leaving the chart
+    # blank. Observed live as a ~50% flake (a first-chance RPC_S_CALL_FAILED during
+    # the workbook teardown). set_data reads the data back and, if it didn't land,
+    # raises a retryable busy so retry_on_busy re-runs the idempotent write. Here we
+    # make the FIRST SetSourceData drop the commit, then succeed — set_data must
+    # recover, not leave an empty chart.
+    shape = deck.slides[3].shapes.add_chart("column", ["seed"], {"S": [1.0]})
+    fake_chart = shape.com._chart
+    real_set_source = fake_chart.SetSourceData
+    calls = {"n": 0}
+
+    def flaky_set_source(source: str) -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            fake_chart._nrows, fake_chart._ncols = 1, 1  # empty range == lost commit
+        else:
+            real_set_source(source)
+
+    monkeypatch.setattr(fake_chart, "SetSourceData", flaky_set_source)
+
+    shape.chart.set_data(["A", "B", "C"], {"Only": [1.0, 2.0, 3.0]})  # must not raise / no-op
+    info = shape.chart.read()
+    assert info["categories"] == ["A", "B", "C"]
+    assert info["series"][0]["name"] == "Only"
+    assert calls["n"] >= 2  # the raced first write was detected and retried
+
+
 def test_set_data_formats_category_column_as_text(deck) -> None:  # type: ignore[no-untyped-def]
     # Numeric-looking category labels must stay text, else Excel coerces "2026" to
     # a number that reads back as "2026.0". set_data forces the category column
