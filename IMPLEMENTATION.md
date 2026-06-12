@@ -712,6 +712,51 @@ for. Resolves spec Open Q #3 (symbolic `exec` binding stays deferred).
   `smartart_recolor_text`).** Unit-tested in `tests/test_styling.py` +
   `tests/test_cli.py` + `tests/test_mcp.py`. See `roadmap.md`.
 
+## v1.2-advanced — gradient / picture / pattern fills + effects — SHIPPED (2026-06-12, v0.5.0)
+
+Completes the v1.2 styling tier: the advanced fills and shape effects deferred from
+the solid cut, both de-risked by the 2026-06-11 spikes (`fill_advanced_spike.py`,
+`effects_spike.py`) and built as **dedicated explicit verbs** (the chosen API shape
+over a string mini-DSL). Live net-zero confirmed the shipped wrappers end-to-end
+(multi-stop reads back sorted; preset "ocean" → a 4-stop ramp; all four effects
+round-trip). All fake-COM unit tests green (`ruff`, `mypy`, `pytest` — 723).
+
+- [x] **`constants.py`** — `MsoFillType` (+ `fill_type_name`, replacing the local
+  `_shapes._FILL_TYPE_NAMES`), `MsoGradientStyle` (+ `gradient_style_for`/`_name`/
+  `GRADIENT_STYLE_CHOICES`), `MsoPresetGradientType` (24 presets +
+  `preset_gradient_for`/`PRESET_GRADIENT_CHOICES`), `MsoPatternType` (curated subset:
+  percentages 1-12 + structural 13-22, raw-int passthrough for the rest, +
+  `pattern_for`/`pattern_name`/`PATTERN_CHOICES`), `MsoShadowStyle`.
+- [x] **`_shapes.py` — apply helpers + verbs.** `apply_gradient_fill` (one-color /
+  two-color / multi-stop via legacy `GradientStops.Insert` since `Insert2` won't
+  marshal / preset), `apply_picture_fill` (abspath + `FileNotFoundError` precheck),
+  `apply_pattern_fill`, `apply_effect` (shadow individual-property path + `Style=outer`;
+  glow; soft-edge/reflection presets). Public `Shape.set_gradient_fill` /
+  `set_picture_fill` / `set_pattern_fill` / `set_effect` (colors validated up front —
+  `ValueError` before any COM). Reads: `_fill_to_dict` now emits a `type` discriminator
+  + gradient `stops`/`gradient_style` + pattern `pattern`/`back_color`; new
+  `_effects_to_dict` emits active shadow/glow/soft-edge/reflection (the `Transparency`
+  sentinel `-2147483648` → `None`; reads `Shadow.Style`, not the mixed `.Type`); both
+  fold into `shape_to_dict` (`fill` extended, `effects` added).
+- [x] **CLI** — `shape gradient-fill` (`--colors`/`--preset`/`--positions`/`--style`/
+  `--variant`/`--degree`), `shape picture-fill` (`--path`), `shape pattern-fill`
+  (`--pattern`/`--fore`/`--back`), `shape effect` (`--shadow`/`--glow` JSON or "none",
+  `--soft-edge`/`--reflection` int or "none").
+- [x] **MCP** — `ppt_edit` ops `shape_gradient_fill` / `shape_picture_fill` /
+  `shape_pattern_fill` / `shape_set_effect` (params `colors`/`positions`/
+  `gradient_style`/`variant`/`degree`/`preset`/`pattern`/`fore`/`back`/`shadow`/`glow`/
+  `soft_edge`/`reflection`); `_mcp_errors` now maps `FileNotFoundError` → `invalid_args`
+  (a missing picture path is no longer a 500). Flow through `ppt_batch` via `_edit_core`.
+- [x] **Tests** — `tests/test_fills_effects.py` (constants + library), CLI + MCP cases
+  in `test_cli.py` / `test_mcp.py`; existing fill-dict asserts updated for the new
+  `type` key. The fake gained `_FakeGradientStop`/`_FakeGradientStops` + the
+  gradient/pattern/picture methods on `_FakeShapeFill` and the Shadow/Glow/SoftEdge/
+  Reflection namespaces on `_FakeShape`.
+
+**Deferred (the only v1.2 leftovers):** partial-alpha `.Transparency` on a solid fill,
+line `.DashStyle` / arrowheads, and the 3-D effect long tail (`ThreeD` — set/read is
+mostly there but `BevelTopType` didn't honor a post-preset override in the spike).
+
 ## v1.3 — review loop: comments — SHIPPED
 
 The highest-leverage roadmap tier and the one whose COM risk was fully burned down

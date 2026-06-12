@@ -417,6 +417,36 @@ pptlive shape fill --anchor-id shape:4:3 --fill "#1E74B5" --line none
 pptlive shape fill --anchor-id shapeid:4:9 --line "#333333" --line-width 1.5
 ```
 
+### `shape gradient-fill` / `picture-fill` / `pattern-fill`
+
+The non-solid fills (the `fill` read reports a `type` of `gradient`/`picture`/
+`patterned` and, for a gradient, the `stops`). Gradients take `--colors` (one =
+one-color with `--degree` brightness, two = two-color, three+ = multi-stop with
+`--positions` placing the interior stops) **or** a named `--preset`; `--style`
+sets the sweep. Pattern fills take a `--pattern` name plus `--fore`/`--back`.
+
+```bash
+pptlive shape gradient-fill --anchor-id shape:4:3 --colors "#1a73e8,#ffffff" --style vertical
+pptlive shape gradient-fill --anchor-id shape:4:3 --colors "#f00,#0f0,#00f" --positions "0,0.4,1"
+pptlive shape gradient-fill --anchor-id shape:4:3 --preset ocean
+pptlive shape picture-fill  --anchor-id shape:4:3 --path background.png
+pptlive shape pattern-fill  --anchor-id shape:4:3 --pattern percent_50 --fore "#1E74B5" --back "#fff"
+```
+
+### `shape effect`
+
+Set a shape's **shadow / glow / soft-edge / reflection** (the read reports an
+`effects` field with the active ones). `--shadow`/`--glow` take a JSON object;
+`--soft-edge`/`--reflection` take an int preset. Pass `none` to any flag to turn
+that effect off.
+
+```bash
+pptlive shape effect --anchor-id shape:4:3 \
+  --shadow '{"color":"#333333","blur":8,"offset_x":4,"offset_y":4}' \
+  --glow '{"color":"#00AAFF","radius":10}' --soft-edge 4 --reflection 5
+pptlive shape effect --anchor-id shape:4:3 --shadow none   # remove the shadow
+```
+
 ### `shape set-alt`
 
 Set a shape's alternative text — a description you can re-find the shape by

@@ -676,6 +676,242 @@ def color_hex_or_none(value: Any) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Shape fill / effects (v1.2 advanced cut): gradient / pattern / picture fills,
+# shadow / glow / soft-edge / reflection effects. Curated friendly subsets +
+# raw-int passthrough + reverse names — spiked 2026-06-11 (fill_advanced_spike /
+# effects_spike). Added only as the verbs need them (convention #7).
+# ---------------------------------------------------------------------------
+
+
+class MsoFillType(IntEnum):
+    """`Fill.Type` — what kind of fill a shape / background carries (read-back)."""
+
+    MIXED = -2
+    SOLID = 1
+    PATTERNED = 2
+    GRADIENT = 3
+    TEXTURED = 4
+    BACKGROUND = 5
+    PICTURE = 6
+
+
+# Friendly read-back name for a `Fill.Type` int. Shared by the shape-fill,
+# master-background, and slide-background readers (was `_shapes._FILL_TYPE_NAMES`).
+FILL_TYPE_NAMES: dict[int, str] = {
+    int(MsoFillType.MIXED): "mixed",
+    int(MsoFillType.SOLID): "solid",
+    int(MsoFillType.PATTERNED): "patterned",
+    int(MsoFillType.GRADIENT): "gradient",
+    int(MsoFillType.TEXTURED): "textured",
+    int(MsoFillType.BACKGROUND): "background",
+    int(MsoFillType.PICTURE): "picture",
+}
+
+
+def fill_type_name(value: Any) -> str | int | None:
+    """Friendly name for a `Fill.Type` int (`1 -> "solid"`); the int if unknown."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    return FILL_TYPE_NAMES.get(n, n)
+
+
+class MsoGradientStyle(IntEnum):
+    """`Fill.GradientStyle` — the direction a gradient sweeps."""
+
+    MIXED = -2
+    HORIZONTAL = 1
+    VERTICAL = 2
+    DIAGONAL_UP = 3
+    DIAGONAL_DOWN = 4
+    FROM_CORNER = 5
+    FROM_TITLE = 6
+    FROM_CENTER = 7
+
+
+_GRADIENT_STYLES: dict[str, int] = {
+    "horizontal": int(MsoGradientStyle.HORIZONTAL),
+    "vertical": int(MsoGradientStyle.VERTICAL),
+    "diagonal_up": int(MsoGradientStyle.DIAGONAL_UP),
+    "diagonal_down": int(MsoGradientStyle.DIAGONAL_DOWN),
+    "from_corner": int(MsoGradientStyle.FROM_CORNER),
+    "from_title": int(MsoGradientStyle.FROM_TITLE),
+    "from_center": int(MsoGradientStyle.FROM_CENTER),
+}
+
+GRADIENT_STYLE_CHOICES: tuple[str, ...] = (
+    "horizontal",
+    "vertical",
+    "diagonal_up",
+    "diagonal_down",
+    "from_corner",
+    "from_title",
+    "from_center",
+)
+
+_GRADIENT_STYLE_NAMES: dict[int, str] = {v: k for k, v in _GRADIENT_STYLES.items()}
+
+
+def gradient_style_for(style: str | int) -> int:
+    """Friendly gradient-style name (or raw `MsoGradientStyle` int) -> the int.
+
+    `"horizontal"`/`"vertical"`/`"diagonal_up"`/… (case- and separator-insensitive)
+    or a raw int (passed through). Raises `ValueError` for an unknown name —
+    symmetric with `entry_effect_for`.
+    """
+    if isinstance(style, bool):
+        raise ValueError(f"invalid gradient style: {style!r}")
+    if isinstance(style, int):
+        return int(style)
+    found = _GRADIENT_STYLES.get(str(style).strip().lower().replace(" ", "_").replace("-", "_"))
+    if found is None:
+        choices = ", ".join(GRADIENT_STYLE_CHOICES)
+        raise ValueError(f"unknown gradient style {style!r}; expected one of: {choices}")
+    return found
+
+
+def gradient_style_name(value: Any) -> str | int | None:
+    """Friendly name for a `Fill.GradientStyle` int (`1 -> "horizontal"`)."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    return _GRADIENT_STYLE_NAMES.get(n, n)
+
+
+# Curated `MsoPresetGradientType` subset (the 24 named presets; the common ones
+# advertised, the rest reachable by raw int). Names match Office's preset menu.
+_PRESET_GRADIENTS: dict[str, int] = {
+    "early_sunset": 1,
+    "late_sunset": 2,
+    "nightfall": 3,
+    "daybreak": 4,
+    "horizon": 5,
+    "desert": 6,
+    "ocean": 7,
+    "calm_water": 8,
+    "fire": 9,
+    "fog": 10,
+    "moss": 11,
+    "peacock": 12,
+    "wheat": 13,
+    "parchment": 14,
+    "mahogany": 15,
+    "rainbow": 16,
+    "rainbow_ii": 17,
+    "gold": 18,
+    "gold_ii": 19,
+    "brass": 20,
+    "chrome": 21,
+    "chrome_ii": 22,
+    "silver": 23,
+    "sapphire": 24,
+}
+
+PRESET_GRADIENT_CHOICES: tuple[str, ...] = tuple(_PRESET_GRADIENTS)
+
+_PRESET_GRADIENT_NAMES: dict[int, str] = {v: k for k, v in _PRESET_GRADIENTS.items()}
+
+
+def preset_gradient_for(preset: str | int) -> int:
+    """Friendly preset-gradient name (or raw `MsoPresetGradientType` int) -> the int.
+
+    `"ocean"`/`"fire"`/`"rainbow"`/… (case-/separator-insensitive) or a raw int.
+    Raises `ValueError` for an unknown name.
+    """
+    if isinstance(preset, bool):
+        raise ValueError(f"invalid preset gradient: {preset!r}")
+    if isinstance(preset, int):
+        return int(preset)
+    found = _PRESET_GRADIENTS.get(str(preset).strip().lower().replace(" ", "_").replace("-", "_"))
+    if found is None:
+        choices = ", ".join(PRESET_GRADIENT_CHOICES)
+        raise ValueError(f"unknown preset gradient {preset!r}; expected one of: {choices}")
+    return found
+
+
+def preset_gradient_name(value: Any) -> str | int | None:
+    """Friendly name for a `MsoPresetGradientType` int (`7 -> "ocean"`)."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    return _PRESET_GRADIENT_NAMES.get(n, n)
+
+
+# Curated `MsoPatternType` subset — the percentage screens (1-12) and the
+# confidently-named structural patterns (13-22). Exotic patterns ride the
+# raw-int passthrough rather than risking a wrong name->int mapping.
+_PATTERNS: dict[str, int] = {
+    "percent_5": 1,
+    "percent_10": 2,
+    "percent_20": 3,
+    "percent_25": 4,
+    "percent_30": 5,
+    "percent_40": 6,
+    "percent_50": 7,
+    "percent_60": 8,
+    "percent_70": 9,
+    "percent_75": 10,
+    "percent_80": 11,
+    "percent_90": 12,
+    "dark_horizontal": 13,
+    "dark_vertical": 14,
+    "dark_downward_diagonal": 15,
+    "dark_upward_diagonal": 16,
+    "small_checkerboard": 17,
+    "trellis": 18,
+    "light_horizontal": 19,
+    "light_vertical": 20,
+    "light_downward_diagonal": 21,
+    "light_upward_diagonal": 22,
+}
+
+PATTERN_CHOICES: tuple[str, ...] = tuple(_PATTERNS)
+
+_PATTERN_NAMES: dict[int, str] = {v: k for k, v in _PATTERNS.items()}
+
+
+def pattern_for(pattern: str | int) -> int:
+    """Friendly pattern name (or raw `MsoPatternType` int) -> the int.
+
+    `"percent_50"`/`"dark_horizontal"`/`"trellis"`/… (case-/separator-insensitive)
+    or a raw int. Raises `ValueError` for an unknown name.
+    """
+    if isinstance(pattern, bool):
+        raise ValueError(f"invalid pattern: {pattern!r}")
+    if isinstance(pattern, int):
+        return int(pattern)
+    found = _PATTERNS.get(str(pattern).strip().lower().replace(" ", "_").replace("-", "_"))
+    if found is None:
+        choices = ", ".join(PATTERN_CHOICES)
+        raise ValueError(f"unknown pattern {pattern!r}; expected one of: {choices}")
+    return found
+
+
+def pattern_name(value: Any) -> str | int | None:
+    """Friendly name for a `MsoPatternType` int (`7 -> "percent_50"`)."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    return _PATTERN_NAMES.get(n, n)
+
+
+class MsoShadowStyle(IntEnum):
+    """`Shadow.Style` — inner vs outer shadow (the read-back the spike pinned).
+
+    Setting individual shadow props pushes `Shadow.Type` to the `mixed` (-2)
+    sentinel, so `.Style` (not `.Type`) is the reliable read-back.
+    """
+
+    MIXED = -2
+    INNER = 1
+    OUTER = 2
+
+
+# ---------------------------------------------------------------------------
 # Slide render (v0.4): image-export formats
 # ---------------------------------------------------------------------------
 

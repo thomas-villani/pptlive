@@ -335,21 +335,101 @@ class _FakeTextFrame:
         self._paras = [_FakePara(p) for p in str(full).split("\r")]
 
 
+class _FakeGradientStop:
+    """One `Fill.GradientStops(i)` — Position + Transparency + Color.RGB."""
+
+    def __init__(self, rgb: int, position: float, transparency: float = 0.0) -> None:
+        self.Position = float(position)
+        self.Transparency = float(transparency)
+        self.Color = SimpleNamespace(RGB=int(rgb))
+
+
+class _FakeGradientStops:
+    """`Fill.GradientStops` — Count + `(i)` access + legacy `Insert(rgb, position)`.
+
+    Mirrors the spike: `Insert` *appends* a stop (the wrapper / reader sorts by
+    position on read); `Insert2` is the one that won't marshal, so it's absent here.
+    """
+
+    def __init__(self) -> None:
+        self._stops: list[_FakeGradientStop] = []
+
+    @property
+    def Count(self) -> int:
+        return len(self._stops)
+
+    def __call__(self, index: int) -> _FakeGradientStop:
+        return self._stops[int(index) - 1]  # 1-based
+
+    def Insert(self, rgb: int, position: float) -> None:
+        self._stops.append(_FakeGradientStop(rgb, position))
+
+
 class _FakeShapeFill:
-    """`Shape.Fill` — Visible + ForeColor.RGB + Solid().
+    """`Shape.Fill` — solid / gradient / pattern / picture.
 
     Defaults to a visible *theme* fill (the `0x80000000` automatic sentinel, so a
     readback reports `color: None` until a literal RGB is set), matching how a
-    fresh autoshape inherits the theme accent.
+    fresh autoshape inherits the theme accent. The gradient / pattern / picture
+    methods set `Type` and the type-specific read-back fields the wrappers expect
+    (spike-verified in scripts/fill_advanced_spike.py).
     """
 
     def __init__(self) -> None:
         self.Visible = _MSO_TRUE
-        self.Type = 5  # msoFillBackground (theme/inherited) until Solid()
+        self.Type = 5  # msoFillBackground (theme/inherited) until a fill verb runs
         self.ForeColor = SimpleNamespace(RGB=0x80000000)
+        self.BackColor = SimpleNamespace(RGB=0x80000000)
+        self.GradientStyle = -2  # msoGradientMixed until a gradient is set
+        self.GradientVariant = 0
+        self.GradientColorType = 0
+        self.GradientDegree = 0.0
+        self.Pattern = -2  # msoPatternMixed until a pattern is set
+        self.TextureType = 0
+        self.GradientStops = _FakeGradientStops()
+        self.picture_path: str | None = None
 
     def Solid(self) -> None:
         self.Type = 1  # msoFillSolid
+
+    def _two_default_stops(self) -> None:
+        # The two endpoint stops track ForeColor/BackColor (the wrapper sets those
+        # AFTER TwoColorGradient, mirroring real COM), so they share the namespaces.
+        self.GradientStops = _FakeGradientStops()
+        s0 = _FakeGradientStop(0, 0.0)
+        s0.Color = self.ForeColor
+        s1 = _FakeGradientStop(0, 1.0)
+        s1.Color = self.BackColor
+        self.GradientStops._stops = [s0, s1]
+
+    def TwoColorGradient(self, style: int, variant: int) -> None:
+        self.Type = 3  # msoFillGradient
+        self.GradientColorType = 2
+        self.GradientStyle = int(style)
+        self.GradientVariant = int(variant)
+        self._two_default_stops()
+
+    def OneColorGradient(self, style: int, variant: int, degree: float) -> None:
+        self.Type = 3
+        self.GradientColorType = 1
+        self.GradientStyle = int(style)
+        self.GradientVariant = int(variant)
+        self.GradientDegree = float(degree)
+
+    def PresetGradient(self, style: int, variant: int, preset: int) -> None:
+        self.Type = 3
+        self.GradientColorType = 3
+        self.GradientStyle = int(style)
+        self.GradientVariant = int(variant)
+
+    def Patterned(self, pattern: int) -> None:
+        self.Type = 2  # msoFillPatterned
+        self.Pattern = int(pattern)
+
+    def UserPicture(self, path: str) -> None:
+        self.Type = 6  # msoFillPicture
+        self.TextureType = 2
+        self.picture_path = str(path)
 
 
 class _FakeShapeLine:
@@ -441,6 +521,25 @@ class _FakeShape:
         self.AlternativeText = ""
         self.Fill = _FakeShapeFill()
         self.Line = _FakeShapeLine()
+        # Effects (v1.2). Defaults are "off": shadow invisible, glow radius 0,
+        # soft-edge / reflection preset 0. Transparency defaults to the unset
+        # sentinel (-2147483648) the wrapper maps to None on read.
+        self.Shadow = SimpleNamespace(
+            Visible=_MSO_FALSE,
+            Type=1,
+            Style=1,
+            Transparency=-2147483648,
+            Blur=0.0,
+            Size=100.0,
+            OffsetX=0.0,
+            OffsetY=0.0,
+            ForeColor=SimpleNamespace(RGB=0x000000),
+        )
+        self.Glow = SimpleNamespace(
+            Radius=0.0, Transparency=-2147483648, Color=SimpleNamespace(RGB=0x000000)
+        )
+        self.SoftEdge = SimpleNamespace(Type=0, Radius=0.0)
+        self.Reflection = SimpleNamespace(Type=0)
         self._placeholder_type = placeholder_type
         self._table = table
         self._chart: _FakeChart | None = None

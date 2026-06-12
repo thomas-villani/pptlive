@@ -55,6 +55,35 @@ honestly, and sketches the wrapper shape so it slots into the established
 > `follow_master_background()`, the per-slide override of the master; `background` on
 > every slide read). So v1.2/v1.4/v1.5 are each **partway open** now, with their
 > remaining cuts (effects/gradients, sections/headers-footers, animations) still ahead.
+>
+> **Shipped 2026-06-12 (v0.5.0) — v1.2 styling completion.** The advanced fills
+> (**gradient / picture / pattern**) and shape **effects** (**shadow / glow /
+> soft-edge / reflection**) cuts, both spiked 2026-06-11 and now built across all
+> four front-ends as dedicated explicit verbs (`Shape.set_gradient_fill` /
+> `set_picture_fill` / `set_pattern_fill` / `set_effect`; CLI `shape gradient-fill`/
+> `picture-fill`/`pattern-fill`/`effect`; MCP `ppt_edit` `shape_gradient_fill`/
+> `shape_picture_fill`/`shape_pattern_fill`/`shape_set_effect`). Every shape read now
+> carries a `fill.type` discriminator (+ gradient `stops` / pattern detail) and an
+> `effects` field. Live net-zero confirmed (multi-stop reads back sorted; preset
+> "ocean" → a 4-stop ramp; all four effects round-trip). **So v1.2 styling is now
+> complete** — the only fill deferrals left are partial-alpha `.Transparency`, line
+> `.DashStyle`/arrowheads, and the 3-D effect long tail.
+>
+> **Spiked 2026-06-11 (planning round, no code shipped — four net-zero spikes).**
+> De-risked four deferred tiers ahead of building them; every COM behaviour pinned
+> on the live deck (findings inline in the sections below):
+> - **v1.2 advanced fills** (`fill_advanced_spike.py`) — two/one-colour + preset
+>   gradients, multi-stop `GradientStops` (via legacy `Insert`, since `Insert2`
+>   won't marshal), absolute-path picture fill, and pattern fill **all work**.
+> - **v1.2 effects** (`effects_spike.py`) — shadow / glow / soft-edge / reflection
+>   **all round-trip** (no write-only hazard); 3-D is the long tail.
+> - **v1.5 animations** (`animation_spike.py`) — `AddEffect` round-trips
+>   `EffectType` / `Exit` / `Timing` and maps each effect to its `Shape.Id`/`.Name`,
+>   so the whole-shape "fade this in" / "show this" cut (incl. exit + read) is ready.
+> - **Media → narrated-video export** (`media_video_spike.py`) — the **"gold
+>   idea"**: insert audio (`AddMediaObject2`) + auto-play + per-slide pacing, then
+>   `Presentation.CreateVideo` (it **marshals**, unlike PDF's `ExportAsFixedFormat`)
+>   produced a real MP4 end-to-end with **no new dependency**. Candidate for its own tier.
 
 **Status legend:** `[ ]` not started · `[~]` in progress · `[x]` shipped.
 Spike-first remains the rule: confirm each COM behaviour on a live deck, write a
@@ -68,12 +97,13 @@ one-line finding, *then* harden.
 | ---- | ----- | ------- | -------- |
 | **v1.0** | **find / replace + `exec` CLI** | Last wordlive-parity gap; deck-wide search is table-stakes for "change X everywhere" | Low — `TextRange.Find/Replace` exist |
 | **v1.1** | **Output: save & PDF/image export** *(SHIPPED 2026-06-09 — `deck.snapshot()` low-res whole-deck render + `save`/`save_as`/`export_pdf`)* | Trivial COM, huge practical payoff ("export the deck to PDF"); the one thing every agent eventually wants | Low — PDF via `SaveAs(…, ppSaveAsPDF)` (`ExportAsFixedFormat` won't marshal late-bound) |
-| **v1.2** | **Shape styling — fill / line / effects** *(started: solid fill/line + z-order shipped; gradients/effects/per-slide bg open)* | Biggest *authoring* gap: agents can place a shape but can't colour it; blocks good-looking decks | Low-med — fills are easy, gradient stops fiddly |
+| **v1.2** | **Shape styling — fill / line / effects** *(COMPLETE: solid fill/line + z-order + per-slide bg, **gradient/picture/pattern + shadow/glow/soft-edge/reflection shipped v0.5.0**)* | Biggest *authoring* gap: agents can place a shape but can't colour it; blocks good-looking decks | **Done** — all cuts shipped; live net-zero confirmed |
 | **v1.3** | **Review loop — comments** *(SHIPPED 2026-06-09 — read + add/reply/delete, threaded; resolve-state not COM-readable)* | "Address the reviewer's comments" is a killer workflow; read is side-effect-free & polite | **Low** — read (incl. threads), add & reply all verified live; comment-less-deck identity solved via legacy-`Add` fallback |
 | **v1.4** | **Navigation & structure — hyperlinks, sections, headers/footers** | Makes multi-slide decks navigable and organized | Low |
-| **v1.5** | **Motion — transitions & animations** | Polish; transitions are trivial, animations are the long tail | Med — `TimeLine` effect enums are large/fiddly |
+| **v1.5** | **Motion — transitions & animations** *(transitions shipped; animations spiked 2026-06-11, whole-shape cut ready)* | Polish; transitions are trivial, animations are the long tail | **Low-med** — spike confirmed `AddEffect` round-trips; only per-paragraph/motion-path stays fiddly |
 | **v1.6** | **Text-model reliability — safe formatting, diagnostics, recovery** | Hardens the authoring loop agents *already* use; the gpt-5.4 review's top ask | Low — mostly `LineRule*` bools + reads; the reset primitive needs a spike |
-| **opportunistic** | deeper tables/charts, arrangement, media, tags, metadata | Pull in on demand when a workflow needs it | varies |
+| **v1.7** | **Automated presentation development — media + narrated-video export** *(spiked 2026-06-11, end-to-end MP4 proven)* | The "gold idea": an agent builds a deck, narrates it, and hands back a **video** — the highest-ceiling capability, and uniquely a *live-app* one | **Low** — spike confirmed `AddMediaObject2` + `CreateVideo` both marshal; no new dependency |
+| **opportunistic** | deeper tables/charts, arrangement, tags, metadata, OLE embeds | Pull in on demand when a workflow needs it | varies |
 | **deferred** | events / async; v0.8/v0.9 follow-ups | Real but lower leverage | — |
 
 The split below each tier follows the IMPLEMENTATION.md house style: wrapper +
@@ -219,12 +249,60 @@ v0.3's `format_text` and v0.9's theme palette.
   Wired library + CLI (`shape fill`, `shape add --fill/--line/--line-width`) + MCP
   (`format` `fill_color`/`line_color`/`line_width`, `shape_add`). Reuses
   `parse_color`/`color_hex` (R-low-byte RGB long). **Still open:** `.Transparency`
-  (partial alpha), gradient (`.OneColorGradient`/`.TwoColorGradient`/`.PresetGradient`
-  + `.GradientStops`), picture (`.UserPicture(path)`), patterned fills, and line
-  `.DashStyle` / arrowheads — the fiddly/long-tail cuts below.
-- [ ] **Effects (second cut):** `Shape.Shadow` (`MsoShadowFormat`),
-  `.Glow`, `.SoftEdge`, `.Reflection`, `.ThreeD`. Start with shadow (the common
-  ask); the rest are opportunistic.
+  (partial alpha) and line `.DashStyle` / arrowheads — and the gradient / picture /
+  pattern cut, now **spiked & de-risked** (next bullet).
+- [x] **Gradient / picture / pattern fills — SHIPPED (v0.5.0, 2026-06-12).**
+  Dedicated `Shape.set_gradient_fill` / `set_picture_fill` / `set_pattern_fill`
+  verbs + a `fill.type` discriminator on every shape read; live net-zero confirmed
+  (multi-stop reads back sorted, preset "ocean" → a 4-stop ramp). See
+  `IMPLEMENTATION.md` §v1.2-advanced. The spike findings that shaped it:
+  All three deferred fill types work over the same `MsoFillFormat` surface the solid
+  cut uses:
+  - **Gradients:** `Fill.TwoColorGradient(style, variant)` then `ForeColor.RGB` /
+    `BackColor.RGB` (`Type`→3 gradient, `GradientColorType`→2, exactly 2 stops at
+    0.0/1.0); `Fill.OneColorGradient(style, variant, degree)` (`GradientColorType`→1,
+    and the **only** type where `GradientDegree` reads back — it *raises* on read for
+    the other two, so guard it); `Fill.PresetGradient(style, variant, presetType)`
+    (`GradientColorType`→3, emits the preset's multi-stop ramp). `GradientStyle` /
+    `GradientVariant` round-trip.
+  - **GradientStops (multi-stop):** fully **readable** — `.Count` + each stop's
+    `.Position` (0..1), `.Transparency`, `.Color.RGB`. Writing: **`Insert2(...)` FAILS**
+    ("index out of bounds") under late-bound dispatch — but the **legacy `Insert(rgb,
+    position)` works** (it *appends* at the end of the collection regardless of
+    position, so read stops back **sorted by `.Position`**). Same modern-variant-flaky /
+    legacy-reliable pattern as v1.0's `Replace`/`Add2`. So multi-stop is achievable.
+  - **Picture fill:** `Fill.UserPicture(absPath)` → `Type`→6 (msoFillPicture),
+    `TextureType`→2. **Relative path FAILS** (`ERROR_FILE_NOT_FOUND`) — the predicted
+    `Export` footgun recurs, so the wrapper must `os.path.abspath` first.
+  - **Pattern fill:** `Fill.Patterned(MsoPatternType)` + `ForeColor`/`BackColor`
+    → `Type`→2 (msoFillPatterned), `Pattern` reads back the int.
+  - **Build:** one `set_fill` extension — `fill="grad:#aaa,#bbb[@style]"` /
+    `fill="pic:PATH"` / `fill="pat:NAME,#fg,#bg"` style, or explicit kwargs; read emits
+    a `fill.type` discriminator (`solid`/`gradient`/`picture`/`pattern`) + the stops.
+    Constants: `MsoFillType`, `MsoGradientStyle`, `MsoPresetGradientType`, `MsoPatternType`.
+- [x] **Effects (second cut) — SHIPPED (v0.5.0, 2026-06-12).**
+  `Shape.set_effect(shadow=/glow=/soft_edge=/reflection=)` + an `effects` field on
+  every shape read (active effects only); live net-zero confirmed all four
+  round-trip. See `IMPLEMENTATION.md` §v1.2-advanced. The spike findings: the
+  roadmap's feared "write-only / non-round-tripping" hazard does **not** materialize
+  for the common effects:
+  - **Shadow** (`Shape.Shadow`): the **individual-property path** round-trips cleanly —
+    `.Visible`, `.ForeColor.RGB`, `.Transparency`, `.Blur`, `.Size`, `.OffsetX/Y`, and
+    `.Style` (→2 outer). Caveat: setting individual props pushes the **`.Type` preset
+    read-back to `-2` (msoShadowMixed)** — so read `.Style` + the props, not `.Type`;
+    and default (invisible) `Transparency` reads the `-2147483648` sentinel (guard it).
+  - **Glow** (`Shape.Glow`): clean round-trip — `.Color.RGB`, `.Radius` (0 = off),
+    `.Transparency`.
+  - **SoftEdge** (`Shape.SoftEdge`): clean — `.Type` preset (0..6) **and** the derived
+    `.Radius` both read back.
+  - **Reflection** (`Shape.Reflection`): clean — `.Type` preset (0..9) reads back.
+  - **ThreeD** (`Shape.ThreeD`): `SetThreeDFormat(preset)` + `.Depth`/bevels set and
+    mostly read back (`BevelTopType` didn't honor a post-preset override — minor); the
+    genuine **long tail**, defer past shadow/glow/soft-edge/reflection.
+  - **Build:** `Shape.set_effect(shadow=/glow=/soft_edge=/reflection=)` (each a small
+    friendly dict or `"none"`), every shape read emits the present effects. Start with
+    shadow (the common ask). Constants: `MsoShadowType`/`MsoShadowStyle`, glow/soft-edge/
+    reflection are radius/preset ints.
 - [x] **Per-slide background — SHIPPED (v0.4.0).** `Slide.FollowMasterBackground
   = msoFalse` + `Slide.Background.Fill` — the per-slide override of v0.9's master
   background (which is deck-wide). Same `MsoFillFormat` surface as shape fill, so it
@@ -243,10 +321,13 @@ v0.3's `format_text` and v0.9's theme palette.
   `shape_set_fill`/`shape_set_line` ops. The remaining `--fill-gradient`/
   `--line-dash`/`--shadow` knobs land with their cuts above. All through
   `deck.edit()`.
-- **Spike:** gradient stops are the fiddly bit (`GradientStops.Insert2(color,
-  position, transparency, brightness)` ordering/clearing) — ship **solid + line +
-  simple two-colour gradient** first, defer multi-stop. Confirm `UserPicture`
-  takes an absolute path (the `Export` relative-path footgun likely recurs).
+- **Spike — DONE (2026-06-11).** Both open questions answered: gradient stops are
+  fiddly because **`Insert2` won't marshal** — use the legacy `Insert(color,
+  position)` and read stops back **sorted by `.Position`**; and `UserPicture`
+  **does** require an absolute path (relative raises `ERROR_FILE_NOT_FOUND`). So the
+  build can ship **solid + line + two-colour + preset + multi-stop (via `Insert`) +
+  picture + pattern** in one cut — the only deferral left is partial-alpha
+  `.Transparency` and line `.DashStyle`/arrowheads.
 
 ---
 
@@ -374,17 +455,30 @@ trivial; animations are the genuine long tail** — split accordingly.
   BOTH `AdvanceOnTime=msoTrue` AND `AdvanceTime=<seconds>`** (default
   `AdvanceOnClick=msoTrue`/`AdvanceOnTime=msoFalse`), so `advance_after=N` sets
   `AdvanceOnTime=-1` + `AdvanceTime=N` together. *Animations (next item) stay deferred.*
-- [ ] **Animations (fiddly, second cut).** Modern path: `Slide.TimeLine.
-  MainSequence.AddEffect(Shape, EffectId, Level, Trigger)` →
-  `Effect.Timing`/`.EffectType`/`.Exit`/`.EffectParameters`. `MsoAnimEffect` is a
-  **huge** enum and the trigger/timing model is intricate. Start with
-  **entrance/exit/emphasis on a whole shape** (the 80% ask: "fade this in"),
-  defer per-paragraph and motion-path effects. **Spike:** read-back fidelity
-  (does an `AddEffect` round-trip its `EffectType`/`Timing`, or is some of it
-  write-only like SmartArt assistant nodes?) before promising a `read()`.
-- **Caveat:** like SmartArt, expect some properties to be **write-only /
-  non-round-tripping** — find them in the spike and scope the first cut to what
-  reconstructs.
+- [~] **Animations — SPIKE CONFIRMED (2026-06-11, `scripts/animation_spike.py`,
+  net-zero); the whole-shape cut round-trips, ready to build.** The open question
+  ("does `AddEffect` round-trip, or is it write-only like SmartArt assistant nodes?")
+  is **answered: it round-trips fully** — no write-only hazard for the common asks.
+  - **Add:** `Slide.TimeLine.MainSequence.AddEffect(Shape, EffectId, Level=0,
+    Trigger)`. The two headline asks: **"fade this in"** = `AddEffect(shape,
+    msoAnimEffectFade=10, 0, onClick=1)`; **"show this"** = `AddEffect(shape,
+    msoAnimEffectAppear=1, 0, trigger)`. `MsoAnimTriggerType`: onPageClick=1,
+    withPrevious=2, afterPrevious=3.
+  - **Read back (all clean):** the returned `Effect` exposes `.EffectType` (fade=10 /
+    appear=1 survive), `.Exit`, `.Shape.Id` **+ `.Shape.Name`** (maps each effect back
+    to its shape — the key to a `slide.animations` read: *"Rectangle 1 fades in
+    after previous"*), and `.Timing.Duration` / `.TriggerType` / `.TriggerDelayTime` /
+    `.Speed` — all round-trip. `MainSequence.Count` + `MainSequence(i)` iterate the
+    whole sequence; `Effect.Delete()` drops the count.
+  - **Tune + exit:** `Effect.Timing.Duration = 2.0` and `.TriggerType` round-trip; an
+    **exit** effect is the *same* enum + **`Effect.Exit = msoTrue`** (reads back -1) —
+    so entrance *and* exit ("fade this out") fall out of one verb.
+  - **Build:** `Shape.animate(effect="fade"|"appear"|..., *, trigger="on_click"|
+    "with_previous"|"after_previous", duration=, exit=False)` + `slide.animations`
+    read + `Shape.clear_animations()`. Curated `MsoAnimEffect` subset (the
+    `chart_type_for`/transition pattern) + raw-int passthrough. **Defer** the long tail:
+    per-paragraph `Level`, motion paths, and `EffectParameters` (untested — likely the
+    one genuinely fiddly corner).
 
 ---
 
@@ -493,6 +587,68 @@ agents *already* use trustworthy, rather than adding surface they don't yet have
 
 ---
 
+## v1.7 — automated presentation development: media + narrated video
+
+The **highest-ceiling** capability and the one most native to pptlive's reason for
+existing: an agent builds a deck, drops a **spoken narration** on each slide, and
+exports a finished **video** — a self-running presentation produced end-to-end from
+a prompt. `python-pptx` can author the slides on disk but cannot drive the **video
+encoder** (a live-app-only COM service), so this is a capability the file-based
+sibling structurally *cannot* have. Promoted out of "opportunistic media" once the
+2026-06-11 spike proved the whole chain works on pure COM with **no new dependency**.
+
+> **Why it's a tier, not a one-liner.** The three pieces (embed audio, auto-play +
+> pace, encode video) compose into a single agent workflow — "turn these talking
+> points into a narrated explainer video" — that nothing else in the object model
+> reaches. It also pairs naturally with an LLM **TTS** step upstream (the agent writes
+> the script, synthesizes speech to a `.wav`/`.mp3`, then this tier embeds + renders).
+
+- [~] **Insert media — `slide.add_audio(path)` / `slide.add_video(path)` — SPIKE
+  CONFIRMED (2026-06-11, `scripts/media_video_spike.py`, net-zero).**
+  `Shapes.AddMediaObject2(FileName, LinkToFile=False, SaveWithDocument=True, Left,
+  Top, Width, Height)` embeds the clip → `Shape.MediaType`→2 (sound) / 3 (movie);
+  **`Shape.MediaFormat.Length` reads the clip duration in ms** (the lever for slide
+  pacing), with `Muted`/`Volume`/`StartPoint`/`EndPoint` readable. `LinkToFile=False`
+  + `SaveWithDocument=True` embeds (portable deck); expose `link=` for the
+  link-don't-embed case. Absolute path (the picture-fill footgun almost certainly
+  recurs — resolve it in the wrapper).
+- [~] **Auto-play + per-slide pacing — SPIKE CONFIRMED.**
+  `Shape.AnimationSettings.PlaySettings.PlayOnEntry = msoTrue` makes the narration
+  play on slide entry (reads back -1), `HideWhileNotPlaying` hides the speaker icon;
+  pace the slide to the clip with `SlideShowTransition.AdvanceOnTime = msoTrue` +
+  `.AdvanceTime = clip_seconds` (reuses the v0.4.0 transition surface). So
+  `add_audio(path, *, auto_play=True, pace_slide=True)` reads `MediaFormat.Length`
+  and sets the advance time for you — the deck self-times to its narration.
+- [~] **Export to video — `deck.export_video(path)` — SPIKE CONFIRMED; the key
+  surprise is it *marshals*.** Unlike PDF's `ExportAsFixedFormat` (which won't pass
+  the late-bound `_com` dispatch, forcing PDF through `SaveAs`), **`Presentation.
+  CreateVideo` has an all-scalar signature and marshals cleanly:**
+  `CreateVideo(FileName, UseTimingsAndNarrations=True, DefaultSlideDuration,
+  VertResolution, FramesPerSecond, Quality)`. It is **async** — poll
+  `Presentation.CreateVideoStatus` (`PpMediaTaskStatus`: None=0, InProgress=1,
+  Queued=2, Done=3, Failed=4); the spike saw Queued→InProgress→Done in ~3 s for a
+  480p clip and wrote a real 183 KB `.mp4`. It is a **read** (exports the whole deck,
+  no mutation, no rebind, dirty flag preserved) — same contract as `export_pdf`. The
+  wrapper returns immediately with a pollable status **and** offers a blocking
+  `wait=True` convenience that pumps `CreateVideoStatus` to terminal. Alternates noted
+  but not adopted: `SaveAs(path, ppSaveAsMP4=39 / ppSaveAsWMV=37)` (no status handle).
+- **Constants:** `PpMediaType` (sound=2 / movie=3), `PpMediaTaskStatus`
+  (None/InProgress/Queued/Done/Failed), and the `ppSaveAsMP4=39`/`ppSaveAsWMV=37`
+  alternates folded into `PpSaveAsFileType` — added as each verb needs them.
+- **CLI/MCP:** CLI `media add --audio/--video PATH [--no-autoplay] [--no-pace]` and
+  `export-video PATH [--resolution/--fps/--quality/--no-timings] [--wait]`; MCP
+  `ppt_edit` `media_add` + `ppt_render` `export_video` (returns the task status, or
+  the finished path when `wait`). The encode is async, so the non-wait MCP form
+  returns a status the agent can poll on a later call.
+- **Open questions for the build spike:** (1) does `CreateVideoStatus` distinguish a
+  *failed* encode cleanly enough to map to an exit code (the spike only saw the happy
+  path)? (2) video **embed** size — `SaveWithDocument=True` on a large `.mp4` bloats
+  the deck; document the link-vs-embed tradeoff. (3) overlap with **recorded
+  narration** (`SlideShowSettings`/`.PlayNarration`) — `AddMediaObject2` + per-slide
+  audio is the simpler, more controllable path, but note the native record path exists.
+
+---
+
 ## Opportunistic — pull in when a workflow needs it
 
 Real features, lower or situational leverage. Build on demand rather than
@@ -521,8 +677,10 @@ speculatively.
   (`Shapes.AddConnector` + `ConnectorFormat.BeginConnect(shape, site)`) for
   agent-built diagrams. Note: grouping **changes z-order indices** — interacts with
   the `shape:S:N` drift hazard (now mitigable via `shapeid:S:ID`, below); document it.
-- [ ] **Media.** `Shapes.AddMediaObject2` (video/audio embed/link),
-  `Shapes.AddOLEObject`. Niche but occasionally asked.
+- **Media + narrated-video export — PROMOTED to its own tier, [v1.7](#v17--automated-presentation-development-media--narrated-video).**
+  The spike (2026-06-11) proved the *build-deck → narrate → export MP4* chain works
+  end-to-end on pure COM with no new dependency, so it graduated from this bucket.
+- [ ] **OLE / other embeds.** `Shapes.AddOLEObject`. Niche; pull in on demand.
 - [~] **Durable re-identification handle — `shapeid:S:ID` SHIPPED (2026-06-08,
   PPTLIVE-010); file-persisted Tags still open.** `slide.shapes.by_id(ID)` /
   `anchor_by_id("shapeid:S:ID")` resolves a shape by its stable `Shape.Id` (the
@@ -594,9 +752,12 @@ are near-free and high-value (parity + export). v1.2 (styling) is the gate to
 *good-looking* agent output. v1.3 (comments) is the gate to *collaborative*
 decks — and carries the one genuine COM risk worth spiking before committing
 (modern threaded comments may simply not be COM-visible). v1.4/v1.5 round out
-navigation and motion. Everything below the line is real but waits for a concrete
-workflow to pull it in — the same demand-driven discipline that kept the
-constants module from being pre-populated.
+navigation and motion. v1.7 (media + narrated video) is the **highest ceiling** —
+"automated presentation development", an agent that hands back a finished video —
+and now de-risked, though it sits after the authoring tiers that feed it (you
+narrate a deck you can first *build* and *style*). Everything below the line is real
+but waits for a concrete workflow to pull it in — the same demand-driven discipline
+that kept the constants module from being pre-populated.
 
 When in doubt, the rule that built v0–v0.9 still holds: **open the equivalent
 wordlive module if one exists, spike the COM behaviour on a live deck, write the

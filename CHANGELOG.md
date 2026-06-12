@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-06-12
+
+### Added
+
+The **v1.2 styling-completion** release: advanced fills and shape effects, the
+authoring surface that lets an agent make a slide actually look designed. Both
+cuts were de-risked first by the 2026-06-11 spikes (`scripts/fill_advanced_spike.py`,
+`scripts/effects_spike.py`) and shipped across all four front-ends with dedicated,
+explicit verbs (not a string mini-DSL).
+
+- **Gradient fills.** `Shape.set_gradient_fill(colors, *, positions=, style=,
+  variant=, degree=, preset=)` — one color (a one-color gradient with a `degree`
+  brightness), two colors (a two-color gradient), three+ colors (multi-stop, with
+  optional `positions` 0..1 placing the interior stops), or a named `preset`
+  (`"ocean"`/`"fire"`/`"rainbow"`/… — 24 presets). `style` picks the sweep
+  (`"horizontal"`/`"vertical"`/`"diagonal_up"`/…). Multi-stop rides the legacy
+  `GradientStops.Insert` (the spike found `Insert2` won't marshal); stops read back
+  sorted by position.
+- **Picture fills.** `Shape.set_picture_fill(path)` — fill a shape with an image
+  (resolved to an absolute path, the relative-path footgun the spike confirmed; a
+  missing file raises `FileNotFoundError`).
+- **Pattern fills.** `Shape.set_pattern_fill(pattern, *, fore, back=)` — a two-color
+  pattern (`"percent_50"`, `"trellis"`, `"dark_horizontal"`, … or a raw
+  `MsoPatternType` int).
+- **Shape effects.** `Shape.set_effect(*, shadow=, glow=, soft_edge=, reflection=)` —
+  a drop `shadow` (`{color, transparency, blur, size, offset_x, offset_y}`), a `glow`
+  (`{color, radius, transparency}`), a `soft_edge` (0-6 preset), and/or a `reflection`
+  (0-9 preset); pass `"none"` to turn one off. The spike confirmed all four round-trip
+  (no write-only hazard); the read uses `Shadow.Style` (not `.Type`, which goes mixed).
+- **Richer fill/effect reads.** Every shape read's `fill` now carries a `type`
+  discriminator (`solid`/`gradient`/`patterned`/`picture`/…) plus type-specific detail
+  (gradient `stops` + `gradient_style`; pattern `pattern` + `back_color`), and a new
+  `effects` field surfaces the shape's active shadow/glow/soft-edge/reflection.
+- **CLI.** `shape gradient-fill` / `shape picture-fill` / `shape pattern-fill` /
+  `shape effect`.
+- **MCP.** `ppt_edit` ops `shape_gradient_fill` / `shape_picture_fill` /
+  `shape_pattern_fill` / `shape_set_effect`. A missing picture path now maps to a clean
+  `invalid_args` (not a 500).
+
+### Constants
+
+`MsoFillType` (+ `fill_type_name`), `MsoGradientStyle` (+ `gradient_style_for` /
+`gradient_style_name` / `GRADIENT_STYLE_CHOICES`), `MsoPresetGradientType` (+
+`preset_gradient_for` / `PRESET_GRADIENT_CHOICES`), `MsoPatternType` (+ `pattern_for` /
+`pattern_name` / `PATTERN_CHOICES`), `MsoShadowStyle`.
+
 ## [0.4.0] — 2026-06-10
 
 ### Added
