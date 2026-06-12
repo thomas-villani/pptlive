@@ -94,9 +94,10 @@ def _mcp_errors() -> Iterator[None]:
         raise ToolError(str(exc)) from exc
     except PptliveError as exc:
         raise ToolError(f"{type(exc).__name__} ({_error_code(exc)}): {exc}") from exc
-    except ValueError as exc:
+    except (ValueError, FileNotFoundError) as exc:
         # Library-level input validation (e.g. a line_spacing multiple > 5, an
-        # out-of-range indent level) — surface as invalid_args, not a 500.
+        # out-of-range indent level, a missing picture/picture-fill path) — surface
+        # as invalid_args, not a 500.
         raise ToolError(f"invalid_args: {exc}") from exc
 
 
@@ -268,6 +269,26 @@ def ppt_edit(
     fill_color: str | None = None,
     line_color: str | None = None,
     line_width: float | None = None,
+    fill_transparency: float | None = None,
+    line_transparency: float | None = None,
+    colors: list[Any] | None = None,
+    positions: list[float] | None = None,
+    gradient_style: str | None = None,
+    variant: int | None = None,
+    degree: float | None = None,
+    preset: str | None = None,
+    pattern: str | None = None,
+    fore: str | None = None,
+    back: str | None = None,
+    shadow: Any | None = None,
+    glow: Any | None = None,
+    soft_edge: int | None = None,
+    reflection: int | None = None,
+    dash: str | None = None,
+    begin_arrow: str | None = None,
+    end_arrow: str | None = None,
+    begin_arrow_size: str | None = None,
+    end_arrow_size: str | None = None,
     url: str | None = None,
     screen_tip: str | None = None,
     effect: str | None = None,
@@ -334,7 +355,9 @@ def ppt_edit(
     - "format": font (`bold`/`italic`/`underline`/`size`/`font`/`color` — `color` is
       *font* color), paragraph, shape fill/border on a shape anchor
       (`fill_color`/`line_color` — a hex or "none" for transparent/no border;
-      `line_width` in points), and/or list (`list_type` "bulleted"/"numbered", or
+      `line_width` in points; `fill_transparency`/`line_transparency` — a 0..1 alpha,
+      0 opaque, 1 fully transparent, the partial-alpha knob distinct from "none"),
+      and/or list (`list_type` "bulleted"/"numbered", or
       "none" to strip; `bullet_char` for a custom bullet). Paragraph spacing is
       **unit-explicit** — `line_spacing` is a MULTIPLE (1.5), `line_spacing_points`
       is EXACT POINTS (24); `space_before`/`space_after` are points and
@@ -382,6 +405,28 @@ def ppt_edit(
       `url` (external URL/file/mailto) or `slide` (1-based in-deck jump, e.g. a
       "back to agenda" button); optional `screen_tip` hover text. A shape needs no
       text frame to carry a link. "shape_remove_hyperlink": clear the link.
+
+    Advanced fills & effects (target the shape by `anchor_id`; distinct from the
+    solid `fill_color`/`line_color` on op="format"):
+    - "shape_gradient_fill": gradient fill. Pass `colors` (list of hex/`[r,g,b]`) —
+      one=one-color (optional `degree` 0..1 brightness), two=two-color, three+=
+      multi-stop with optional `positions` (floats 0..1 placing the interior stops) —
+      OR `preset` (a named ramp: "ocean"/"fire"/"rainbow"/…). `gradient_style`
+      ("horizontal"/"vertical"/"diagonal_up"/…) and `variant` (1-4) set the sweep.
+    - "shape_picture_fill": fill with an image at `path` (resolved to absolute).
+    - "shape_pattern_fill": two-color pattern — `pattern` (e.g. "percent_50",
+      "trellis", "dark_horizontal"), `fore` color, optional `back` color.
+    - "shape_set_effect": shadow / glow / soft-edge / reflection. `shadow` and `glow`
+      are objects ({color?, transparency?, blur?, size?, offset_x?, offset_y?} /
+      {color?, radius?, transparency?}); `soft_edge` is a 0-6 int preset and
+      `reflection` a 0-9 int (0 = off). Pass "none" for `shadow`/`glow` to remove it.
+      Active effects read back under each shape's `effects`.
+    - "shape_line_style": line `dash` ("solid"/"dash"/"round_dot"/"dash_dot"/
+      "long_dash"/…) and/or arrowheads. `begin_arrow`/`end_arrow` are styles
+      ("none"/"triangle"/"open"/"stealth"/"diamond"/"oval"); `begin_arrow_size`/
+      `end_arrow_size` are "small"/"medium"/"large". Arrowheads apply to
+      lines/connectors only (a closed shape errors — use `dash` there). Reads back
+      under each shape's `line` (`dash`/`begin_arrow`/`end_arrow`).
 
     Tables, charts & SmartArt (target the shape by its `anchor_id`, a shape:S:N):
     - "table_add_row": append a row, optionally filled from `values`.
@@ -453,6 +498,26 @@ def ppt_edit(
         "fill_color": fill_color,
         "line_color": line_color,
         "line_width": line_width,
+        "fill_transparency": fill_transparency,
+        "line_transparency": line_transparency,
+        "colors": colors,
+        "positions": positions,
+        "gradient_style": gradient_style,
+        "variant": variant,
+        "degree": degree,
+        "preset": preset,
+        "pattern": pattern,
+        "fore": fore,
+        "back": back,
+        "shadow": shadow,
+        "glow": glow,
+        "soft_edge": soft_edge,
+        "reflection": reflection,
+        "dash": dash,
+        "begin_arrow": begin_arrow,
+        "end_arrow": end_arrow,
+        "begin_arrow_size": begin_arrow_size,
+        "end_arrow_size": end_arrow_size,
         "url": url,
         "screen_tip": screen_tip,
         "effect": effect,

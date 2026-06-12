@@ -114,6 +114,11 @@ class EditOp(StrEnum):
     SHAPE_DELETE = "shape_delete"
     SHAPE_ORDER = "shape_order"
     SHAPE_RESET_LAYOUT = "shape_reset_layout"
+    SHAPE_GRADIENT_FILL = "shape_gradient_fill"
+    SHAPE_PICTURE_FILL = "shape_picture_fill"
+    SHAPE_PATTERN_FILL = "shape_pattern_fill"
+    SHAPE_SET_EFFECT = "shape_set_effect"
+    SHAPE_LINE_STYLE = "shape_line_style"
     SHAPE_SET_HYPERLINK = "shape_set_hyperlink"
     SHAPE_REMOVE_HYPERLINK = "shape_remove_hyperlink"
     SLIDE_SET_TRANSITION = "slide_set_transition"
@@ -391,7 +396,7 @@ def _edit_format(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
         "line_spacing_points",
         "indent_level",
     )
-    fill_opts = ("fill_color", "line_color", "line_width")
+    fill_opts = ("fill_color", "line_color", "line_width", "fill_transparency", "line_transparency")
     list_type = p.get("list_type")
     _require(
         any(p.get(k) is not None for k in font_opts + para_opts + fill_opts)
@@ -430,6 +435,8 @@ def _edit_format(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
             fill=p.get("fill_color"),
             line=p.get("line_color"),
             line_width=p.get("line_width"),
+            fill_transparency=p.get("fill_transparency"),
+            line_transparency=p.get("line_transparency"),
         )
     if list_type == "none":
         anchor.remove_list()
@@ -604,6 +611,78 @@ def _edit_shape_reset_layout(deck: Presentation, p: dict[str, Any]) -> dict[str,
     sh = _resolve_shape(deck, p.get("anchor_id"))
     restored = sh.reset_to_layout()
     return {"ok": True, "anchor_id": sh.anchor_id, "restored": restored}
+
+
+@edit_op(EditOp.SHAPE_GRADIENT_FILL)
+def _edit_shape_gradient_fill(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    sh = _resolve_shape(deck, p.get("anchor_id"))
+    _require(
+        p.get("colors") is not None or p.get("preset") is not None,
+        "edit op='shape_gradient_fill' requires `colors` or `preset`",
+    )
+    sh.set_gradient_fill(
+        p.get("colors"),
+        positions=p.get("positions"),
+        style=p.get("gradient_style") or "horizontal",
+        variant=p.get("variant") or 1,
+        degree=p.get("degree"),
+        preset=p.get("preset"),
+    )
+    return {"ok": True, "anchor_id": sh.anchor_id, "fill": sh.to_dict().get("fill")}
+
+
+@edit_op(EditOp.SHAPE_PICTURE_FILL)
+def _edit_shape_picture_fill(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    sh = _resolve_shape(deck, p.get("anchor_id"))
+    _require(p.get("path") is not None, "edit op='shape_picture_fill' requires `path`")
+    sh.set_picture_fill(p["path"])
+    return {"ok": True, "anchor_id": sh.anchor_id, "fill": sh.to_dict().get("fill")}
+
+
+@edit_op(EditOp.SHAPE_PATTERN_FILL)
+def _edit_shape_pattern_fill(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    sh = _resolve_shape(deck, p.get("anchor_id"))
+    _require(p.get("pattern") is not None, "edit op='shape_pattern_fill' requires `pattern`")
+    _require(p.get("fore") is not None, "edit op='shape_pattern_fill' requires `fore` color")
+    sh.set_pattern_fill(p["pattern"], fore=p["fore"], back=p.get("back"))
+    return {"ok": True, "anchor_id": sh.anchor_id, "fill": sh.to_dict().get("fill")}
+
+
+@edit_op(EditOp.SHAPE_SET_EFFECT)
+def _edit_shape_set_effect(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    sh = _resolve_shape(deck, p.get("anchor_id"))
+    _require(
+        any(p.get(k) is not None for k in ("shadow", "glow", "soft_edge", "reflection")),
+        "edit op='shape_set_effect' needs at least one of shadow / glow / soft_edge / reflection",
+    )
+    sh.set_effect(
+        shadow=p.get("shadow"),
+        glow=p.get("glow"),
+        soft_edge=p.get("soft_edge"),
+        reflection=p.get("reflection"),
+    )
+    return {"ok": True, "anchor_id": sh.anchor_id, "effects": sh.to_dict().get("effects")}
+
+
+@edit_op(EditOp.SHAPE_LINE_STYLE)
+def _edit_shape_line_style(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    sh = _resolve_shape(deck, p.get("anchor_id"))
+    _require(
+        any(
+            p.get(k) is not None
+            for k in ("dash", "begin_arrow", "end_arrow", "begin_arrow_size", "end_arrow_size")
+        ),
+        "edit op='shape_line_style' needs at least one of dash / begin_arrow / end_arrow / "
+        "begin_arrow_size / end_arrow_size",
+    )
+    sh.set_line_style(
+        dash=p.get("dash"),
+        begin_arrow=p.get("begin_arrow"),
+        end_arrow=p.get("end_arrow"),
+        begin_arrow_size=p.get("begin_arrow_size"),
+        end_arrow_size=p.get("end_arrow_size"),
+    )
+    return {"ok": True, "anchor_id": sh.anchor_id, "line": sh.to_dict().get("line")}
 
 
 @edit_op(EditOp.SHAPE_SET_HYPERLINK)

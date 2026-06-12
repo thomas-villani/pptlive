@@ -27,19 +27,31 @@ from typing import TYPE_CHECKING, Any
 from . import _com
 from ._anchors import Anchor, Paragraph, ParagraphCollection
 from .constants import (
+    MsoShadowStyle,
     MsoShapeType,
     MsoTextOrientation,
     MsoTriState,
     PpActionType,
     PpMouseActivation,
+    arrowhead_size_for,
+    arrowhead_style_for,
+    arrowhead_style_name,
     autoshape_type_for,
     autosize_name,
     chart_type_for,
     color_hex_or_none,
+    dash_style_for,
+    dash_style_name,
+    fill_type_name,
+    gradient_style_for,
+    gradient_style_name,
     is_true,
     parse_color,
+    pattern_for,
+    pattern_name,
     placeholder_kind_name,
     placeholder_types_for,
+    preset_gradient_for,
     shape_image_filter_for,
     shape_type_name,
     smartart_layout_for,
@@ -247,22 +259,40 @@ def _precheck_fill(fill: Any, line: Any) -> None:
         parse_color(line)
 
 
+def _check_transparency(value: float | None, label: str) -> None:
+    """A transparency must be a `0.0..1.0` fraction (ValueError before any COM)."""
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be a number in [0, 1], got {value!r}")
+    if not 0.0 <= float(value) <= 1.0:
+        raise ValueError(
+            f"{label} must be in [0, 1] (0 opaque, 1 fully transparent), got {value!r}"
+        )
+
+
 def apply_shape_fill(
     com_shape: Any,
     *,
     fill: str | int | tuple[int, int, int] | None = None,
     line: str | int | tuple[int, int, int] | None = None,
     line_width: float | None = None,
+    fill_transparency: float | None = None,
+    line_transparency: float | None = None,
 ) -> None:
     """Write fill / line (border) formatting onto a COM `Shape` — only the kwargs passed.
 
     `fill`/`line` take a color (`"#RRGGBB"`, an `(r, g, b)` tuple, or a raw RGB
     int) for a solid fill / line of that color, or the string `"none"` to make
     the fill transparent / remove the border. `line_width` is the border weight
-    in points. Colors are validated up front (so a bad hex raises before any COM
-    mutation). Caller wraps this in `translate_com_errors()`.
+    in points. `fill_transparency`/`line_transparency` are `0.0..1.0` alpha
+    fractions (0 opaque, 1 fully transparent). Colors + transparencies are
+    validated up front (so a bad value raises before any COM mutation). Caller
+    wraps this in `translate_com_errors()`.
     """
     _precheck_fill(fill, line)  # ValueError before any COM mutation
+    _check_transparency(fill_transparency, "fill_transparency")
+    _check_transparency(line_transparency, "line_transparency")
     if fill is not None:
         if _is_none_token(fill):
             com_shape.Fill.Visible = int(MsoTriState.FALSE)
@@ -278,26 +308,324 @@ def apply_shape_fill(
             com_shape.Line.ForeColor.RGB = parse_color(line)
     if line_width is not None:
         com_shape.Line.Weight = float(line_width)
+    if fill_transparency is not None:
+        com_shape.Fill.Transparency = float(fill_transparency)
+    if line_transparency is not None:
+        com_shape.Line.Transparency = float(line_transparency)
+
+
+def apply_line_style(
+    com_shape: Any,
+    *,
+    dash: str | int | None = None,
+    begin_arrow: str | int | None = None,
+    end_arrow: str | int | None = None,
+    begin_arrow_size: str | int | None = None,
+    end_arrow_size: str | int | None = None,
+) -> None:
+    """Write line dash + arrowhead styling onto a COM `Shape` — only the kwargs passed.
+
+    `dash` is a friendly `MsoLineDashStyle` name (`"solid"`/`"dash"`/`"round_dot"`/…)
+    or raw int. `begin_arrow`/`end_arrow` are `MsoArrowheadStyle` names
+    (`"none"`/`"triangle"`/`"open"`/`"stealth"`/`"diamond"`/`"oval"`) or raw ints;
+    `begin_arrow_size`/`end_arrow_size` are `"small"`/`"medium"`/`"large"` (set both
+    arrowhead length + width). All names are resolved up front (ValueError before any
+    COM). **Arrowheads only apply to lines/connectors** — PowerPoint raises on a
+    closed shape (rectangle/oval/…). Caller wraps this in `translate_com_errors()`.
+    """
+    # Resolve every name first so a typo raises before any COM mutation.
+    dash_int = dash_style_for(dash) if dash is not None else None
+    begin_int = arrowhead_style_for(begin_arrow) if begin_arrow is not None else None
+    end_int = arrowhead_style_for(end_arrow) if end_arrow is not None else None
+    begin_size_int = arrowhead_size_for(begin_arrow_size) if begin_arrow_size is not None else None
+    end_size_int = arrowhead_size_for(end_arrow_size) if end_arrow_size is not None else None
+    if (
+        dash_int is None
+        and begin_int is None
+        and end_int is None
+        and begin_size_int is None
+        and end_size_int is None
+    ):
+        raise ValueError(
+            "apply_line_style() needs at least one of dash=, begin_arrow=, end_arrow=, "
+            "begin_arrow_size=, end_arrow_size="
+        )
+    line = com_shape.Line
+    if dash_int is not None:
+        line.DashStyle = dash_int
+    if begin_int is not None:
+        line.BeginArrowheadStyle = begin_int
+    if end_int is not None:
+        line.EndArrowheadStyle = end_int
+    if begin_size_int is not None:
+        line.BeginArrowheadLength = begin_size_int
+        line.BeginArrowheadWidth = begin_size_int
+    if end_size_int is not None:
+        line.EndArrowheadLength = end_size_int
+        line.EndArrowheadWidth = end_size_int
+
+
+# Advanced fills (v1.2): gradient / picture / pattern. The spike
+# (scripts/fill_advanced_spike.py) pinned each COM recipe; the wrappers below
+# encode those findings (legacy `Insert` for stops, abs-path picture, …).
+
+_GRADIENT_DEFAULT_DEGREE = 0.5  # OneColorGradient brightness when none is given
+
+
+def _gradient_stop_args(
+    colors: Sequence[Any], positions: Sequence[float] | None
+) -> tuple[list[int], list[float | None]]:
+    """Validate + normalize gradient colors/positions to RGB ints + positions.
+
+    All colors `parse_color` cleanly (ValueError before any COM). `positions`, when
+    given, must match `colors` in length and each lie in `[0, 1]`. Returns the RGB
+    ints and a parallel positions list (the raw floats or all-`None`).
+    """
+    rgbs = [parse_color(c) for c in colors]  # ValueError before any COM
+    if not rgbs:
+        raise ValueError("set_gradient_fill() needs at least one color")
+    if positions is None:
+        return rgbs, [None] * len(rgbs)
+    if len(positions) != len(rgbs):
+        raise ValueError("positions= must have the same length as colors=")
+    norm: list[float | None] = []
+    for p in positions:
+        fp = float(p)
+        if not (0.0 <= fp <= 1.0):
+            raise ValueError(f"gradient position {p!r} must be between 0.0 and 1.0")
+        norm.append(fp)
+    return rgbs, norm
+
+
+def apply_gradient_fill(
+    com_shape: Any,
+    *,
+    colors: Sequence[Any] | None = None,
+    positions: Sequence[float] | None = None,
+    style: str | int = "horizontal",
+    variant: int = 1,
+    degree: float | None = None,
+    preset: str | int | None = None,
+) -> None:
+    """Write a gradient fill onto a COM `Shape`. Caller wraps in `translate_com_errors()`.
+
+    Three shapes, matching the spike's verified COM recipes:
+    - `preset=` (e.g. `"ocean"`) → `Fill.PresetGradient` (a named multi-stop ramp).
+    - one color → `Fill.OneColorGradient` (`degree` is the 0..1 brightness, default 0.5).
+    - two+ colors → `Fill.TwoColorGradient` with the first/last colors at stops 0.0/1.0;
+      interior colors become extra stops via the legacy `GradientStops.Insert` (since
+      `Insert2` won't marshal). `positions` places the *interior* stops (endpoints stay
+      at 0.0/1.0); omitted, interior stops space evenly.
+
+    All colors are validated up front (ValueError before any COM mutation).
+    """
+    style_int = gradient_style_for(style)  # ValueError before any COM
+    if preset is not None:
+        preset_int = preset_gradient_for(preset)
+        com_shape.Fill.PresetGradient(style_int, int(variant), preset_int)
+        return
+    if colors is None:
+        raise ValueError("set_gradient_fill() requires colors= or preset=")
+    rgbs, norm = _gradient_stop_args(colors, positions)
+    fill = com_shape.Fill
+    if len(rgbs) == 1:
+        deg = _GRADIENT_DEFAULT_DEGREE if degree is None else float(degree)
+        fill.OneColorGradient(style_int, int(variant), deg)
+        fill.ForeColor.RGB = rgbs[0]
+        return
+    fill.TwoColorGradient(style_int, int(variant))
+    fill.ForeColor.RGB = rgbs[0]
+    fill.BackColor.RGB = rgbs[-1]
+    interior = rgbs[1:-1]
+    if not interior:
+        return
+    n = len(rgbs)
+    for i, rgb in enumerate(interior, start=1):
+        pos = norm[i]
+        if pos is None:
+            pos = i / (n - 1)  # evenly spaced between the 0.0/1.0 endpoints
+        fill.GradientStops.Insert(rgb, float(pos))  # legacy Insert (Insert2 won't marshal)
+
+
+def apply_picture_fill(com_shape: Any, path: str | Path) -> None:
+    """Fill a COM `Shape` with an image (`Fill.UserPicture`). Caller wraps in errors.
+
+    The path is resolved to an **absolute** path first — `UserPicture` raises
+    `ERROR_FILE_NOT_FOUND` on a relative path (the `Slide.Export` footgun, confirmed
+    in the spike). Raises `FileNotFoundError` (before any COM) if the file is missing.
+    """
+    abspath = os.path.abspath(os.fspath(path))
+    if not os.path.isfile(abspath):
+        raise FileNotFoundError(f"picture fill image not found: {abspath}")
+    com_shape.Fill.UserPicture(abspath)
+
+
+def apply_pattern_fill(
+    com_shape: Any,
+    *,
+    pattern: str | int,
+    fore: Any,
+    back: Any | None = None,
+) -> None:
+    """Write a two-color pattern fill (`Fill.Patterned`). Caller wraps in errors.
+
+    `pattern` is a friendly `MsoPatternType` name (`"percent_50"`, `"trellis"`, …)
+    or a raw int; `fore`/`back` are the pattern's foreground/background colors.
+    Colors validated up front (ValueError before any COM).
+    """
+    pattern_int = pattern_for(pattern)  # ValueError before any COM
+    fore_rgb = parse_color(fore)
+    back_rgb = parse_color(back) if back is not None else None
+    fill = com_shape.Fill
+    fill.Patterned(pattern_int)
+    fill.ForeColor.RGB = fore_rgb
+    if back_rgb is not None:
+        fill.BackColor.RGB = back_rgb
+
+
+# Shape effects (v1.2): shadow / glow / soft-edge / reflection. The spike
+# (scripts/effects_spike.py) confirmed all four round-trip; the props below are
+# the verified-clean ones.
+
+_TRANSPARENCY_SENTINEL = -2147483648  # default/unset Transparency reads this
+
+
+def _is_none_effect(value: Any) -> bool:
+    return isinstance(value, str) and value.strip().lower() == "none"
+
+
+def _apply_shadow(com_shape: Any, spec: Any) -> None:
+    shadow = com_shape.Shadow
+    if _is_none_effect(spec):
+        shadow.Visible = int(MsoTriState.FALSE)
+        return
+    if not isinstance(spec, dict):
+        raise ValueError('shadow= must be a dict of properties or "none"')
+    color = spec.get("color")
+    rgb = parse_color(color) if color is not None else None  # ValueError before COM
+    shadow.Visible = int(MsoTriState.TRUE)
+    shadow.Style = int(MsoShadowStyle.OUTER)
+    if rgb is not None:
+        shadow.ForeColor.RGB = rgb
+    for key, attr in (
+        ("transparency", "Transparency"),
+        ("blur", "Blur"),
+        ("size", "Size"),
+        ("offset_x", "OffsetX"),
+        ("offset_y", "OffsetY"),
+    ):
+        if spec.get(key) is not None:
+            setattr(shadow, attr, float(spec[key]))
+
+
+def _apply_glow(com_shape: Any, spec: Any) -> None:
+    glow = com_shape.Glow
+    if _is_none_effect(spec):
+        glow.Radius = 0.0
+        return
+    if not isinstance(spec, dict):
+        raise ValueError('glow= must be a dict of properties or "none"')
+    color = spec.get("color")
+    rgb = parse_color(color) if color is not None else None  # ValueError before COM
+    if rgb is not None:
+        glow.Color.RGB = rgb
+    glow.Radius = float(spec.get("radius", 8.0))
+    if spec.get("transparency") is not None:
+        glow.Transparency = float(spec["transparency"])
+
+
+def _apply_soft_edge(com_shape: Any, spec: Any) -> None:
+    preset = 0 if _is_none_effect(spec) else int(spec)
+    com_shape.SoftEdge.Type = preset
+
+
+def _apply_reflection(com_shape: Any, spec: Any) -> None:
+    preset = 0 if _is_none_effect(spec) else int(spec)
+    com_shape.Reflection.Type = preset
+
+
+def apply_effect(
+    com_shape: Any,
+    *,
+    shadow: Any | None = None,
+    glow: Any | None = None,
+    soft_edge: Any | None = None,
+    reflection: Any | None = None,
+) -> None:
+    """Write shape effects (shadow / glow / soft-edge / reflection). Only kwargs passed.
+
+    Each kwarg is the friendly form the wrapper documents (a dict for shadow/glow, an
+    int preset for soft_edge/reflection) or the string `"none"` to turn it off. Colors
+    validated up front. Caller wraps in `translate_com_errors()`.
+    """
+    if shadow is not None:
+        _apply_shadow(com_shape, shadow)
+    if glow is not None:
+        _apply_glow(com_shape, glow)
+    if soft_edge is not None:
+        _apply_soft_edge(com_shape, soft_edge)
+    if reflection is not None:
+        _apply_reflection(com_shape, reflection)
+
+
+def _gradient_stops(fill: Any) -> list[dict[str, Any]] | None:
+    """`[{color, position}]` for a gradient fill's stops, sorted by position; None if unreadable."""
+    try:
+        stops = fill.GradientStops
+        count = int(stops.Count)
+    except Exception:
+        return None
+    out: list[dict[str, Any]] = []
+    for i in range(1, count + 1):
+        try:
+            s = stops(i)
+            out.append(
+                {
+                    "color": color_hex_or_none(s.Color.RGB),
+                    "position": round(float(s.Position), 4),
+                }
+            )
+        except Exception:
+            continue
+    out.sort(key=lambda d: d["position"] if d["position"] is not None else 0.0)
+    return out
 
 
 def _fill_to_dict(com_shape: Any) -> dict[str, Any] | None:
-    """`{color, visible}` for the shape's fill, or None when it has no fill object.
+    """`{type, color, visible}` for the shape's fill (+ detail), or None when absent.
 
-    `color` is the literal `"#RRGGBB"`, or `None` for a theme/automatic fill (the
-    `0x80000000` sentinel — same honest guard as font color, `color_hex_or_none`).
+    `type` is the friendly `Fill.Type` (`solid`/`gradient`/`pattern`/`picture`/…),
+    `color` the literal `"#RRGGBB"` foreground (or `None` for a theme/automatic fill —
+    the `0x80000000` sentinel guard, `color_hex_or_none`). A gradient adds `stops`
+    (`[{color, position}]`) and `gradient_style`; a pattern adds `pattern` (the friendly
+    name) and `back_color`.
     """
     try:
         fill = com_shape.Fill
-        return {
-            "color": color_hex_or_none(fill.ForeColor.RGB),
-            "visible": is_true(fill.Visible),
-        }
     except Exception:
         return None
+    out: dict[str, Any] = {
+        "type": fill_type_name(_safe(lambda: int(fill.Type), None)),
+        "color": _safe(lambda: color_hex_or_none(fill.ForeColor.RGB), None),
+        "visible": _safe(lambda: is_true(fill.Visible), None),
+        "transparency": _safe(lambda: round(float(fill.Transparency), 3), None),
+    }
+    if out["type"] == "gradient":
+        out["gradient_style"] = gradient_style_name(_safe(lambda: int(fill.GradientStyle), None))
+        out["stops"] = _gradient_stops(fill)
+    elif out["type"] == "patterned":
+        out["pattern"] = pattern_name(_safe(lambda: int(fill.Pattern), None))
+        out["back_color"] = _safe(lambda: color_hex_or_none(fill.BackColor.RGB), None)
+    return out
 
 
 def _line_to_dict(com_shape: Any) -> dict[str, Any] | None:
-    """`{color, weight, visible}` for the shape's line (border), or None when absent."""
+    """`{color, weight, visible, transparency, dash}` for the shape's line (border).
+
+    Adds `begin_arrow`/`end_arrow` (friendly `MsoArrowheadStyle` names) only when an
+    arrowhead is actually set (not `none`/unset) — keeps closed shapes' line dicts
+    lean. Returns None when the shape exposes no `.Line`.
+    """
     try:
         line = com_shape.Line
     except Exception:
@@ -306,24 +634,20 @@ def _line_to_dict(com_shape: Any) -> dict[str, Any] | None:
         weight: float | None = float(line.Weight)
     except Exception:
         weight = None
-    return {
+    out: dict[str, Any] = {
         "color": color_hex_or_none(line.ForeColor.RGB),
         "weight": weight,
         "visible": is_true(line.Visible),
+        "transparency": _safe(lambda: round(float(line.Transparency), 3), None),
+        "dash": dash_style_name(_safe(lambda: int(line.DashStyle), None)),
     }
-
-
-# msoFillType ints -> a friendly name (read-back only; we only *set* solid fills).
-# Shared by the shape-fill, master-background, and slide-background readers.
-_FILL_TYPE_NAMES: dict[int, str] = {
-    -2: "mixed",
-    1: "solid",
-    2: "patterned",
-    3: "gradient",
-    4: "textured",
-    5: "background",
-    6: "picture",
-}
+    begin = arrowhead_style_name(_safe(lambda: int(line.BeginArrowheadStyle), None))
+    if begin is not None and begin != "none":
+        out["begin_arrow"] = begin
+    end = arrowhead_style_name(_safe(lambda: int(line.EndArrowheadStyle), None))
+    if end is not None and end != "none":
+        out["end_arrow"] = end
+    return out
 
 
 def background_to_dict(com_with_background: Any) -> dict[str, Any]:
@@ -337,11 +661,65 @@ def background_to_dict(com_with_background: Any) -> dict[str, Any]:
     fill = _safe(lambda: com_with_background.Background.Fill, None)
     if fill is None:
         return {"type": None, "color": None}
-    fill_type = _safe(lambda: int(fill.Type), None)
     return {
-        "type": _FILL_TYPE_NAMES.get(fill_type, fill_type) if fill_type is not None else None,
+        "type": fill_type_name(_safe(lambda: int(fill.Type), None)),
         "color": _safe(lambda: color_hex_or_none(fill.ForeColor.RGB), None),
     }
+
+
+def _effects_to_dict(com_shape: Any) -> dict[str, Any] | None:
+    """Active shape effects (`{shadow?, glow?, soft_edge?, reflection?}`) or None.
+
+    Best-effort: reads the cheap "is it on" gate for each effect and only expands the
+    active ones (so a plain shape returns `None`, not four empty sub-dicts). The
+    `Transparency` sentinel (`-2147483648`, an unset value) reports as `None`.
+    Mirrors the spike: read `Shadow.Style` (not `.Type`, which goes mixed), `Glow.Radius`,
+    `SoftEdge.Type`, `Reflection.Type`.
+    """
+    out: dict[str, Any] = {}
+
+    shadow = _safe(lambda: com_shape.Shadow, None)
+    if shadow is not None and _safe(lambda: is_true(shadow.Visible), False):
+        out["shadow"] = {
+            "color": _safe(lambda: color_hex_or_none(shadow.ForeColor.RGB), None),
+            "transparency": _transparency(shadow),
+            "blur": _safe(lambda: round(float(shadow.Blur), 3), None),
+            "size": _safe(lambda: round(float(shadow.Size), 3), None),
+            "offset_x": _safe(lambda: round(float(shadow.OffsetX), 3), None),
+            "offset_y": _safe(lambda: round(float(shadow.OffsetY), 3), None),
+        }
+
+    glow = _safe(lambda: com_shape.Glow, None)
+    glow_radius = _safe(lambda: float(glow.Radius), 0.0) if glow is not None else 0.0
+    if glow is not None and glow_radius and glow_radius > 0:
+        out["glow"] = {
+            "color": _safe(lambda: color_hex_or_none(glow.Color.RGB), None),
+            "radius": round(glow_radius, 3),
+            "transparency": _transparency(glow),
+        }
+
+    soft = _safe(lambda: com_shape.SoftEdge, None)
+    soft_type = _safe(lambda: int(soft.Type), 0) if soft is not None else 0
+    if soft_type and soft_type > 0:
+        out["soft_edge"] = {
+            "type": soft_type,
+            "radius": _safe(lambda: round(float(soft.Radius), 3), None),
+        }
+
+    refl = _safe(lambda: com_shape.Reflection, None)
+    refl_type = _safe(lambda: int(refl.Type), 0) if refl is not None else 0
+    if refl_type and refl_type > 0:
+        out["reflection"] = {"type": refl_type}
+
+    return out or None
+
+
+def _transparency(effect: Any) -> float | None:
+    """Read an effect's `.Transparency`, mapping the unset sentinel to None."""
+    raw = _safe(lambda: float(effect.Transparency), None)
+    if raw is None or int(raw) == _TRANSPARENCY_SENTINEL:
+        return None
+    return round(raw, 3)
 
 
 def _hyperlink_to_dict(com_shape: Any) -> dict[str, Any] | None:
@@ -383,6 +761,7 @@ def shape_to_dict(com_shape: Any, slide_index: int, z_index: int) -> dict[str, A
         "geometry": _geometry_of(com_shape),
         "fill": _fill_to_dict(com_shape),
         "line": _line_to_dict(com_shape),
+        "effects": _effects_to_dict(com_shape),
         "hyperlink": _hyperlink_to_dict(com_shape),
     }
     if is_placeholder(com_shape):
@@ -702,20 +1081,168 @@ class Shape(Anchor):
         fill: str | int | tuple[int, int, int] | None = None,
         line: str | int | tuple[int, int, int] | None = None,
         line_width: float | None = None,
+        fill_transparency: float | None = None,
+        line_transparency: float | None = None,
     ) -> None:
         """Set the shape's **fill** and/or **line** (border). Only the kwargs passed.
 
         `fill`/`line` take a color (`"#RRGGBB"`, an `(r, g, b)` tuple, or a raw RGB
         int) for a solid fill / line of that color, or the string `"none"` to make
         the fill transparent / remove the border. `line_width` is the border weight
-        in points. Distinct from `format_text`'s `color`, which is *font* color.
-        Raises `ValueError` for a bad color (before any COM) or if nothing is
-        passed. A mutation: wrap in `deck.edit(...)`.
+        in points. `fill_transparency`/`line_transparency` are `0.0..1.0` alpha
+        fractions (0 opaque, 1 fully transparent) — the partial-alpha knob, distinct
+        from `"none"` (which hides the fill/line entirely). Distinct from
+        `format_text`'s `color`, which is *font* color. Raises `ValueError` for a bad
+        color / out-of-range transparency (before any COM) or if nothing is passed. A
+        mutation: wrap in `deck.edit(...)`.
         """
-        if fill is None and line is None and line_width is None:
-            raise ValueError("set_fill() requires at least one of fill=, line=, or line_width=")
+        if (
+            fill is None
+            and line is None
+            and line_width is None
+            and fill_transparency is None
+            and line_transparency is None
+        ):
+            raise ValueError(
+                "set_fill() requires at least one of fill=, line=, line_width=, "
+                "fill_transparency=, or line_transparency="
+            )
         with _com.translate_com_errors():
-            apply_shape_fill(self._com_shape(), fill=fill, line=line, line_width=line_width)
+            apply_shape_fill(
+                self._com_shape(),
+                fill=fill,
+                line=line,
+                line_width=line_width,
+                fill_transparency=fill_transparency,
+                line_transparency=line_transparency,
+            )
+
+    def set_line_style(
+        self,
+        *,
+        dash: str | int | None = None,
+        begin_arrow: str | int | None = None,
+        end_arrow: str | int | None = None,
+        begin_arrow_size: str | int | None = None,
+        end_arrow_size: str | int | None = None,
+    ) -> None:
+        """Set the shape's line **dash** pattern and/or **arrowheads**. Only the kwargs passed.
+
+        `dash` is a friendly `MsoLineDashStyle` (`"solid"`/`"dash"`/`"round_dot"`/
+        `"dash_dot"`/`"long_dash"`/…) or raw int. `begin_arrow`/`end_arrow` are
+        `MsoArrowheadStyle` names (`"none"`/`"triangle"`/`"open"`/`"stealth"`/
+        `"diamond"`/`"oval"`) or raw ints; `begin_arrow_size`/`end_arrow_size` are
+        `"small"`/`"medium"`/`"large"` (set both arrowhead length + width). Names are
+        validated up front (`ValueError` before any COM). **Arrowheads apply to
+        lines/connectors only** — PowerPoint raises on a closed shape (use `dash` for
+        those). Border color/weight stay on `set_fill`. A mutation: wrap in
+        `deck.edit(...)`.
+        """
+        with _com.translate_com_errors():
+            apply_line_style(
+                self._com_shape(),
+                dash=dash,
+                begin_arrow=begin_arrow,
+                end_arrow=end_arrow,
+                begin_arrow_size=begin_arrow_size,
+                end_arrow_size=end_arrow_size,
+            )
+
+    def set_gradient_fill(
+        self,
+        colors: Sequence[Any] | None = None,
+        *,
+        positions: Sequence[float] | None = None,
+        style: str | int = "horizontal",
+        variant: int = 1,
+        degree: float | None = None,
+        preset: str | int | None = None,
+    ) -> None:
+        """Give this shape a **gradient** fill. A mutation: wrap in `deck.edit(...)`.
+
+        Pass `colors` (a list of `"#RRGGBB"` / `(r,g,b)` / int colors) **or** `preset`
+        (a named ramp like `"ocean"` / `"fire"` / `"rainbow"`):
+        - one color → a one-color gradient (`degree` is the 0..1 brightness, default 0.5);
+        - two colors → a two-color gradient (first at stop 0.0, second at 1.0);
+        - three+ colors → a multi-stop gradient; `positions` (floats 0..1, same length as
+          `colors`) places the *interior* stops, which otherwise space evenly (the
+          endpoints stay at 0.0/1.0).
+
+        `style` is a friendly `MsoGradientStyle` (`"horizontal"`/`"vertical"`/
+        `"diagonal_up"`/…) and `variant` (1-4) picks the shading variant. Raises
+        `ValueError` (before any COM) for a bad color / style / preset, or if neither
+        `colors` nor `preset` is given.
+        """
+        with _com.translate_com_errors():
+            apply_gradient_fill(
+                self._com_shape(),
+                colors=colors,
+                positions=positions,
+                style=style,
+                variant=variant,
+                degree=degree,
+                preset=preset,
+            )
+
+    def set_picture_fill(self, path: str | Path) -> None:
+        """Fill this shape with an **image** (`Fill.UserPicture`). A mutation: `deck.edit(...)`.
+
+        `path` is resolved to an absolute path (a relative path raises
+        `ERROR_FILE_NOT_FOUND` in PowerPoint); a missing file raises `FileNotFoundError`
+        (before any COM).
+        """
+        with _com.translate_com_errors():
+            apply_picture_fill(self._com_shape(), path)
+
+    def set_pattern_fill(
+        self,
+        pattern: str | int,
+        *,
+        fore: Any,
+        back: Any | None = None,
+    ) -> None:
+        """Give this shape a two-color **pattern** fill. A mutation: wrap in `deck.edit(...)`.
+
+        `pattern` is a friendly `MsoPatternType` name (`"percent_50"`, `"trellis"`,
+        `"dark_horizontal"`, …) or a raw int; `fore` is the pattern color and `back`
+        the (optional) background color. Raises `ValueError` (before any COM) for a bad
+        pattern name or color.
+        """
+        with _com.translate_com_errors():
+            apply_pattern_fill(self._com_shape(), pattern=pattern, fore=fore, back=back)
+
+    def set_effect(
+        self,
+        *,
+        shadow: Any | None = None,
+        glow: Any | None = None,
+        soft_edge: Any | None = None,
+        reflection: Any | None = None,
+    ) -> None:
+        """Set shape **effects** — shadow / glow / soft-edge / reflection. Only kwargs passed.
+
+        Each takes its friendly form or the string `"none"` to turn it off:
+        - `shadow` — a dict `{color?, transparency?, blur?, size?, offset_x?, offset_y?}`
+          (an outer drop shadow);
+        - `glow` — a dict `{color?, radius?, transparency?}` (radius 0 = off);
+        - `soft_edge` — an int preset `0`-`6` (0 = off);
+        - `reflection` — an int preset `0`-`9` (0 = off).
+
+        Raises `ValueError` (before any COM) for a bad color or a non-dict shadow/glow.
+        A mutation: wrap in `deck.edit(...)`.
+        """
+        if shadow is None and glow is None and soft_edge is None and reflection is None:
+            raise ValueError(
+                "set_effect() requires at least one of shadow=, glow=, soft_edge=, or reflection="
+            )
+        with _com.translate_com_errors():
+            apply_effect(
+                self._com_shape(),
+                shadow=shadow,
+                glow=glow,
+                soft_edge=soft_edge,
+                reflection=reflection,
+            )
 
     def reorder(self, to: str | int) -> int:
         """Restack this shape in the slide's z-order; return its new 1-based position.

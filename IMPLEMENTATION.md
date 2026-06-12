@@ -712,6 +712,87 @@ for. Resolves spec Open Q #3 (symbolic `exec` binding stays deferred).
   `smartart_recolor_text`).** Unit-tested in `tests/test_styling.py` +
   `tests/test_cli.py` + `tests/test_mcp.py`. See `roadmap.md`.
 
+## v1.2-advanced — gradient / picture / pattern fills + effects — SHIPPED (2026-06-12, v0.5.0)
+
+Completes the v1.2 styling tier: the advanced fills and shape effects deferred from
+the solid cut, both de-risked by the 2026-06-11 spikes (`fill_advanced_spike.py`,
+`effects_spike.py`) and built as **dedicated explicit verbs** (the chosen API shape
+over a string mini-DSL). Live net-zero confirmed the shipped wrappers end-to-end
+(multi-stop reads back sorted; preset "ocean" → a 4-stop ramp; all four effects
+round-trip). All fake-COM unit tests green (`ruff`, `mypy`, `pytest` — 723).
+
+- [x] **`constants.py`** — `MsoFillType` (+ `fill_type_name`, replacing the local
+  `_shapes._FILL_TYPE_NAMES`), `MsoGradientStyle` (+ `gradient_style_for`/`_name`/
+  `GRADIENT_STYLE_CHOICES`), `MsoPresetGradientType` (24 presets +
+  `preset_gradient_for`/`PRESET_GRADIENT_CHOICES`), `MsoPatternType` (curated subset:
+  percentages 1-12 + structural 13-22, raw-int passthrough for the rest, +
+  `pattern_for`/`pattern_name`/`PATTERN_CHOICES`), `MsoShadowStyle`.
+- [x] **`_shapes.py` — apply helpers + verbs.** `apply_gradient_fill` (one-color /
+  two-color / multi-stop via legacy `GradientStops.Insert` since `Insert2` won't
+  marshal / preset), `apply_picture_fill` (abspath + `FileNotFoundError` precheck),
+  `apply_pattern_fill`, `apply_effect` (shadow individual-property path + `Style=outer`;
+  glow; soft-edge/reflection presets). Public `Shape.set_gradient_fill` /
+  `set_picture_fill` / `set_pattern_fill` / `set_effect` (colors validated up front —
+  `ValueError` before any COM). Reads: `_fill_to_dict` now emits a `type` discriminator
+  + gradient `stops`/`gradient_style` + pattern `pattern`/`back_color`; new
+  `_effects_to_dict` emits active shadow/glow/soft-edge/reflection (the `Transparency`
+  sentinel `-2147483648` → `None`; reads `Shadow.Style`, not the mixed `.Type`); both
+  fold into `shape_to_dict` (`fill` extended, `effects` added).
+- [x] **CLI** — `shape gradient-fill` (`--colors`/`--preset`/`--positions`/`--style`/
+  `--variant`/`--degree`), `shape picture-fill` (`--path`), `shape pattern-fill`
+  (`--pattern`/`--fore`/`--back`), `shape effect` (`--shadow`/`--glow` JSON or "none",
+  `--soft-edge`/`--reflection` int or "none").
+- [x] **MCP** — `ppt_edit` ops `shape_gradient_fill` / `shape_picture_fill` /
+  `shape_pattern_fill` / `shape_set_effect` (params `colors`/`positions`/
+  `gradient_style`/`variant`/`degree`/`preset`/`pattern`/`fore`/`back`/`shadow`/`glow`/
+  `soft_edge`/`reflection`); `_mcp_errors` now maps `FileNotFoundError` → `invalid_args`
+  (a missing picture path is no longer a 500). Flow through `ppt_batch` via `_edit_core`.
+- [x] **Tests** — `tests/test_fills_effects.py` (constants + library), CLI + MCP cases
+  in `test_cli.py` / `test_mcp.py`; existing fill-dict asserts updated for the new
+  `type` key. The fake gained `_FakeGradientStop`/`_FakeGradientStops` + the
+  gradient/pattern/picture methods on `_FakeShapeFill` and the Shadow/Glow/SoftEdge/
+  Reflection namespaces on `_FakeShape`.
+
+### Follow-up cut: partial-alpha transparency + line dash/arrowheads — SHIPPED (2026-06-12, v0.5.0)
+
+The last v1.2 fill/line deferrals, spiked live first (`scripts/line_alpha_spike.py`,
+net-zero) to pin the COM: `Fill.Transparency`/`Line.Transparency` are `0..1` floats that
+round-trip after `Solid()`; `Line.DashStyle` round-trips for `MsoLineDashStyle` 1–9;
+**arrowheads are lines/connectors-only** — `Begin/EndArrowheadStyle`/`Length`/`Width`
+round-trip on a connector but a closed rectangle raises "value out of range." All tests
+green (`ruff`, `mypy`, `pytest` — 742); live net-zero re-confirmed through the shipped
+wrappers.
+
+- [x] **`constants.py`** — `MsoLineDashStyle` (`_DASH_STYLES` solid…long_dash_dot_dot 1-9
+  + `dash_style_for`/`dash_style_name`/`DASH_STYLE_CHOICES`), `MsoArrowheadStyle`
+  (none/triangle/open/stealth/diamond/oval + `arrowhead_style_for`/`_name`/
+  `ARROWHEAD_STYLE_CHOICES`), and `arrowhead_size_for`/`ARROWHEAD_SIZE_CHOICES`
+  (small/medium/large → both `MsoArrowheadLength` + `MsoArrowheadWidth`). All coercers use
+  the underscore-preserving normalization (not `_normalize_name`).
+- [x] **`_shapes.py`** — `apply_shape_fill` gains `fill_transparency`/`line_transparency`
+  (validated 0..1 by `_check_transparency` before any COM); new `apply_line_style`
+  (resolves every name up front, then sets `DashStyle`/arrowhead style+length+width). Public
+  `Shape.set_fill(..., fill_transparency=, line_transparency=)` + new
+  `Shape.set_line_style(dash=, begin_arrow=, end_arrow=, begin_arrow_size=, end_arrow_size=)`.
+  Reads: `_fill_to_dict` adds `transparency`; `_line_to_dict` adds `transparency` + `dash`
+  (+ `begin_arrow`/`end_arrow`, omitted when none/unset).
+- [x] **CLI** — `shape line-style` (`--dash`/`--begin-arrow`/`--end-arrow`/
+  `--begin-arrow-size`/`--end-arrow-size`); `shape fill` gains `--fill-transparency`/
+  `--line-transparency`.
+- [x] **MCP / batch** — `EditOp.SHAPE_LINE_STYLE` (`_edit_shape_line_style`); `ppt_edit`
+  op `shape_line_style` (params `dash`/`begin_arrow`/`end_arrow`/`begin_arrow_size`/
+  `end_arrow_size`); `_edit_format` + `ppt_edit` `format` gain `fill_transparency`/
+  `line_transparency`.
+- [x] **Tests** — transparency + dash + arrowhead cases in `test_fills_effects.py`, CLI
+  (`test_shape_line_style_command`, `test_shape_fill_transparency_command`) + MCP
+  (`test_shape_line_style`, `test_format_sets_fill_transparency`); existing fill/line-dict
+  asserts updated for the new `transparency` key. Fake `_FakeShapeFill`/`_FakeShapeLine`
+  gained `Transparency` + `DashStyle` + the arrowhead props.
+
+**Deferred (the only v1.2 leftovers now):** the 3-D effect long tail (`ThreeD` — set/read
+is mostly there but `BevelTopType` didn't honor a post-preset override in the spike) and
+per-side/per-corner line geometry.
+
 ## v1.3 — review loop: comments — SHIPPED
 
 The highest-leverage roadmap tier and the one whose COM risk was fully burned down

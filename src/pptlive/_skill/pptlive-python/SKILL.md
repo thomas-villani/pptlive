@@ -111,8 +111,14 @@ with deck.edit("Build the results slide"):
     deck.slides[4].shapes["Picture 3"].move(top=140)  # by name; absolute, points
 
     panel = shapes.add_shape("rectangle", left=60, top=60, width=840, height=400)
-    panel.set_fill(fill="#102030", line="none")       # fill/border — NOT font color; "none" = transparent
+    panel.set_fill(fill="#102030", line="none")       # solid fill/border — NOT font color; "none" = transparent
+    panel.set_fill(fill="#102030", fill_transparency=0.4)  # partial alpha 0..1 (0 opaque); also line_transparency=
+    panel.set_gradient_fill(["#102030", "#1E74B5"], style="vertical")  # or 3+ colors + positions=, or preset="ocean"
+    panel.set_pattern_fill("percent_50", fore="#1E74B5", back="#fff")  # or panel.set_picture_fill("bg.png")
+    panel.set_effect(shadow={"color": "#333", "blur": 8, "offset_x": 4, "offset_y": 4}, soft_edge=4)
+    panel.set_line_style(dash="dash_dot")             # line dash; arrowheads (begin_arrow=/end_arrow=) on lines/connectors only
     panel.reorder("back")                             # tuck the panel behind existing content
+    # reads carry fill.type (solid/gradient/patterned/picture), fill/line transparency, line.dash + an effects field
     star.delete()
 
     arrow = shapes.add_shape("right_arrow", left=72, top=300)
