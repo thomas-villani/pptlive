@@ -380,6 +380,7 @@ class _FakeShapeFill:
         self.Type = 5  # msoFillBackground (theme/inherited) until a fill verb runs
         self.ForeColor = SimpleNamespace(RGB=0x80000000)
         self.BackColor = SimpleNamespace(RGB=0x80000000)
+        self.Transparency = 0.0  # opaque until a partial-alpha is set
         self.GradientStyle = -2  # msoGradientMixed until a gradient is set
         self.GradientVariant = 0
         self.GradientColorType = 0
@@ -433,12 +434,20 @@ class _FakeShapeFill:
 
 
 class _FakeShapeLine:
-    """`Shape.Line` — Visible + Weight + ForeColor.RGB (the border)."""
+    """`Shape.Line` — Visible + Weight + ForeColor.RGB + dash/arrowheads (the border)."""
 
     def __init__(self) -> None:
         self.Visible = _MSO_TRUE
         self.Weight = 1.0
         self.ForeColor = SimpleNamespace(RGB=0x80000000)
+        self.Transparency = 0.0  # opaque until a partial-alpha is set
+        self.DashStyle = 1  # msoLineSolid
+        self.BeginArrowheadStyle = 1  # msoArrowheadNone
+        self.EndArrowheadStyle = 1
+        self.BeginArrowheadLength = 2  # msoArrowheadLengthMedium
+        self.BeginArrowheadWidth = 2
+        self.EndArrowheadLength = 2
+        self.EndArrowheadWidth = 2
 
 
 class _FakeHyperlink:

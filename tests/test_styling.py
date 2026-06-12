@@ -46,7 +46,12 @@ def test_set_fill_solid_color(deck) -> None:  # type: ignore[no-untyped-def]
     shape = deck.slides[2].shapes[1]
     shape.set_fill(fill="#FF0000")
     d = shape.to_dict()
-    assert d["fill"] == {"type": "solid", "color": "#FF0000", "visible": True}
+    assert d["fill"] == {
+        "type": "solid",
+        "color": "#FF0000",
+        "visible": True,
+        "transparency": 0.0,
+    }
 
 
 def test_set_fill_none_makes_transparent(deck) -> None:  # type: ignore[no-untyped-def]
@@ -86,7 +91,12 @@ def test_set_fill_requires_an_arg(deck) -> None:  # type: ignore[no-untyped-def]
 def test_shape_to_dict_default_fill_is_theme_none(deck) -> None:  # type: ignore[no-untyped-def]
     # An untouched shape inherits a theme fill -> color reads back as None, not #000000.
     d = deck.slides[2].shapes[1].to_dict()
-    assert d["fill"] == {"type": "background", "color": None, "visible": True}
+    assert d["fill"] == {
+        "type": "background",
+        "color": None,
+        "visible": True,
+        "transparency": 0.0,
+    }
     assert d["line"]["color"] is None
 
 
@@ -94,7 +104,12 @@ def test_add_shape_with_fill_and_line(deck) -> None:  # type: ignore[no-untyped-
     shapes = deck.slides[3].shapes
     rect = shapes.add_shape("rectangle", fill="#102030", line="none", line_width=2.0)
     d = rect.to_dict()
-    assert d["fill"] == {"type": "solid", "color": "#102030", "visible": True}
+    assert d["fill"] == {
+        "type": "solid",
+        "color": "#102030",
+        "visible": True,
+        "transparency": 0.0,
+    }
     assert d["line"]["visible"] is False
     assert d["line"]["weight"] == 2.0
 
@@ -109,7 +124,12 @@ def test_add_shape_bad_fill_raises_before_creating(deck) -> None:  # type: ignor
 
 def test_add_textbox_with_fill(deck) -> None:  # type: ignore[no-untyped-def]
     box = deck.slides[3].shapes.add_textbox("hi", fill="#FFFFFF")
-    assert box.to_dict()["fill"] == {"type": "solid", "color": "#FFFFFF", "visible": True}
+    assert box.to_dict()["fill"] == {
+        "type": "solid",
+        "color": "#FFFFFF",
+        "visible": True,
+        "transparency": 0.0,
+    }
 
 
 # -- 008: z-order -----------------------------------------------------------

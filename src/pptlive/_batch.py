@@ -118,6 +118,7 @@ class EditOp(StrEnum):
     SHAPE_PICTURE_FILL = "shape_picture_fill"
     SHAPE_PATTERN_FILL = "shape_pattern_fill"
     SHAPE_SET_EFFECT = "shape_set_effect"
+    SHAPE_LINE_STYLE = "shape_line_style"
     SHAPE_SET_HYPERLINK = "shape_set_hyperlink"
     SHAPE_REMOVE_HYPERLINK = "shape_remove_hyperlink"
     SLIDE_SET_TRANSITION = "slide_set_transition"
@@ -395,7 +396,7 @@ def _edit_format(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
         "line_spacing_points",
         "indent_level",
     )
-    fill_opts = ("fill_color", "line_color", "line_width")
+    fill_opts = ("fill_color", "line_color", "line_width", "fill_transparency", "line_transparency")
     list_type = p.get("list_type")
     _require(
         any(p.get(k) is not None for k in font_opts + para_opts + fill_opts)
@@ -434,6 +435,8 @@ def _edit_format(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
             fill=p.get("fill_color"),
             line=p.get("line_color"),
             line_width=p.get("line_width"),
+            fill_transparency=p.get("fill_transparency"),
+            line_transparency=p.get("line_transparency"),
         )
     if list_type == "none":
         anchor.remove_list()
@@ -659,6 +662,27 @@ def _edit_shape_set_effect(deck: Presentation, p: dict[str, Any]) -> dict[str, A
         reflection=p.get("reflection"),
     )
     return {"ok": True, "anchor_id": sh.anchor_id, "effects": sh.to_dict().get("effects")}
+
+
+@edit_op(EditOp.SHAPE_LINE_STYLE)
+def _edit_shape_line_style(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    sh = _resolve_shape(deck, p.get("anchor_id"))
+    _require(
+        any(
+            p.get(k) is not None
+            for k in ("dash", "begin_arrow", "end_arrow", "begin_arrow_size", "end_arrow_size")
+        ),
+        "edit op='shape_line_style' needs at least one of dash / begin_arrow / end_arrow / "
+        "begin_arrow_size / end_arrow_size",
+    )
+    sh.set_line_style(
+        dash=p.get("dash"),
+        begin_arrow=p.get("begin_arrow"),
+        end_arrow=p.get("end_arrow"),
+        begin_arrow_size=p.get("begin_arrow_size"),
+        end_arrow_size=p.get("end_arrow_size"),
+    )
+    return {"ok": True, "anchor_id": sh.anchor_id, "line": sh.to_dict().get("line")}
 
 
 @edit_op(EditOp.SHAPE_SET_HYPERLINK)

@@ -40,10 +40,24 @@ explicit verbs (not a string mini-DSL).
   discriminator (`solid`/`gradient`/`patterned`/`picture`/…) plus type-specific detail
   (gradient `stops` + `gradient_style`; pattern `pattern` + `back_color`), and a new
   `effects` field surfaces the shape's active shadow/glow/soft-edge/reflection.
+- **Partial-alpha transparency.** `Shape.set_fill(...)` gains `fill_transparency` /
+  `line_transparency` (a `0.0..1.0` alpha, 0 opaque, 1 fully transparent) — the
+  partial-alpha knob, distinct from `"none"` (which hides the fill/line entirely).
+  Every shape read's `fill`/`line` now carries a `transparency` value. Spiked live
+  (`scripts/line_alpha_spike.py`).
+- **Line dash + arrowheads.** `Shape.set_line_style(*, dash=, begin_arrow=, end_arrow=,
+  begin_arrow_size=, end_arrow_size=)` — a `dash` pattern (`"solid"`/`"dash"`/
+  `"round_dot"`/`"dash_dot"`/`"long_dash"`/… `MsoLineDashStyle`) and/or arrowheads
+  (`"none"`/`"triangle"`/`"open"`/`"stealth"`/`"diamond"`/`"oval"`, with
+  `"small"`/`"medium"`/`"large"` sizes). Arrowheads are lines/connectors-only (the
+  spike confirmed a closed shape raises). The shape read's `line` now carries `dash`
+  (and `begin_arrow`/`end_arrow` when set).
 - **CLI.** `shape gradient-fill` / `shape picture-fill` / `shape pattern-fill` /
-  `shape effect`.
+  `shape effect` / `shape line-style`; `shape fill` gains `--fill-transparency` /
+  `--line-transparency`.
 - **MCP.** `ppt_edit` ops `shape_gradient_fill` / `shape_picture_fill` /
-  `shape_pattern_fill` / `shape_set_effect`. A missing picture path now maps to a clean
+  `shape_pattern_fill` / `shape_set_effect` / `shape_line_style`; `format` gains
+  `fill_transparency` / `line_transparency`. A missing picture path now maps to a clean
   `invalid_args` (not a 500).
 
 ### Constants
@@ -51,7 +65,10 @@ explicit verbs (not a string mini-DSL).
 `MsoFillType` (+ `fill_type_name`), `MsoGradientStyle` (+ `gradient_style_for` /
 `gradient_style_name` / `GRADIENT_STYLE_CHOICES`), `MsoPresetGradientType` (+
 `preset_gradient_for` / `PRESET_GRADIENT_CHOICES`), `MsoPatternType` (+ `pattern_for` /
-`pattern_name` / `PATTERN_CHOICES`), `MsoShadowStyle`.
+`pattern_name` / `PATTERN_CHOICES`), `MsoShadowStyle`, `MsoLineDashStyle` (+
+`dash_style_for` / `dash_style_name` / `DASH_STYLE_CHOICES`), `MsoArrowheadStyle` (+
+`arrowhead_style_for` / `arrowhead_style_name` / `ARROWHEAD_STYLE_CHOICES`),
+`arrowhead_size_for` / `ARROWHEAD_SIZE_CHOICES`.
 
 ## [0.4.0] — 2026-06-10
 

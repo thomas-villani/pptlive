@@ -911,6 +911,120 @@ class MsoShadowStyle(IntEnum):
     OUTER = 2
 
 
+# Line dash + arrowheads (v0.5.x). The spike (scripts/line_alpha_spike.py)
+# pinned `Line.DashStyle` 1-9 round-tripping and arrowheads being
+# lines/connectors-only (a closed shape raises "value out of range").
+
+_DASH_STYLES: dict[str, int] = {
+    "solid": 1,
+    "square_dot": 2,
+    "round_dot": 3,
+    "dash": 4,
+    "dash_dot": 5,
+    "dash_dot_dot": 6,
+    "long_dash": 7,
+    "long_dash_dot": 8,
+    "long_dash_dot_dot": 9,
+}
+
+DASH_STYLE_CHOICES: tuple[str, ...] = tuple(_DASH_STYLES)
+
+_DASH_STYLE_NAMES: dict[int, str] = {v: k for k, v in _DASH_STYLES.items()}
+
+
+def dash_style_for(dash: str | int) -> int:
+    """Friendly dash name (or raw `MsoLineDashStyle` int) -> the int.
+
+    `"solid"`/`"dash"`/`"round_dot"`/`"long_dash_dot"`/… (case-/separator-insensitive)
+    or a raw int. Raises `ValueError` for an unknown name.
+    """
+    if isinstance(dash, bool):
+        raise ValueError(f"invalid dash style: {dash!r}")
+    if isinstance(dash, int):
+        return int(dash)
+    found = _DASH_STYLES.get(str(dash).strip().lower().replace(" ", "_").replace("-", "_"))
+    if found is None:
+        choices = ", ".join(DASH_STYLE_CHOICES)
+        raise ValueError(f"unknown dash style {dash!r}; expected one of: {choices}")
+    return found
+
+
+def dash_style_name(value: Any) -> str | int | None:
+    """Friendly name for a `MsoLineDashStyle` int (`4 -> "dash"`)."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    if n <= 0:  # msoLineDashStyleMixed (-2) / unset
+        return None
+    return _DASH_STYLE_NAMES.get(n, n)
+
+
+_ARROWHEAD_STYLES: dict[str, int] = {
+    "none": 1,
+    "triangle": 2,
+    "open": 3,
+    "stealth": 4,
+    "diamond": 5,
+    "oval": 6,
+}
+
+ARROWHEAD_STYLE_CHOICES: tuple[str, ...] = tuple(_ARROWHEAD_STYLES)
+
+_ARROWHEAD_STYLE_NAMES: dict[int, str] = {v: k for k, v in _ARROWHEAD_STYLES.items()}
+
+# Arrowhead size — `MsoArrowheadLength` (1-3) and `MsoArrowheadWidth` (1-3) share
+# one friendly small/medium/large knob (set both length + width together).
+_ARROWHEAD_SIZES: dict[str, int] = {"small": 1, "medium": 2, "large": 3}
+
+ARROWHEAD_SIZE_CHOICES: tuple[str, ...] = tuple(_ARROWHEAD_SIZES)
+
+
+def arrowhead_style_for(style: str | int) -> int:
+    """Friendly arrowhead name (or raw `MsoArrowheadStyle` int) -> the int.
+
+    `"none"`/`"triangle"`/`"open"`/`"stealth"`/`"diamond"`/`"oval"` or a raw int.
+    Raises `ValueError` for an unknown name.
+    """
+    if isinstance(style, bool):
+        raise ValueError(f"invalid arrowhead style: {style!r}")
+    if isinstance(style, int):
+        return int(style)
+    found = _ARROWHEAD_STYLES.get(str(style).strip().lower().replace(" ", "_").replace("-", "_"))
+    if found is None:
+        choices = ", ".join(ARROWHEAD_STYLE_CHOICES)
+        raise ValueError(f"unknown arrowhead style {style!r}; expected one of: {choices}")
+    return found
+
+
+def arrowhead_style_name(value: Any) -> str | int | None:
+    """Friendly name for a `MsoArrowheadStyle` int (`2 -> "triangle"`)."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    if n <= 0:  # msoArrowheadStyleMixed (-2) / unset
+        return None
+    return _ARROWHEAD_STYLE_NAMES.get(n, n)
+
+
+def arrowhead_size_for(size: str | int) -> int:
+    """Friendly arrowhead size (`small`/`medium`/`large`, or raw 1-3) -> the int.
+
+    Drives both `MsoArrowheadLength` and `MsoArrowheadWidth` together. Raises
+    `ValueError` for an unknown name.
+    """
+    if isinstance(size, bool):
+        raise ValueError(f"invalid arrowhead size: {size!r}")
+    if isinstance(size, int):
+        return int(size)
+    found = _ARROWHEAD_SIZES.get(str(size).strip().lower())
+    if found is None:
+        choices = ", ".join(ARROWHEAD_SIZE_CHOICES)
+        raise ValueError(f"unknown arrowhead size {size!r}; expected one of: {choices}")
+    return found
+
+
 # ---------------------------------------------------------------------------
 # Slide render (v0.4): image-export formats
 # ---------------------------------------------------------------------------

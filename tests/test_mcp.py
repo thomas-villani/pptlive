@@ -521,7 +521,12 @@ def test_format_sets_shape_fill(fake_powerpoint: Any) -> None:
     out = ppt_edit("format", anchor_id="shape:2:1", fill_color="#FF0000", line_color="none")
     assert out["ok"] is True
     d = ppt_read("slide", slide=2)["shapes"][0]
-    assert d["fill"] == {"type": "solid", "color": "#FF0000", "visible": True}
+    assert d["fill"] == {
+        "type": "solid",
+        "color": "#FF0000",
+        "visible": True,
+        "transparency": 0.0,
+    }
     assert d["line"]["visible"] is False
 
 
@@ -534,12 +539,19 @@ def test_format_fill_on_non_shape_anchor_errors(fake_powerpoint: Any) -> None:
 
 def test_shape_add_with_fill(fake_powerpoint: Any) -> None:
     out = ppt_edit("shape_add", slide=3, kind="shape", shape_type="rectangle", fill_color="#102030")
-    assert out["fill"] == {"type": "solid", "color": "#102030", "visible": True}
+    assert out["fill"] == {
+        "type": "solid",
+        "color": "#102030",
+        "visible": True,
+        "transparency": 0.0,
+    }
 
 
 def test_shape_gradient_fill(fake_powerpoint: Any) -> None:
     out = ppt_edit(
-        "shape_gradient_fill", anchor_id="shape:2:1", colors=["#FF0000", "#0000FF"],
+        "shape_gradient_fill",
+        anchor_id="shape:2:1",
+        colors=["#FF0000", "#0000FF"],
         gradient_style="vertical",
     )
     assert out["ok"] is True
@@ -559,7 +571,9 @@ def test_shape_gradient_fill_requires_colors_or_preset(fake_powerpoint: Any) -> 
 
 
 def test_shape_pattern_fill(fake_powerpoint: Any) -> None:
-    out = ppt_edit("shape_pattern_fill", anchor_id="shape:2:1", pattern="percent_50", fore="#FF0000")
+    out = ppt_edit(
+        "shape_pattern_fill", anchor_id="shape:2:1", pattern="percent_50", fore="#FF0000"
+    )
     assert out["fill"]["type"] == "patterned"
     assert out["fill"]["pattern"] == "percent_50"
 
@@ -571,8 +585,10 @@ def test_shape_picture_fill_missing_file_errors(fake_powerpoint: Any) -> None:
 
 def test_shape_set_effect(fake_powerpoint: Any) -> None:
     out = ppt_edit(
-        "shape_set_effect", anchor_id="shape:2:1",
-        shadow={"color": "#FF0000", "blur": 8}, soft_edge=4,
+        "shape_set_effect",
+        anchor_id="shape:2:1",
+        shadow={"color": "#FF0000", "blur": 8},
+        soft_edge=4,
     )
     assert out["effects"]["shadow"]["color"] == "#FF0000"
     assert out["effects"]["soft_edge"]["type"] == 4
@@ -583,6 +599,37 @@ def test_shape_set_effect(fake_powerpoint: Any) -> None:
 def test_shape_set_effect_requires_an_arg(fake_powerpoint: Any) -> None:
     with pytest.raises(ToolError) as exc:
         ppt_edit("shape_set_effect", anchor_id="shape:2:1")
+    assert "invalid_args" in str(exc.value)
+
+
+def test_format_sets_fill_transparency(fake_powerpoint: Any) -> None:
+    ppt_edit("format", anchor_id="shape:2:1", fill_color="#FF0000", fill_transparency=0.4)
+    assert ppt_read("slide", slide=2)["shapes"][0]["fill"]["transparency"] == 0.4
+
+
+def test_shape_line_style(fake_powerpoint: Any) -> None:
+    out = ppt_edit(
+        "shape_line_style",
+        anchor_id="shape:2:1",
+        dash="dash_dot",
+        end_arrow="triangle",
+        end_arrow_size="large",
+    )
+    assert out["line"]["dash"] == "dash_dot"
+    assert out["line"]["end_arrow"] == "triangle"
+    # surfaces on a slide read too
+    assert ppt_read("slide", slide=2)["shapes"][0]["line"]["dash"] == "dash_dot"
+
+
+def test_shape_line_style_requires_an_arg(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("shape_line_style", anchor_id="shape:2:1")
+    assert "invalid_args" in str(exc.value)
+
+
+def test_shape_line_style_bad_dash_errors(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("shape_line_style", anchor_id="shape:2:1", dash="squiggle")
     assert "invalid_args" in str(exc.value)
 
 

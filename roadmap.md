@@ -65,9 +65,16 @@ honestly, and sketches the wrapper shape so it slots into the established
 > `shape_picture_fill`/`shape_pattern_fill`/`shape_set_effect`). Every shape read now
 > carries a `fill.type` discriminator (+ gradient `stops` / pattern detail) and an
 > `effects` field. Live net-zero confirmed (multi-stop reads back sorted; preset
-> "ocean" → a 4-stop ramp; all four effects round-trip). **So v1.2 styling is now
-> complete** — the only fill deferrals left are partial-alpha `.Transparency`, line
-> `.DashStyle`/arrowheads, and the 3-D effect long tail.
+> "ocean" → a 4-stop ramp; all four effects round-trip). The follow-up cut —
+> **partial-alpha transparency + line dash/arrowheads** — also shipped under v0.5.0
+> (spiked `scripts/line_alpha_spike.py`): `Shape.set_fill` gains `fill_transparency`/
+> `line_transparency` (0..1 alpha), and a new `Shape.set_line_style(dash=, begin_arrow=,
+> end_arrow=, begin_arrow_size=, end_arrow_size=)` covers `MsoLineDashStyle` + arrowheads
+> (lines/connectors-only — a closed shape rejects them); every shape read's `fill`/`line`
+> now carries `transparency`, `line.dash`, and `begin_arrow`/`end_arrow`. CLI `shape
+> line-style` + `shape fill --fill-transparency/--line-transparency`; MCP `ppt_edit`
+> `shape_line_style` + `format` transparency. **So v1.2 styling is now complete** — the
+> only deferrals left are the 3-D effect long tail and per-corner/per-side line geometry.
 >
 > **Spiked 2026-06-11 (planning round, no code shipped — four net-zero spikes).**
 > De-risked four deferred tiers ahead of building them; every COM behaviour pinned
@@ -248,9 +255,10 @@ v0.3's `format_text` and v0.9's theme palette.
   (`{color, visible[, weight]}`) with the `color_hex_or_none` theme-sentinel guard.
   Wired library + CLI (`shape fill`, `shape add --fill/--line/--line-width`) + MCP
   (`format` `fill_color`/`line_color`/`line_width`, `shape_add`). Reuses
-  `parse_color`/`color_hex` (R-low-byte RGB long). **Still open:** `.Transparency`
-  (partial alpha) and line `.DashStyle` / arrowheads — and the gradient / picture /
-  pattern cut, now **spiked & de-risked** (next bullet).
+  `parse_color`/`color_hex` (R-low-byte RGB long). **Partial-alpha `.Transparency`
+  and line `.DashStyle`/arrowheads SHIPPED (v0.5.0, 2026-06-12)** — see the
+  transparency/line-style bullet below; the gradient / picture / pattern cut also
+  shipped (next bullet).
 - [x] **Gradient / picture / pattern fills — SHIPPED (v0.5.0, 2026-06-12).**
   Dedicated `Shape.set_gradient_fill` / `set_picture_fill` / `set_pattern_fill`
   verbs + a `fill.type` discriminator on every shape read; live net-zero confirmed
@@ -326,8 +334,23 @@ v0.3's `format_text` and v0.9's theme palette.
   position)` and read stops back **sorted by `.Position`**; and `UserPicture`
   **does** require an absolute path (relative raises `ERROR_FILE_NOT_FOUND`). So the
   build can ship **solid + line + two-colour + preset + multi-stop (via `Insert`) +
-  picture + pattern** in one cut — the only deferral left is partial-alpha
-  `.Transparency` and line `.DashStyle`/arrowheads.
+  picture + pattern** in one cut.
+- [x] **Partial-alpha transparency + line dash/arrowheads — SHIPPED (v0.5.0,
+  2026-06-12).** The last v1.2 fill/line deferrals, spiked live
+  (`scripts/line_alpha_spike.py`, net-zero) before building. Findings: `Fill.Transparency`
+  / `Line.Transparency` are `0..1` floats that round-trip cleanly after `Solid()`;
+  `Line.DashStyle` round-trips for the standard `MsoLineDashStyle` 1–9; **arrowheads are
+  lines/connectors-only** — `Begin/EndArrowheadStyle`/`Length`/`Width` round-trip on a
+  connector but a **closed rectangle raises "value out of range."** Built:
+  `Shape.set_fill(..., fill_transparency=, line_transparency=)` (alpha validated 0..1
+  before any COM) and a new `Shape.set_line_style(dash=, begin_arrow=, end_arrow=,
+  begin_arrow_size=, end_arrow_size=)` (friendly names + raw-int passthrough; arrowhead
+  size = one small/medium/large knob driving both length + width). Reads: `fill`/`line`
+  carry `transparency`, `line` carries `dash` (+ `begin_arrow`/`end_arrow` when set).
+  CLI `shape line-style` + `shape fill --fill-transparency/--line-transparency`; MCP
+  `ppt_edit` `shape_line_style` + `format` transparency. Constants: `MsoLineDashStyle`,
+  `MsoArrowheadStyle`, `MsoArrowheadLength`/`Width` (small/medium/large). Only deferrals
+  left now: the 3-D effect long tail and per-side/per-corner line geometry.
 
 ---
 

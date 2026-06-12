@@ -409,12 +409,15 @@ existing content (otherwise it lands on top). Note that delete/restack shift the
 
 Set a shape's **fill** and/or **border** (the spatial equivalent of
 `format-text`, which is font color). `--fill`/`--line` take a `#RRGGBB` hex or
-`none`; `--line-width` is points. Pass at least one. Echoes the shape's updated
-`fill`/`line`.
+`none`; `--line-width` is points. `--fill-transparency`/`--line-transparency` are
+a `0..1` alpha (0 opaque, 1 fully transparent) — the partial-alpha knob, distinct
+from `none` (which hides it entirely). Pass at least one. Echoes the shape's
+updated `fill`/`line` (each now carrying `transparency`).
 
 ```bash
 pptlive shape fill --anchor-id shape:4:3 --fill "#1E74B5" --line none
 pptlive shape fill --anchor-id shapeid:4:9 --line "#333333" --line-width 1.5
+pptlive shape fill --anchor-id shape:4:3 --fill "#1E74B5" --fill-transparency 0.4
 ```
 
 ### `shape gradient-fill` / `picture-fill` / `pattern-fill`
@@ -445,6 +448,21 @@ pptlive shape effect --anchor-id shape:4:3 \
   --shadow '{"color":"#333333","blur":8,"offset_x":4,"offset_y":4}' \
   --glow '{"color":"#00AAFF","radius":10}' --soft-edge 4 --reflection 5
 pptlive shape effect --anchor-id shape:4:3 --shadow none   # remove the shadow
+```
+
+### `shape line-style`
+
+Set a shape's line **dash** pattern and/or **arrowheads** (the `line` read reports
+`dash` plus `begin_arrow`/`end_arrow` when set). `--dash` is a
+`solid`/`dash`/`round_dot`/`dash_dot`/`long_dash`/… name; `--begin-arrow`/
+`--end-arrow` are `none`/`triangle`/`open`/`stealth`/`diamond`/`oval`, with
+`--begin-arrow-size`/`--end-arrow-size` of `small`/`medium`/`large`. **Arrowheads
+apply to lines/connectors only** — a closed shape rejects them (use `--dash`
+there). Pass at least one.
+
+```bash
+pptlive shape line-style --anchor-id shape:4:3 --dash dash_dot
+pptlive shape line-style --anchor-id shape:4:5 --end-arrow triangle --end-arrow-size large
 ```
 
 ### `shape set-alt`

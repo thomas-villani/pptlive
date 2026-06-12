@@ -35,8 +35,11 @@ from .._presentation import Presentation
 from .._shapes import Shape
 from ..constants import (
     ALIGNMENT_CHOICES,
+    ARROWHEAD_SIZE_CHOICES,
+    ARROWHEAD_STYLE_CHOICES,
     AUTOSHAPE_CHOICES,
     CHART_TYPE_CHOICES,
+    DASH_STYLE_CHOICES,
     ENTRY_EFFECT_CHOICES,
     GRADIENT_STYLE_CHOICES,
     IMAGE_FORMAT_CHOICES,
@@ -1293,6 +1296,20 @@ def shape_set_alt(ctx: click.Context, deck: Presentation, anchor_id: str, alt_te
 @click.option(
     "--line-width", "line_width", type=float, default=None, help="Border weight in points."
 )
+@click.option(
+    "--fill-transparency",
+    "fill_transparency",
+    type=float,
+    default=None,
+    help="Fill alpha 0..1 (0 opaque, 1 fully transparent).",
+)
+@click.option(
+    "--line-transparency",
+    "line_transparency",
+    type=float,
+    default=None,
+    help="Border alpha 0..1 (0 opaque, 1 fully transparent).",
+)
 @_deck_command
 def shape_fill(
     ctx: click.Context,
@@ -1301,13 +1318,30 @@ def shape_fill(
     fill: str | None,
     line: str | None,
     line_width: float | None,
+    fill_transparency: float | None,
+    line_transparency: float | None,
 ) -> None:
     """Set a shape's fill and/or line (border) color — distinct from font color."""
-    if fill is None and line is None and line_width is None:
-        raise click.UsageError("shape fill requires --fill, --line, and/or --line-width")
+    if (
+        fill is None
+        and line is None
+        and line_width is None
+        and fill_transparency is None
+        and line_transparency is None
+    ):
+        raise click.UsageError(
+            "shape fill requires --fill, --line, --line-width, "
+            "--fill-transparency, and/or --line-transparency"
+        )
     sh = _resolve_shape(deck, anchor_id)
     with deck.edit(f"CLI: fill {anchor_id}"):
-        sh.set_fill(fill=fill, line=line, line_width=line_width)
+        sh.set_fill(
+            fill=fill,
+            line=line,
+            line_width=line_width,
+            fill_transparency=fill_transparency,
+            line_transparency=line_transparency,
+        )
     payload = {"ok": True, **sh.to_dict()}
     emit(
         payload,
@@ -1331,8 +1365,13 @@ def _split_csv(value: str) -> list[str]:
     default=None,
     help='Comma-separated colors, e.g. "#1a73e8,#fff". 1=one-color, 2=two-color, 3+=multi-stop.',
 )
-@click.option("--preset", "preset", type=click.Choice(PRESET_GRADIENT_CHOICES), default=None,
-              help='A named gradient ramp ("ocean", "fire", "rainbow", …) instead of --colors.')
+@click.option(
+    "--preset",
+    "preset",
+    type=click.Choice(PRESET_GRADIENT_CHOICES),
+    default=None,
+    help='A named gradient ramp ("ocean", "fire", "rainbow", …) instead of --colors.',
+)
 @click.option(
     "--positions",
     "positions",
@@ -1340,12 +1379,23 @@ def _split_csv(value: str) -> list[str]:
     help="Comma-separated stop positions 0..1 (same count as --colors; places interior stops).",
 )
 @click.option(
-    "--style", "style", type=click.Choice(GRADIENT_STYLE_CHOICES), default="horizontal",
-    show_default=True, help="Gradient direction."
+    "--style",
+    "style",
+    type=click.Choice(GRADIENT_STYLE_CHOICES),
+    default="horizontal",
+    show_default=True,
+    help="Gradient direction.",
 )
-@click.option("--variant", "variant", type=int, default=1, show_default=True, help="Shading variant 1-4.")
-@click.option("--degree", "degree", type=float, default=None,
-              help="One-color gradient brightness 0..1 (single-color only).")
+@click.option(
+    "--variant", "variant", type=int, default=1, show_default=True, help="Shading variant 1-4."
+)
+@click.option(
+    "--degree",
+    "degree",
+    type=float,
+    default=None,
+    help="One-color gradient brightness 0..1 (single-color only).",
+)
 @_deck_command
 def shape_gradient_fill(
     ctx: click.Context,
@@ -1366,19 +1416,28 @@ def shape_gradient_fill(
     sh = _resolve_shape(deck, anchor_id)
     with deck.edit(f"CLI: gradient fill {anchor_id}"):
         sh.set_gradient_fill(
-            color_list, positions=pos_list, style=style, variant=variant,
-            degree=degree, preset=preset,
+            color_list,
+            positions=pos_list,
+            style=style,
+            variant=variant,
+            degree=degree,
+            preset=preset,
         )
     payload = {"ok": True, **sh.to_dict()}
-    emit(payload, as_text=not ctx.obj["as_json"],
-         text=f"gradient-filled {sh.anchor_id} (type={payload['fill'] and payload['fill'].get('type')})")
+    emit(
+        payload,
+        as_text=not ctx.obj["as_json"],
+        text=f"gradient-filled {sh.anchor_id} (type={payload['fill'] and payload['fill'].get('type')})",
+    )
 
 
 @shape.command(name="picture-fill")
 @click.option(
     "--anchor-id", "anchor_id", required=True, help="Shape to fill (shape:S:N / shapeid:S:ID / ph)."
 )
-@click.option("--path", "path", required=True, help="Image file to fill with (resolved to absolute).")
+@click.option(
+    "--path", "path", required=True, help="Image file to fill with (resolved to absolute)."
+)
 @_deck_command
 def shape_picture_fill(ctx: click.Context, deck: Presentation, anchor_id: str, path: str) -> None:
     """Fill a shape with an image."""
@@ -1393,13 +1452,23 @@ def shape_picture_fill(ctx: click.Context, deck: Presentation, anchor_id: str, p
 @click.option(
     "--anchor-id", "anchor_id", required=True, help="Shape to fill (shape:S:N / shapeid:S:ID / ph)."
 )
-@click.option("--pattern", "pattern", type=click.Choice(PATTERN_CHOICES), required=True,
-              help="Pattern name (percent_50, trellis, dark_horizontal, …).")
+@click.option(
+    "--pattern",
+    "pattern",
+    type=click.Choice(PATTERN_CHOICES),
+    required=True,
+    help="Pattern name (percent_50, trellis, dark_horizontal, …).",
+)
 @click.option("--fore", "fore", required=True, help="Pattern foreground color (#RRGGBB).")
 @click.option("--back", "back", default=None, help="Pattern background color (#RRGGBB).")
 @_deck_command
 def shape_pattern_fill(
-    ctx: click.Context, deck: Presentation, anchor_id: str, pattern: str, fore: str, back: str | None
+    ctx: click.Context,
+    deck: Presentation,
+    anchor_id: str,
+    pattern: str,
+    fore: str,
+    back: str | None,
 ) -> None:
     """Give a shape a two-color pattern fill."""
     sh = _resolve_shape(deck, anchor_id)
@@ -1423,23 +1492,34 @@ def _effect_arg(raw: str | None, *, as_dict: bool, label: str) -> Any:
         try:
             val = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise click.UsageError(f'--{label} must be JSON like \'{{"color":"#000"}}\' or "none"') from exc
+            raise click.UsageError(
+                f'--{label} must be JSON like \'{{"color":"#000"}}\' or "none"'
+            ) from exc
         if not isinstance(val, dict):
             raise click.UsageError(f"--{label} JSON must be an object, got {type(val).__name__}")
         return val
     try:
         return int(raw)
     except ValueError as exc:
-        raise click.UsageError(f"--{label} must be an int preset or \"none\"") from exc
+        raise click.UsageError(f'--{label} must be an int preset or "none"') from exc
 
 
 @shape.command(name="effect")
 @click.option(
-    "--anchor-id", "anchor_id", required=True, help="Shape to style (shape:S:N / shapeid:S:ID / ph)."
+    "--anchor-id",
+    "anchor_id",
+    required=True,
+    help="Shape to style (shape:S:N / shapeid:S:ID / ph).",
 )
-@click.option("--shadow", "shadow", default=None,
-              help='JSON dict {color,transparency,blur,size,offset_x,offset_y} or "none".')
-@click.option("--glow", "glow", default=None, help='JSON dict {color,radius,transparency} or "none".')
+@click.option(
+    "--shadow",
+    "shadow",
+    default=None,
+    help='JSON dict {color,transparency,blur,size,offset_x,offset_y} or "none".',
+)
+@click.option(
+    "--glow", "glow", default=None, help='JSON dict {color,radius,transparency} or "none".'
+)
 @click.option("--soft-edge", "soft_edge", default=None, help='Soft-edge preset 0-6 or "none".')
 @click.option("--reflection", "reflection", default=None, help='Reflection preset 0-9 or "none".')
 @_deck_command
@@ -1465,8 +1545,89 @@ def shape_effect(
     with deck.edit(f"CLI: effects {anchor_id}"):
         sh.set_effect(shadow=shadow_arg, glow=glow_arg, soft_edge=soft_arg, reflection=refl_arg)
     payload = {"ok": True, **sh.to_dict()}
-    emit(payload, as_text=not ctx.obj["as_json"],
-         text=f"set effects on {sh.anchor_id} (effects={payload.get('effects')})")
+    emit(
+        payload,
+        as_text=not ctx.obj["as_json"],
+        text=f"set effects on {sh.anchor_id} (effects={payload.get('effects')})",
+    )
+
+
+@shape.command(name="line-style")
+@click.option(
+    "--anchor-id",
+    "anchor_id",
+    required=True,
+    help="Shape to style (shape:S:N / shapeid:S:ID / ph).",
+)
+@click.option(
+    "--dash", "dash", type=click.Choice(DASH_STYLE_CHOICES), default=None, help="Line dash pattern."
+)
+@click.option(
+    "--begin-arrow",
+    "begin_arrow",
+    type=click.Choice(ARROWHEAD_STYLE_CHOICES),
+    default=None,
+    help="Start arrowhead (lines/connectors only).",
+)
+@click.option(
+    "--end-arrow",
+    "end_arrow",
+    type=click.Choice(ARROWHEAD_STYLE_CHOICES),
+    default=None,
+    help="End arrowhead (lines/connectors only).",
+)
+@click.option(
+    "--begin-arrow-size",
+    "begin_arrow_size",
+    type=click.Choice(ARROWHEAD_SIZE_CHOICES),
+    default=None,
+    help="Start arrowhead size.",
+)
+@click.option(
+    "--end-arrow-size",
+    "end_arrow_size",
+    type=click.Choice(ARROWHEAD_SIZE_CHOICES),
+    default=None,
+    help="End arrowhead size.",
+)
+@_deck_command
+def shape_line_style(
+    ctx: click.Context,
+    deck: Presentation,
+    anchor_id: str,
+    dash: str | None,
+    begin_arrow: str | None,
+    end_arrow: str | None,
+    begin_arrow_size: str | None,
+    end_arrow_size: str | None,
+) -> None:
+    """Set a shape's line dash pattern and/or arrowheads (arrowheads: lines/connectors only)."""
+    if (
+        dash is None
+        and begin_arrow is None
+        and end_arrow is None
+        and begin_arrow_size is None
+        and end_arrow_size is None
+    ):
+        raise click.UsageError(
+            "shape line-style requires --dash, --begin-arrow, --end-arrow, "
+            "--begin-arrow-size, and/or --end-arrow-size"
+        )
+    sh = _resolve_shape(deck, anchor_id)
+    with deck.edit(f"CLI: line-style {anchor_id}"):
+        sh.set_line_style(
+            dash=dash,
+            begin_arrow=begin_arrow,
+            end_arrow=end_arrow,
+            begin_arrow_size=begin_arrow_size,
+            end_arrow_size=end_arrow_size,
+        )
+    payload = {"ok": True, **sh.to_dict()}
+    emit(
+        payload,
+        as_text=not ctx.obj["as_json"],
+        text=f"styled line on {sh.anchor_id} (line={payload['line']})",
+    )
 
 
 @shape.command(name="order")

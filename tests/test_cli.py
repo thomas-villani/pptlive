@@ -286,7 +286,12 @@ def test_shape_add_with_fill(fake_powerpoint) -> None:  # type: ignore[no-untype
     )
     assert result.exit_code == 0
     payload = _json(result)
-    assert payload["fill"] == {"type": "solid", "color": "#FF0000", "visible": True}
+    assert payload["fill"] == {
+        "type": "solid",
+        "color": "#FF0000",
+        "visible": True,
+        "transparency": 0.0,
+    }
     assert payload["line"]["visible"] is False
 
 
@@ -297,7 +302,12 @@ def test_shape_fill_command(fake_powerpoint) -> None:  # type: ignore[no-untyped
     )
     assert result.exit_code == 0
     payload = _json(result)
-    assert payload["fill"] == {"type": "solid", "color": "#102030", "visible": True}
+    assert payload["fill"] == {
+        "type": "solid",
+        "color": "#102030",
+        "visible": True,
+        "transparency": 0.0,
+    }
     assert payload["line"]["weight"] == 3.0
 
 
@@ -309,8 +319,16 @@ def test_shape_fill_requires_an_option_exit_2(fake_powerpoint) -> None:  # type:
 def test_shape_gradient_fill_command(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     result = CliRunner().invoke(
         main,
-        ["shape", "gradient-fill", "--anchor-id", "shape:2:1", "--colors", "#FF0000,#0000FF",
-         "--style", "vertical"],
+        [
+            "shape",
+            "gradient-fill",
+            "--anchor-id",
+            "shape:2:1",
+            "--colors",
+            "#FF0000,#0000FF",
+            "--style",
+            "vertical",
+        ],
     )
     assert result.exit_code == 0
     fill = _json(result)["fill"]
@@ -334,8 +352,18 @@ def test_shape_gradient_fill_requires_colors_or_preset(fake_powerpoint) -> None:
 def test_shape_pattern_fill_command(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     result = CliRunner().invoke(
         main,
-        ["shape", "pattern-fill", "--anchor-id", "shape:2:1", "--pattern", "percent_50",
-         "--fore", "#FF0000", "--back", "#FFFFFF"],
+        [
+            "shape",
+            "pattern-fill",
+            "--anchor-id",
+            "shape:2:1",
+            "--pattern",
+            "percent_50",
+            "--fore",
+            "#FF0000",
+            "--back",
+            "#FFFFFF",
+        ],
     )
     assert result.exit_code == 0
     fill = _json(result)["fill"]
@@ -346,8 +374,16 @@ def test_shape_pattern_fill_command(fake_powerpoint) -> None:  # type: ignore[no
 def test_shape_effect_command(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     result = CliRunner().invoke(
         main,
-        ["shape", "effect", "--anchor-id", "shape:2:1", "--shadow", '{"color":"#FF0000","blur":8}',
-         "--soft-edge", "4"],
+        [
+            "shape",
+            "effect",
+            "--anchor-id",
+            "shape:2:1",
+            "--shadow",
+            '{"color":"#FF0000","blur":8}',
+            "--soft-edge",
+            "4",
+        ],
     )
     assert result.exit_code == 0
     effects = _json(result)["effects"]
@@ -368,6 +404,49 @@ def test_shape_effect_none_disables(fake_powerpoint) -> None:  # type: ignore[no
 
 def test_shape_effect_requires_an_option(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     result = CliRunner().invoke(main, ["shape", "effect", "--anchor-id", "shape:2:1"])
+    assert result.exit_code == 2
+
+
+def test_shape_fill_transparency_command(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main,
+        [
+            "shape",
+            "fill",
+            "--anchor-id",
+            "shape:2:1",
+            "--fill",
+            "#FF0000",
+            "--fill-transparency",
+            "0.5",
+        ],
+    )
+    assert result.exit_code == 0
+    assert _json(result)["fill"]["transparency"] == 0.5
+
+
+def test_shape_line_style_command(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main,
+        [
+            "shape",
+            "line-style",
+            "--anchor-id",
+            "shape:2:1",
+            "--dash",
+            "dash_dot",
+            "--end-arrow",
+            "triangle",
+        ],
+    )
+    assert result.exit_code == 0
+    line = _json(result)["line"]
+    assert line["dash"] == "dash_dot"
+    assert line["end_arrow"] == "triangle"
+
+
+def test_shape_line_style_requires_an_option(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["shape", "line-style", "--anchor-id", "shape:2:1"])
     assert result.exit_code == 2
 
 
