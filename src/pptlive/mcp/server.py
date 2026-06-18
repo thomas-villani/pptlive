@@ -202,6 +202,11 @@ def ppt_read(
     - "slide": one slide in full — every shape with its anchor_id, name, id, type,
       geometry (points), text, and whether it holds a table/chart. Needs `slide`.
       This is how you discover the anchor_ids to target with `ppt_edit`.
+    - "geometry": a spatial sanity-check of a slide (needs `slide`) — the slide size
+      (points), each shape's bounding `box` + an `off_slide` flag, and the list of
+      `overlaps` (shape pairs whose boxes intersect, biggest first). Run it after
+      placing shapes to catch overlaps / off-edge shapes *without* a render. Axis-
+      aligned boxes; rotation isn't accounted for (each shape carries its `rotation`).
     - "anchor": the text of any text anchor (`anchor_id`): `ph:S:KIND` (placeholder,
       e.g. ph:2:title), `shape:S:N` (Nth shape by z-order), `para:S:N:P`,
       `cell:S:N:R:C` (table cell), `notes:S`, or `here:` (the user's selection).
@@ -303,6 +308,7 @@ def ppt_edit(
     to: int | None = None,
     layout: str | None = None,
     index: int | None = None,
+    placeholders: dict[str, dict[str, float]] | None = None,
     kind: Literal["textbox", "shape", "picture", "table", "chart", "smartart"] | None = None,
     shape_type: str = "rectangle",
     path: str | None = None,
@@ -374,6 +380,11 @@ def ppt_edit(
 
     Slide lifecycle:
     - "slide_add": add a slide (`layout` name, optional 1-based `index`; default end).
+      Optional `placeholders` repositions the layout's placeholders in the same op —
+      `{KIND: {left, top, width, height}}` (points, any subset), KIND as in `ph:S:KIND`
+      (e.g. {"body": {"left": 40, "width": 440}} for a left-half content area beside a
+      right-side panel). Saves the add-then-resize fix-up; returns each adjusted
+      placeholder's resulting geometry. Read op="geometry" gives the slide size to size from.
     - "slide_delete" / "slide_duplicate": delete / duplicate slide `slide`.
     - "slide_move": move slide `slide` to position `to`.
     - "set_layout": re-apply layout `layout` to slide `slide`.
@@ -532,6 +543,7 @@ def ppt_edit(
         "to": to,
         "layout": layout,
         "index": index,
+        "placeholders": placeholders,
         "kind": kind,
         "shape_type": shape_type,
         "path": path,
@@ -674,6 +686,7 @@ def ppt_batch(
     atomic: bool = True,
     stop_on_error: bool = True,
     embed: bool = True,
+    follow_view: bool | None = None,
 ) -> Any:
     """Run a list of ops against one PowerPoint connection — the way to build or
     restructure a slide without a round-trip per change. Each command is a dict:
@@ -697,6 +710,13 @@ def ppt_batch(
     result), so "build a slide, then look at it" works in one round trip even from a
     remote sandbox. Set False for paths only. Inline slide images default to
     ~1024 px on the long edge; a render command's own `width`/`height` overrides that.
+
+    `follow_view` ("follow the work", default on): when this batch ADDS a slide, the
+    user's view ends on the last slide the batch built instead of snapping back to
+    the pre-batch slide — so an authoring session isn't yanked back to slide 1 after
+    every batch. Pure-edit batches (no slide added) still preserve the view. Pass
+    False to force the polite snap-back; leave unset to take the `PPTLIVE_VIEW_FOLLOW`
+    env default. A deliberate `render navigate` / `show` op always wins over follow.
 
     Returns `{"ok": <all succeeded>, "atomic", "count", "results": [...]}` where each
     result is `{"index", "tool", "op", "ok", "result"}` on success or
@@ -729,6 +749,7 @@ def ppt_batch(
             doc=doc,
             atomic=atomic,
             stop_on_error=stop_on_error,
+            follow_view=follow_view,
             label=f"MCP: batch ({len(commands)} ops)",
         )
         summary = {

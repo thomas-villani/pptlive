@@ -59,6 +59,30 @@ def test_add_out_of_range_index_raises(deck) -> None:  # type: ignore[no-untyped
     deck.slides.add(index=len(deck.slides) + 1)
 
 
+# -- add(placeholders=...) — reposition layout placeholders in one op --------
+
+
+def test_apply_placeholder_geometry_moves_and_resizes(deck) -> None:  # type: ignore[no-untyped-def]
+    # Slide 2 has a body placeholder; shrink it to a left-half content area.
+    deck.slides._apply_placeholder_geometry(2, {"body": {"left": 40, "top": 140, "width": 440}})
+    geo = deck.anchor_by_id("ph:2:body").geometry()
+    assert geo["left"] == 40
+    assert geo["top"] == 140
+    assert geo["width"] == 440
+
+
+def test_add_rejects_bad_placeholder_geometry(deck) -> None:  # type: ignore[no-untyped-def]
+    # Validation runs before the slide is created (an unknown key is a typo guard).
+    before = len(deck.slides)
+    with pytest.raises(ValueError, match="unknown key"):
+        deck.slides.add(layout="blank", placeholders={"body": {"wide": 5}})
+    with pytest.raises(ValueError, match="must be a number"):
+        deck.slides.add(layout="blank", placeholders={"body": {"left": True}})
+    with pytest.raises(ValueError, match="non-empty geometry dict"):
+        deck.slides.add(layout="blank", placeholders={"body": {}})
+    assert len(deck.slides) == before  # nothing was created on a rejected call
+
+
 # -- delete -----------------------------------------------------------------
 
 

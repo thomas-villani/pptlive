@@ -747,12 +747,14 @@ def _hyperlink_to_dict(com_shape: Any) -> dict[str, Any] | None:
 def shape_to_dict(com_shape: Any, slide_index: int, z_index: int) -> dict[str, Any]:
     """Structured snapshot of one shape for `slide.read()` / `shapes.list()`.
 
-    Emits the canonical `anchor_id` (`shape:S:N`) plus the drift-proof `name`
-    and `id`, the friendly shape `type`, `geometry` (points), placeholder kind
-    (or None), and `text` when the shape has a text frame.
+    Emits the canonical `anchor_id` (`shape:S:N`) plus the drift-proof `shapeid`
+    (`shapeid:S:ID`), `name`, and `id`, the friendly shape `type`, `geometry`
+    (points), placeholder kind (or None), and `text` when the shape has a text
+    frame.
     """
     d: dict[str, Any] = {
         "anchor_id": f"shape:{slide_index}:{z_index}",
+        "shapeid": f"shapeid:{slide_index}:{int(com_shape.Id)}",
         "index": z_index,
         "name": str(com_shape.Name),
         "id": int(com_shape.Id),
@@ -850,6 +852,18 @@ class Shape(Anchor):
         """`Shape.Id` — stable across z-order reordering."""
         with _com.translate_com_errors():
             return int(self._com_shape().Id)
+
+    @property
+    def shapeid(self) -> str:
+        """The restack-proof anchor for this shape — `shapeid:S:ID`.
+
+        Built live from `Shape.Id`, so it survives the z-order drift that shifts
+        `shape:S:N` when shapes are added / deleted / reordered. Every shape read
+        and mutation echoes this alongside `anchor_id`, so an agent can chain
+        edits on a shape across a restack without re-reading the slide.
+        """
+        with _com.translate_com_errors():
+            return f"shapeid:{self._slide.index}:{int(self._com_shape().Id)}"
 
     @property
     def shape_type(self) -> str:

@@ -411,6 +411,12 @@ def test_slide_add_and_delete(fake_powerpoint: Any) -> None:
     assert len(ppt_read("slides")["slides"]) == 3
 
 
+def test_slide_add_bad_placeholders_is_invalid_args(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("slide_add", layout="blank", placeholders={"body": {"bogus": 1}})
+    assert "invalid_args" in str(exc.value)
+
+
 def test_slide_duplicate(fake_powerpoint: Any) -> None:
     dup = ppt_edit("slide_duplicate", slide=1)
     assert dup["from"] == 1 and dup["index"] == 2
@@ -643,6 +649,68 @@ def test_shape_order_send_to_back(fake_powerpoint: Any) -> None:
 def test_shape_order_requires_order(fake_powerpoint: Any) -> None:
     with pytest.raises(ToolError) as exc:
         ppt_edit("shape_order", anchor_id="shape:2:1")
+    assert "invalid_args" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# shapeid everywhere: every shape read + mutation echoes the restack-proof
+# `shapeid:S:ID`, so a chained edit survives the z-order drift it causes.
+# ---------------------------------------------------------------------------
+
+
+def test_slide_read_carries_shapeid(fake_powerpoint: Any) -> None:
+    sh = ppt_read("slide", slide=2)["shapes"][0]  # Title 1, Shape.Id 2
+    assert sh["shapeid"] == f"shapeid:2:{sh['id']}"
+    assert sh["shapeid"] == "shapeid:2:2"
+
+
+def test_shape_order_returns_stable_shapeid(fake_powerpoint: Any) -> None:
+    # Sending Title 1 to the back shifts shape:S:N indices, but the returned
+    # shapeid keeps reaching the same shape.
+    out = ppt_edit("shape_order", anchor_id="shape:2:1", order="back")
+    assert out["ok"] is True
+    assert out["shapeid"] == "shapeid:2:2"  # Title 1 has Shape.Id 2
+    assert ppt_read("anchor", anchor_id=out["shapeid"])["text"] == "Agenda"
+
+
+def test_shape_move_echoes_shapeid(fake_powerpoint: Any) -> None:
+    out = ppt_edit("shape_move", anchor_id="shape:2:3", left=12.0)
+    assert out["shapeid"] == "shapeid:2:4"  # Picture 3 has Shape.Id 4
+
+
+# ---------------------------------------------------------------------------
+# Geometry report (read op "geometry"): a spatial sanity-check before rendering.
+# ---------------------------------------------------------------------------
+
+
+def test_geometry_report_flags_overlap(fake_powerpoint: Any) -> None:
+    rep = ppt_read("geometry", slide=1)
+    assert rep["slide"] == 1
+    assert rep["slide_size"] == {"width": 960.0, "height": 540.0}
+    assert len(rep["shapes"]) == 2
+    assert all(not s["off_slide"] for s in rep["shapes"])
+    # Both placeholders sit at the default (10,20,100,50) box -> they overlap.
+    assert len(rep["overlaps"]) == 1
+    ov = rep["overlaps"][0]
+    assert {ov["a"], ov["b"]} == {"shape:1:1", "shape:1:2"}
+    assert ov["area"] == 100.0 * 50.0
+    assert rep["off_slide"] == []
+    # Each box carries the stable shapeid for re-addressing.
+    assert rep["shapes"][0]["shapeid"] == "shapeid:1:2"
+
+
+def test_geometry_report_flags_off_slide(fake_powerpoint: Any) -> None:
+    # Push a 100-wide shape to left=900 -> right edge 1000 > slide width 960.
+    ppt_edit("shape_move", anchor_id="shape:1:1", left=900.0)
+    rep = ppt_read("geometry", slide=1)
+    moved = next(s for s in rep["shapes"] if s["anchor_id"] == "shape:1:1")
+    assert moved["off_slide"] is True
+    assert "shape:1:1" in rep["off_slide"]
+
+
+def test_geometry_report_requires_slide(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError) as exc:
+        ppt_read("geometry")
     assert "invalid_args" in str(exc.value)
 
 
@@ -1407,6 +1475,82 @@ def test_single_edit_preserves_viewed_slide(fake_powerpoint: Any) -> None:
     fake_powerpoint._viewed = 4
     ppt_edit("write", anchor_id="ph:2:title", text="hello")
     assert fake_powerpoint._viewed == 4
+
+
+# ---------------------------------------------------------------------------
+# "Follow the work" (default on): an authoring batch that ADDS a slide ends on
+# the slide it built, instead of snapping back to slide 1 every batch.
+# ---------------------------------------------------------------------------
+
+
+def test_batch_follows_the_work_to_new_slide(fake_powerpoint: Any) -> None:
+    # User is on slide 1; the batch adds slide 4 and builds on it. The view
+    # should END on slide 4 (the work), not snap back to slide 1.
+    fake_powerpoint._viewed = 1
+    out = ppt_batch(
+        [
+            {"op": "slide_add", "layout": "blank"},
+            {"op": "shape_add", "slide": 4, "kind": "textbox", "text": "Built here"},
+        ]
+    )
+    assert out["ok"] is True
+    assert out["results"][0]["result"]["index"] == 4  # new slide at the end
+    assert fake_powerpoint._viewed == 4  # followed the work, not snapped back to 1
+
+
+def test_batch_pure_edit_does_not_follow(fake_powerpoint: Any) -> None:
+    # No slide added -> not an authoring batch -> the polite restore still wins.
+    fake_powerpoint._viewed = 1
+    out = ppt_batch(
+        [
+            {"op": "write", "anchor_id": "ph:2:title", "text": "Q3"},
+            {"op": "write", "anchor_id": "ph:2:body", "text": "up"},
+        ]
+    )
+    assert out["ok"] is True
+    assert fake_powerpoint._viewed == 1  # preserved (edits only touched slide 2)
+
+
+def test_batch_follow_view_false_restores(fake_powerpoint: Any) -> None:
+    # The per-call opt-out forces the polite snap-back even on an authoring batch.
+    fake_powerpoint._viewed = 1
+    out = ppt_batch(
+        [
+            {"op": "slide_add", "layout": "blank"},
+            {"op": "shape_add", "slide": 4, "kind": "textbox", "text": "x"},
+        ],
+        follow_view=False,
+    )
+    assert out["ok"] is True
+    assert fake_powerpoint._viewed == 1  # snapped back to the pre-batch slide
+
+
+def test_batch_follow_view_env_off(fake_powerpoint: Any, monkeypatch: Any) -> None:
+    # PPTLIVE_VIEW_FOLLOW=0 disables follow without a per-call flag.
+    monkeypatch.setenv("PPTLIVE_VIEW_FOLLOW", "0")
+    fake_powerpoint._viewed = 1
+    out = ppt_batch(
+        [
+            {"op": "slide_add", "layout": "blank"},
+            {"op": "shape_add", "slide": 4, "kind": "textbox", "text": "x"},
+        ]
+    )
+    assert out["ok"] is True
+    assert fake_powerpoint._viewed == 1
+
+
+def test_batch_navigate_wins_over_follow(fake_powerpoint: Any) -> None:
+    # A deliberate navigate inside an authoring batch is respected — follow must
+    # not override it with the new slide.
+    fake_powerpoint._viewed = 1
+    out = ppt_batch(
+        [
+            {"op": "slide_add", "layout": "blank"},
+            {"tool": "render", "op": "navigate", "anchor_id": "shape:2:1"},
+        ]
+    )
+    assert out["ok"] is True
+    assert fake_powerpoint._viewed == 2  # navigate target, not the new slide 4
 
 
 # ---------------------------------------------------------------------------

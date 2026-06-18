@@ -126,6 +126,14 @@ def test_slide_add_unknown_layout_exit_2(fake_powerpoint) -> None:  # type: igno
     assert fake_powerpoint.ActivePresentation.Slides.Count == 3
 
 
+def test_slide_add_bad_placeholders_json_exit_2(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main, ["slide", "add", "--layout", "blank", "--placeholders", "{not json}"]
+    )
+    assert result.exit_code == 2  # click UsageError on malformed JSON
+    assert fake_powerpoint.ActivePresentation.Slides.Count == 3
+
+
 def test_slide_delete(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     result = CliRunner().invoke(main, ["slide", "delete", "--slide", "2"])
     assert result.exit_code == 0
@@ -474,6 +482,24 @@ def test_shapeid_anchor_via_cli(fake_powerpoint) -> None:  # type: ignore[no-unt
     payload = _json(result)
     assert payload["anchor_id"] == "shapeid:2:3"
     assert payload["text"] == "Intro\rDemo\rQ&A"
+
+
+def test_slide_geometry_report_via_cli(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["slide", "geometry", "1"])
+    assert result.exit_code == 0
+    rep = _json(result)
+    assert rep["slide_size"] == {"width": 960.0, "height": 540.0}
+    # Slide 1's two placeholders share the default box, so they overlap.
+    assert len(rep["overlaps"]) == 1
+    assert rep["shapes"][0]["shapeid"] == "shapeid:1:2"
+
+
+def test_shape_order_cli_echoes_shapeid(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main, ["shape", "order", "--anchor-id", "shape:2:1", "--to", "back"]
+    )
+    assert result.exit_code == 0
+    assert _json(result)["shapeid"] == "shapeid:2:2"
 
 
 def test_paragraphs_list(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]

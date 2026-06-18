@@ -687,7 +687,7 @@ def outline(ctx: click.Context, deck: Presentation) -> None:
 
 @click.group(name="slide")
 def slide() -> None:
-    """Slide reads + lifecycle: read, add, delete, duplicate, move, set-layout, layouts."""
+    """Slide reads + lifecycle: read, geometry, add, delete, duplicate, move, set-layout, layouts."""
 
 
 @slide.command(name="read")
@@ -697,6 +697,27 @@ def slide_read(ctx: click.Context, deck: Presentation, index: int) -> None:
     """Read every shape on slide INDEX: anchor_id, name, type, geometry, text."""
     grid = deck.slides[index].read()
     emit(grid, as_text=not ctx.obj["as_json"], text=_fmt_slide_read(grid))
+
+
+@slide.command(name="geometry")
+@click.argument("index", type=int)
+@_deck_command
+def slide_geometry(ctx: click.Context, deck: Presentation, index: int) -> None:
+    """Spatial map of slide INDEX: slide size, per-shape boxes, overlaps, off-slide.
+
+    The geometry sanity-check to run after placing shapes — catch overlaps or an
+    off-edge shape without a render. Axis-aligned boxes (rotation not accounted
+    for). A read; the user's view doesn't move.
+    """
+    report = deck.slides[index].geometry_report()
+    n_over, n_off = len(report["overlaps"]), len(report["off_slide"])
+    emit(
+        report,
+        as_text=not ctx.obj["as_json"],
+        text=(
+            f"slide {index}: {len(report['shapes'])} shapes, {n_over} overlap(s), {n_off} off-slide"
+        ),
+    )
 
 
 @slide.command(name="layouts")
@@ -767,14 +788,43 @@ def slide_export(
 @click.option(
     "--index", "index", type=int, default=None, help="1-based insertion position (default: end)."
 )
+@click.option(
+    "--placeholders",
+    "placeholders_json",
+    default=None,
+    help=(
+        'JSON map repositioning placeholders, e.g. \'{"body": {"left": 40, "width": 440}}\' '
+        "(points, any subset of left/top/width/height; KIND as in ph:S:KIND) — "
+        "add + resize in one op (a left-half content area beside a right-side panel)."
+    ),
+)
 @_deck_command
 def slide_add(
-    ctx: click.Context, deck: Presentation, layout: str | None, index: int | None
+    ctx: click.Context,
+    deck: Presentation,
+    layout: str | None,
+    index: int | None,
+    placeholders_json: str | None,
 ) -> None:
     """Add a slide; print its index, id, and layout."""
+    placeholders = None
+    if placeholders_json is not None:
+        try:
+            placeholders = json.loads(placeholders_json)
+        except json.JSONDecodeError as exc:
+            raise click.UsageError(f"invalid JSON in --placeholders: {exc}") from exc
     with deck.edit(f"CLI: add slide ({layout or 'default'})"):
-        new = deck.slides.add(layout=layout, index=index)
-    payload = {"ok": True, "index": new.index, "id": new.id, "layout": new.layout_name}
+        new = deck.slides.add(layout=layout, index=index, placeholders=placeholders)
+    payload: dict[str, Any] = {
+        "ok": True,
+        "index": new.index,
+        "id": new.id,
+        "layout": new.layout_name,
+    }
+    if placeholders:
+        payload["placeholders"] = {
+            kind: _resolve_shape(deck, f"ph:{new.index}:{kind}").geometry() for kind in placeholders
+        }
     emit(
         payload,
         as_text=not ctx.obj["as_json"],
@@ -1651,9 +1701,15 @@ def shape_order(ctx: click.Context, deck: Presentation, anchor_id: str, to: str)
     with deck.edit(f"CLI: order {anchor_id} {to}"):
         new_index = sh.reorder(to)
     emit(
-        {"ok": True, "anchor_id": sh.anchor_id, "name": sh.name, "index": new_index},
+        {
+            "ok": True,
+            "anchor_id": sh.anchor_id,
+            "shapeid": sh.shapeid,
+            "name": sh.name,
+            "index": new_index,
+        },
         as_text=not ctx.obj["as_json"],
-        text=f"sent {sh.anchor_id} to {to} (now z-index {new_index})",
+        text=f"sent {sh.anchor_id} to {to} (now z-index {new_index}); stable handle {sh.shapeid}",
     )
 
 
@@ -2728,9 +2784,21 @@ _BATCH_EXIT_FOR: dict[str, int] = {
     default=False,
     help="Fence each op as its own undo entry (default: the whole script is one Ctrl-Z).",
 )
+@click.option(
+    "--no-follow-view",
+    "no_follow_view",
+    is_flag=True,
+    default=False,
+    help="Snap the view back to the pre-batch slide (default: a script that adds a "
+    "slide ends on the last slide it built). Also settable via PPTLIVE_VIEW_FOLLOW=0.",
+)
 @click.pass_context
 def exec_script(
-    ctx: click.Context, script_path: str, continue_on_error: bool, no_atomic: bool
+    ctx: click.Context,
+    script_path: str,
+    continue_on_error: bool,
+    no_atomic: bool,
+    no_follow_view: bool,
 ) -> None:
     """Apply a JSON batch script of ops against one connection (the CLI batch verb).
 
@@ -2760,6 +2828,7 @@ def exec_script(
                 doc=ctx.obj["doc_name"],
                 atomic=not no_atomic,
                 stop_on_error=not continue_on_error,
+                follow_view=False if no_follow_view else None,
                 label=f"CLI exec: {label}",
             )
         ok = all(r["ok"] for r in results)
