@@ -47,6 +47,33 @@ if TYPE_CHECKING:
     from ._presentation import Presentation
 
 
+_PLACEHOLDER_GEOMETRY_KEYS = frozenset({"left", "top", "width", "height"})
+
+
+def _validate_placeholders_arg(placeholders: dict[str, dict[str, float]] | None) -> None:
+    """Guard the `add(placeholders=...)` map before any COM work (clean ValueError).
+
+    Each value must be a dict with at least one of left/top/width/height (numbers);
+    unknown keys are rejected so a typo (`with`) fails loudly rather than silently.
+    """
+    if placeholders is None:
+        return
+    if not isinstance(placeholders, dict):
+        raise ValueError("placeholders must be a dict of {kind: {left/top/width/height}}")
+    for kind, geo in placeholders.items():
+        if not isinstance(geo, dict) or not geo:
+            raise ValueError(f"placeholders[{kind!r}] must be a non-empty geometry dict")
+        unknown = set(geo) - _PLACEHOLDER_GEOMETRY_KEYS
+        if unknown:
+            raise ValueError(
+                f"placeholders[{kind!r}] has unknown key(s) {sorted(unknown)}; "
+                "allowed: left, top, width, height"
+            )
+        for key, val in geo.items():
+            if isinstance(val, bool) or not isinstance(val, (int, float)):
+                raise ValueError(f"placeholders[{kind!r}][{key!r}] must be a number (points)")
+
+
 def _paragraphs(text: str) -> list[str]:
     """Split a PowerPoint `TextRange.Text` into non-empty paragraph strings.
 
@@ -245,6 +272,80 @@ class Slide:
             follows = is_true(self._slide.FollowMasterBackground)
             bg = background_to_dict(self._slide)
         return {"follows_master": follows, **bg}
+
+    def geometry_report(self) -> dict[str, Any]:
+        """A geometry-only spatial map of the slide — catch overlaps and off-slide
+        shapes *before* rendering.
+
+        Returns the slide size (points) and, per shape, its bounding `box`
+        (`left`/`top`/`right`/`bottom`/`width`/`height`) plus an `off_slide` flag,
+        then the list of `overlaps` (shape pairs whose boxes intersect, largest
+        area first) and the `off_slide` anchor ids. The point of it is the feedback
+        loop the snapshot can't give cheaply: an agent that just placed an arrow or
+        a card can see "shape:5:3 overlaps shape:5:4" or "the arrow runs off the
+        right edge" without a render round-trip or float math.
+
+        Pure axis-aligned geometry on the boxes PowerPoint reports — shape
+        **rotation is not accounted for** (the box is the unrotated extent), so a
+        rotated shape's overlap / bounds are approximate (each shape carries its
+        `rotation` so the caller can judge). A read — no view move.
+        """
+        with _com.translate_com_errors():
+            ps = self._deck.com.PageSetup
+            width, height = float(ps.SlideWidth), float(ps.SlideHeight)
+        boxes: list[tuple[dict[str, Any], float, float, float, float]] = []
+        shapes_out: list[dict[str, Any]] = []
+        for s in self.shapes.list():
+            geo = s.get("geometry")
+            if not geo:
+                continue
+            left, top = float(geo["left"]), float(geo["top"])
+            w, h = float(geo["width"]), float(geo["height"])
+            right, bottom = left + w, top + h
+            off = left < 0 or top < 0 or right > width or bottom > height
+            entry = {
+                "anchor_id": s["anchor_id"],
+                "shapeid": s.get("shapeid"),
+                "name": s["name"],
+                "id": s["id"],
+                "box": {
+                    "left": left,
+                    "top": top,
+                    "right": right,
+                    "bottom": bottom,
+                    "width": w,
+                    "height": h,
+                },
+                "rotation": float(geo.get("rotation", 0.0)),
+                "off_slide": off,
+            }
+            shapes_out.append(entry)
+            boxes.append((entry, left, top, right, bottom))
+        overlaps: list[dict[str, Any]] = []
+        for i in range(len(boxes)):
+            ei, l1, t1, r1, b1 = boxes[i]
+            for j in range(i + 1, len(boxes)):
+                ej, l2, t2, r2, b2 = boxes[j]
+                ix = min(r1, r2) - max(l1, l2)
+                iy = min(b1, b2) - max(t1, t2)
+                if ix > 0 and iy > 0:
+                    overlaps.append(
+                        {
+                            "a": ei["anchor_id"],
+                            "b": ej["anchor_id"],
+                            "a_name": ei["name"],
+                            "b_name": ej["name"],
+                            "area": ix * iy,
+                        }
+                    )
+        overlaps.sort(key=lambda o: o["area"], reverse=True)
+        return {
+            "slide": self.index,
+            "slide_size": {"width": width, "height": height},
+            "shapes": shapes_out,
+            "overlaps": overlaps,
+            "off_slide": [s["anchor_id"] for s in shapes_out if s["off_slide"]],
+        }
 
     # -- render (v0.4; a read — no mutation, polite by nature) -----------------
 
@@ -458,7 +559,13 @@ class SlideCollection:
         for slide_com in slides:
             yield Slide(self._deck, slide_com)
 
-    def add(self, layout: str | int | None = None, index: int | None = None) -> Slide:
+    def add(
+        self,
+        layout: str | int | None = None,
+        index: int | None = None,
+        *,
+        placeholders: dict[str, dict[str, float]] | None = None,
+    ) -> Slide:
         """Insert a new slide and return it (v0.1; wrap in `deck.edit(...)`).
 
         `layout` is a friendly name or 1-based layout index (default
@@ -468,7 +575,16 @@ class SlideCollection:
         `Slides.Add` only on a deck that exposes no custom layouts. Raises
         `LayoutNotFoundError` for an unknown layout and `SlideNotFoundError`
         for an out-of-range insertion position (1..count+1).
+
+        `placeholders` repositions the layout's placeholders right after creation
+        — `{KIND: {left, top, width, height}}` in points, any subset of the four
+        keys per KIND — so "a content slide with the body on the left half" is one
+        op instead of an add-then-resize fix-up. KIND is the same semantic name
+        `ph:S:KIND` uses (`title`/`body`/…); an unknown-on-this-layout or ambiguous
+        KIND raises (`AnchorNotFoundError` / `AmbiguousMatchError`) the same way
+        addressing it would. Pair with `Slide.geometry_report()` to size the boxes.
         """
+        _validate_placeholders_arg(placeholders)
         count = len(self)
         if index is None:
             target = count + 1
@@ -484,7 +600,23 @@ class SlideCollection:
                 new_com = self._com_collection.AddSlide(target, custom)
             else:
                 new_com = self._com_collection.Add(target, int(DEFAULT_LEGACY_LAYOUT))
-        return Slide(self._deck, new_com)
+        new_slide = Slide(self._deck, new_com)
+        if placeholders:
+            self._apply_placeholder_geometry(new_slide.index, placeholders)
+        return new_slide
+
+    def _apply_placeholder_geometry(
+        self, slide_index: int, placeholders: dict[str, dict[str, float]]
+    ) -> None:
+        """Move/resize the new slide's placeholders by semantic KIND (points)."""
+        for kind, geo in placeholders.items():
+            ph = self._deck.anchor_by_id(f"ph:{slide_index}:{kind}")
+            left, top = geo.get("left"), geo.get("top")
+            width, height = geo.get("width"), geo.get("height")
+            if left is not None or top is not None:
+                ph.move(left=left, top=top)  # type: ignore[attr-defined]
+            if width is not None or height is not None:
+                ph.resize(width=width, height=height)  # type: ignore[attr-defined]
 
     def list(self) -> list[dict[str, Any]]:
         """`[{index, id, layout, title, shape_count, has_notes}, ...]`."""

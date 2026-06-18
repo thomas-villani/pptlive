@@ -23,7 +23,8 @@ subcommand**: `pptlive --text outline`, not `pptlive outline --text`.
 2. `pptlive slides` — `[{index, id, layout, title, shape_count, has_notes}]`.
 3. `pptlive outline` — title + body bullets per slide.
 4. `pptlive slide read 2` — every shape on slide 2.
-5. `pptlive shapes --slide 2` — shapes with their `anchor_id`, `name`, `id`, type, geometry.
+5. `pptlive shapes --slide 2` — shapes with their `anchor_id`, `shapeid`, `name`, `id`, type, geometry.
+6. `pptlive slide geometry 2` — spatial sanity-check: slide size, each shape's bounding `box` + an `off_slide` flag, and `overlaps` (intersecting shape pairs, biggest first). Run it after placing shapes to catch overlaps / off-edge shapes **without** a render. Axis-aligned (rotation not accounted for).
 
 ## Anchors — how you address things
 Addressing is **hierarchical** (slide → shape → text), slide-index first. There
@@ -46,10 +47,12 @@ is no deck-wide `range:`. Pass an anchor as `--anchor-id`:
 the candidate `shape:S:N` anchors — target each column by `shape:S:N` / `.Name`.
 
 z-order **drifts** as shapes are added, removed, *or restacked* (`shape order`),
-so `shape:S:N` is resolved live and never cached; every shape listing also emits
-`name` (`Shape.Name`) and `id` (`Shape.Id`, stable across reorder *and* delete) so
-you can re-identify after drift. Steer toward `ph:S:KIND`, `.Name`, and
-`shapeid:S:ID` (delete-proof) as the drift-proof forms.
+so `shape:S:N` is resolved live and never cached. Every shape read **and**
+mutation echoes a ready-to-use `shapeid` (`shapeid:S:ID`, from the stable
+`Shape.Id`) next to `anchor_id`, plus `name` (`Shape.Name`) — so after a restack
+you chain the next edit on the returned `shapeid` instead of the drifted
+`shape:S:N`. Steer toward `ph:S:KIND`, `.Name`, and `shapeid:S:ID` as the
+drift-proof forms.
 
 ## Reading
 - `pptlive read anchor --anchor-id ph:2:title` — read any text anchor (`ph:`/`shape:`/`para:`/`cell:`/`notes:`/`here:`).
@@ -71,7 +74,7 @@ you can re-identify after drift. Steer toward `ph:S:KIND`, `.Name`, and
 - `pptlive list apply --anchor-id ph:4:body --type bulleted [--char "•"]` · `pptlive list remove --anchor-id ph:4:body`.
 - `pptlive reset-format --anchor-id ph:4:body` — recover a line-spacing spiral (reset paragraph spacing to single + zero before/after). `pptlive shape reset-to-layout --anchor-id ph:4:body` — restore a placeholder's geometry + default font size from its layout (the "5 pt font / off the slide" fix).
 - `pptlive read text-frame-status --anchor-id shape:4:3` — autofit/wrap/margin diagnostics (`autosize`, `word_wrap`, `margins`, `overflow_risk`) when text looks clipped.
-- `pptlive exec --script ops.json` — apply a whole batch script `{"label": "...", "ops": [{"op": "write", "anchor_id": ..., "text": ...}, ...]}` against one connection as **one Ctrl-Z**. Each op defaults to the `edit` tool (the op names are the MCP `ppt_edit`/`ppt_read`/... ops). Stops at the first failing op (exit code maps to its category) unless `--continue`; `--no-atomic` fences each op separately. The single-process way to build a slide without a command per change.
+- `pptlive exec --script ops.json` — apply a whole batch script `{"label": "...", "ops": [{"op": "write", "anchor_id": ..., "text": ...}, ...]}` against one connection as **one Ctrl-Z**. Each op defaults to the `edit` tool (the op names are the MCP `ppt_edit`/`ppt_read`/... ops). Stops at the first failing op (exit code maps to its category) unless `--continue`; `--no-atomic` fences each op separately. The single-process way to build a slide without a command per change. **Follow-the-work:** a script that *adds* a slide ends with the user's view on the slide it built (not snapped back) — so authoring doesn't yank them to slide 1 each batch; pure-edit scripts still preserve the view. `--no-follow-view` (or `PPTLIVE_VIEW_FOLLOW=0`) forces the polite snap-back; a `navigate`/`show` op in the script always wins.
 
 ## PowerPoint text-model gotchas (read before formatting text)
 PowerPoint's text model has sharp edges that leak through. The big ones:
@@ -101,7 +104,7 @@ PowerPoint's text model has sharp edges that leak through. The big ones:
 
 ## Slides
 - `pptlive slide layouts` — the layout names `add`/`set-layout` accept.
-- `pptlive slide add --layout two_content [--index 4]`.
+- `pptlive slide add --layout two_content [--index 4]` — optionally `--placeholders '{"body": {"left": 40, "width": 440}}'` repositions the layout's placeholders (points, any subset of left/top/width/height; KIND as in `ph:S:KIND`) in the same op, so a left-half content area beside a right-side panel needs no add-then-resize fix-up. Use `slide geometry` for the slide size to size from.
 - `pptlive slide duplicate --slide 7` · `pptlive slide move --slide 9 --to 2` · `pptlive slide delete --slide 5`.
 - `pptlive slide set-layout --slide 4 --layout title_and_content`.
 - `pptlive slide set-transition --slide 4 --effect fade [--duration 0.5] [--advance-after 3] [--on-click/--no-on-click]` — entrance transition (`fade`/`cut`/`dissolve`/`cover_left`/… or `none`); `--advance-after N` auto-advances after N s. Slide reads carry a `transition` dict.

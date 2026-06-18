@@ -84,6 +84,7 @@ class ReadOp(StrEnum):
     SLIDES = "slides"
     OUTLINE = "outline"
     SLIDE = "slide"
+    GEOMETRY = "geometry"
     ANCHOR = "anchor"
     TEXT_FRAME_STATUS = "text_frame_status"
     SELECTION = "selection"
@@ -256,6 +257,12 @@ def _read_find(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
 def _read_slide(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
     _require(p.get("slide") is not None, "read op='slide' requires `slide`")
     return _pick_deck(ppt, p.get("doc")).slides[p["slide"]].read()
+
+
+@read_op(ReadOp.GEOMETRY)
+def _read_geometry(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
+    _require(p.get("slide") is not None, "read op='geometry' requires `slide`")
+    return _pick_deck(ppt, p.get("doc")).slides[p["slide"]].geometry_report()
 
 
 @read_op(ReadOp.ANCHOR)
@@ -481,8 +488,25 @@ def _format_warnings(anchor: Any, p: dict[str, Any]) -> list[str]:
 
 @edit_op(EditOp.SLIDE_ADD)
 def _edit_slide_add(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
-    new = deck.slides.add(layout=p.get("layout"), index=p.get("index"))
-    return {"ok": True, "index": new.index, "id": new.id, "layout": new.layout_name}
+    placeholders = p.get("placeholders")
+    try:
+        new = deck.slides.add(
+            layout=p.get("layout"), index=p.get("index"), placeholders=placeholders
+        )
+    except ValueError as exc:
+        raise BatchOpError(f"invalid_args: {exc}") from exc
+    result: dict[str, Any] = {
+        "ok": True,
+        "index": new.index,
+        "id": new.id,
+        "layout": new.layout_name,
+    }
+    if placeholders:
+        # Echo the placeholders' resulting geometry so the agent can confirm the fit.
+        result["placeholders"] = {
+            kind: _resolve_shape(deck, f"ph:{new.index}:{kind}").geometry() for kind in placeholders
+        }
+    return result
 
 
 @edit_op(EditOp.SLIDE_DELETE)
@@ -565,7 +589,7 @@ def _edit_shape_move(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
         "edit op='shape_move' requires `left`/`top`",
     )
     sh.move(left=p.get("left"), top=p.get("top"))
-    return {"ok": True, "anchor_id": sh.anchor_id, "geometry": sh.geometry()}
+    return {"ok": True, "anchor_id": sh.anchor_id, "shapeid": sh.shapeid, "geometry": sh.geometry()}
 
 
 @edit_op(EditOp.SHAPE_RESIZE)
@@ -576,7 +600,7 @@ def _edit_shape_resize(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
         "edit op='shape_resize' requires `width`/`height`",
     )
     sh.resize(width=p.get("width"), height=p.get("height"))
-    return {"ok": True, "anchor_id": sh.anchor_id, "geometry": sh.geometry()}
+    return {"ok": True, "anchor_id": sh.anchor_id, "shapeid": sh.shapeid, "geometry": sh.geometry()}
 
 
 @edit_op(EditOp.SET_ALT)
@@ -584,7 +608,7 @@ def _edit_set_alt(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
     sh = _resolve_shape(deck, p.get("anchor_id"))
     _require(p.get("alt_text") is not None, "edit op='set_alt' requires `alt_text`")
     sh.set_alt_text(p["alt_text"])
-    return {"ok": True, "anchor_id": sh.anchor_id, "alt_text": sh.alt_text}
+    return {"ok": True, "anchor_id": sh.anchor_id, "shapeid": sh.shapeid, "alt_text": sh.alt_text}
 
 
 @edit_op(EditOp.SHAPE_DELETE)
@@ -603,14 +627,20 @@ def _edit_shape_order(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
         "edit op='shape_order' requires `order` (front/back/forward/backward)",
     )
     new_index = sh.reorder(p["order"])
-    return {"ok": True, "anchor_id": sh.anchor_id, "name": sh.name, "index": new_index}
+    return {
+        "ok": True,
+        "anchor_id": sh.anchor_id,
+        "shapeid": sh.shapeid,
+        "name": sh.name,
+        "index": new_index,
+    }
 
 
 @edit_op(EditOp.SHAPE_RESET_LAYOUT)
 def _edit_shape_reset_layout(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
     sh = _resolve_shape(deck, p.get("anchor_id"))
     restored = sh.reset_to_layout()
-    return {"ok": True, "anchor_id": sh.anchor_id, "restored": restored}
+    return {"ok": True, "anchor_id": sh.anchor_id, "shapeid": sh.shapeid, "restored": restored}
 
 
 @edit_op(EditOp.SHAPE_GRADIENT_FILL)
@@ -628,7 +658,12 @@ def _edit_shape_gradient_fill(deck: Presentation, p: dict[str, Any]) -> dict[str
         degree=p.get("degree"),
         preset=p.get("preset"),
     )
-    return {"ok": True, "anchor_id": sh.anchor_id, "fill": sh.to_dict().get("fill")}
+    return {
+        "ok": True,
+        "anchor_id": sh.anchor_id,
+        "shapeid": sh.shapeid,
+        "fill": sh.to_dict().get("fill"),
+    }
 
 
 @edit_op(EditOp.SHAPE_PICTURE_FILL)
@@ -636,7 +671,12 @@ def _edit_shape_picture_fill(deck: Presentation, p: dict[str, Any]) -> dict[str,
     sh = _resolve_shape(deck, p.get("anchor_id"))
     _require(p.get("path") is not None, "edit op='shape_picture_fill' requires `path`")
     sh.set_picture_fill(p["path"])
-    return {"ok": True, "anchor_id": sh.anchor_id, "fill": sh.to_dict().get("fill")}
+    return {
+        "ok": True,
+        "anchor_id": sh.anchor_id,
+        "shapeid": sh.shapeid,
+        "fill": sh.to_dict().get("fill"),
+    }
 
 
 @edit_op(EditOp.SHAPE_PATTERN_FILL)
@@ -645,7 +685,12 @@ def _edit_shape_pattern_fill(deck: Presentation, p: dict[str, Any]) -> dict[str,
     _require(p.get("pattern") is not None, "edit op='shape_pattern_fill' requires `pattern`")
     _require(p.get("fore") is not None, "edit op='shape_pattern_fill' requires `fore` color")
     sh.set_pattern_fill(p["pattern"], fore=p["fore"], back=p.get("back"))
-    return {"ok": True, "anchor_id": sh.anchor_id, "fill": sh.to_dict().get("fill")}
+    return {
+        "ok": True,
+        "anchor_id": sh.anchor_id,
+        "shapeid": sh.shapeid,
+        "fill": sh.to_dict().get("fill"),
+    }
 
 
 @edit_op(EditOp.SHAPE_SET_EFFECT)
@@ -661,7 +706,12 @@ def _edit_shape_set_effect(deck: Presentation, p: dict[str, Any]) -> dict[str, A
         soft_edge=p.get("soft_edge"),
         reflection=p.get("reflection"),
     )
-    return {"ok": True, "anchor_id": sh.anchor_id, "effects": sh.to_dict().get("effects")}
+    return {
+        "ok": True,
+        "anchor_id": sh.anchor_id,
+        "shapeid": sh.shapeid,
+        "effects": sh.to_dict().get("effects"),
+    }
 
 
 @edit_op(EditOp.SHAPE_LINE_STYLE)
@@ -682,7 +732,12 @@ def _edit_shape_line_style(deck: Presentation, p: dict[str, Any]) -> dict[str, A
         begin_arrow_size=p.get("begin_arrow_size"),
         end_arrow_size=p.get("end_arrow_size"),
     )
-    return {"ok": True, "anchor_id": sh.anchor_id, "line": sh.to_dict().get("line")}
+    return {
+        "ok": True,
+        "anchor_id": sh.anchor_id,
+        "shapeid": sh.shapeid,
+        "line": sh.to_dict().get("line"),
+    }
 
 
 @edit_op(EditOp.SHAPE_SET_HYPERLINK)
@@ -693,14 +748,14 @@ def _edit_shape_set_hyperlink(deck: Presentation, p: dict[str, Any]) -> dict[str
         "edit op='shape_set_hyperlink' requires exactly one of `url` or `slide`",
     )
     link = sh.set_hyperlink(url=p.get("url"), slide=p.get("slide"), screen_tip=p.get("screen_tip"))
-    return {"ok": True, "anchor_id": sh.anchor_id, "hyperlink": link}
+    return {"ok": True, "anchor_id": sh.anchor_id, "shapeid": sh.shapeid, "hyperlink": link}
 
 
 @edit_op(EditOp.SHAPE_REMOVE_HYPERLINK)
 def _edit_shape_remove_hyperlink(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
     sh = _resolve_shape(deck, p.get("anchor_id"))
     sh.remove_hyperlink()
-    return {"ok": True, "anchor_id": sh.anchor_id, "hyperlink": None}
+    return {"ok": True, "anchor_id": sh.anchor_id, "shapeid": sh.shapeid, "hyperlink": None}
 
 
 @edit_op(EditOp.SLIDE_SET_TRANSITION)
@@ -910,6 +965,80 @@ def _moves_view(tool: str, op: str | None) -> bool:
     return (tool == "render" and op == "navigate") or (tool == "show" and op in _MOVING_SHOW_OPS)
 
 
+# --- "Follow the work" view policy -----------------------------------------
+# When an atomic batch ADDS a slide, the polite snap-back to the pre-batch view
+# is the wrong default: the user is watching the agent author, and wants to end
+# up looking at the slide that was just built — not get yanked back to slide 1
+# every batch. So an *authoring* batch (one that ran a slide_add/slide_duplicate)
+# leaves the view on the last slide it touched instead of restoring. Pure-edit
+# batches keep the polite restore. Toggle off with `PPTLIVE_VIEW_FOLLOW=0` (env)
+# or the per-call `follow_view` flag.
+
+#: Edit ops that mark a batch as "authoring" — their presence enables view-follow.
+_VIEW_FOLLOW_ADD_OPS = frozenset({"slide_add", "slide_duplicate"})
+
+#: Edit ops whose target slide should NOT become the follow focus (deletions —
+#: you don't want the view to chase a slide/shape that no longer exists, and the
+#: index has shifted anyway).
+_VIEW_FOLLOW_SKIP_OPS = frozenset({"slide_delete", "shape_delete", "comment_delete"})
+
+#: Edit ops whose result `index` is a *slide* index (vs. shape_add, whose
+#: `to_dict()` carries a z-order `index` that must not be read as a slide).
+_SLIDE_INDEX_RESULT_OPS = frozenset({"slide_add", "slide_duplicate", "slide_move", "set_layout"})
+
+
+def _env_view_follow_default() -> bool:
+    """The default view-follow setting from `PPTLIVE_VIEW_FOLLOW` (on unless disabled)."""
+    val = os.environ.get("PPTLIVE_VIEW_FOLLOW")
+    if val is None:
+        return True
+    return val.strip().lower() not in ("0", "false", "no", "off", "")
+
+
+def _anchor_slide_index(anchor_id: Any) -> int | None:
+    """The leading 1-based slide index of a hierarchical anchor id, or None.
+
+    Every text/shape anchor is slide-first (`shape:S:N`, `ph:S:KIND`, `para:S:N:P`,
+    `cell:S:N:R:C`, `notes:S`, `shapeid:S:ID`, `comments:S`), so the slide is the
+    field right after the prefix.
+    """
+    if not isinstance(anchor_id, str):
+        return None
+    parts = anchor_id.split(":")
+    if len(parts) >= 2 and parts[0] in (
+        "shape",
+        "shapeid",
+        "ph",
+        "para",
+        "cell",
+        "notes",
+        "comments",
+    ):
+        try:
+            return int(parts[1])
+        except ValueError:
+            return None
+    return None
+
+
+def _edit_focus_slide(op: str, p: dict[str, Any], result: dict[str, Any]) -> int | None:
+    """The slide an edit op 'landed on', for view-follow — None = leave focus as-is.
+
+    Prefers a slide-returning op's result `index`, then an explicit `slide` param,
+    then the slide parsed off an `anchor_id`. Deletions are skipped so the view
+    never chases a just-removed slide/shape.
+    """
+    if op in _VIEW_FOLLOW_SKIP_OPS:
+        return None
+    if op in _SLIDE_INDEX_RESULT_OPS:
+        idx = result.get("index")
+        return idx if isinstance(idx, int) else None
+    slide = p.get("slide")
+    if isinstance(slide, int):
+        return slide
+    return _anchor_slide_index(p.get("anchor_id"))
+
+
 def _parse_slide_selector(slides: Any) -> int | tuple[int, int] | None:
     """Parse a `deck_snapshot` `slides` arg into a `snapshot()` selector.
 
@@ -1106,6 +1235,7 @@ def run_batch(
     doc: str | None = None,
     atomic: bool = True,
     stop_on_error: bool = True,
+    follow_view: bool | None = None,
     label: str = "batch",
 ) -> list[dict[str, Any]]:
     """Dispatch a list of `{tool, op, ...params}` commands against one connection.
@@ -1118,10 +1248,21 @@ def run_batch(
     entry records `{ok: False, error, message}` and, if `stop_on_error`, the run
     stops (earlier mutations stay applied — undo grouping, not a transaction).
     Returns the list of per-op result entries; the caller owns `attach()`.
+
+    `follow_view` ("follow the work"): when an atomic batch *adds* a slide, leave
+    the view on the last slide it touched rather than snapping back to the
+    pre-batch view — the right default while an agent authors. `None` (default)
+    takes the `PPTLIVE_VIEW_FOLLOW` env default (on); pass `True`/`False` to force
+    it per call. A deliberate `navigate`/`show` op still wins (its own view move is
+    respected, never overridden by follow).
     """
+    follow = follow_view if follow_view is not None else _env_view_follow_default()
     has_edit = any(cmd.get("tool", "edit") == "edit" for cmd in commands)
     scope: Any = deck.edit(label) if (atomic and has_edit) else nullcontext()
     results: list[dict[str, Any]] = []
+    added_slide = False  # batch ran a slide_add/slide_duplicate -> authoring
+    moved_by_op = False  # a deliberate navigate/show already claimed the view
+    focus_slide: int | None = None  # last slide an edit op touched
     with scope as edit_scope:
         for i, cmd in enumerate(commands):
             tool = cmd.get("tool", "edit")
@@ -1148,6 +1289,13 @@ def run_batch(
                     raise BatchOpError(f"command #{i} unknown tool {tool!r}")
                 if _moves_view(tool, op) and edit_scope is not None:
                     edit_scope.allow_view_move()
+                    moved_by_op = True
+                if tool == "edit":
+                    if op in _VIEW_FOLLOW_ADD_OPS:
+                        added_slide = True
+                    fs = _edit_focus_slide(op, p, result)
+                    if fs is not None:
+                        focus_slide = fs
                 entry.update(ok=True, result=result)
             except PptliveError as exc:
                 entry.update(ok=False, error=_error_code(exc), message=str(exc))
@@ -1156,4 +1304,18 @@ def run_batch(
                     break
                 continue
             results.append(entry)
+        # Follow the work: an authoring batch ends on the slide it last built,
+        # unless a deliberate navigate/show already moved the view (that wins).
+        if (
+            follow
+            and added_slide
+            and not moved_by_op
+            and focus_slide is not None
+            and edit_scope is not None
+        ):
+            try:
+                deck.go_to(deck.slides[focus_slide])
+                edit_scope.allow_view_move()
+            except Exception:
+                pass
     return results

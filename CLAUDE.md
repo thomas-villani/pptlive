@@ -50,7 +50,7 @@ src/pptlive/
                      (tests monkeypatch the getters)
   _app.py            PowerPoint handle + attach() / connect()
   _presentation.py   Presentation (the wordlive Document analog) + PresentationCollection
-  _slides.py         SlideCollection / Slide  (add/delete/duplicate/move_to/set_layout, notes, read())
+  _slides.py         SlideCollection / Slide  (add [+placeholder geometry]/delete/duplicate/move_to/set_layout, notes, read(), geometry_report())
   _shapes.py         ShapeCollection / Shape / ShapeById  (a Shape IS an Anchor when it has a text frame; geometry + fill/line + z-order verbs)
   _anchors.py        Anchor base + Paragraph, Cell, Notes  (set_paragraphs / reset_format + line-spacing unit knobs [v1.6])
   _tables.py         Table / Cell  (a table is a shape; cell:S:N:R:C anchors)         [v0.5]
@@ -155,6 +155,34 @@ clean at CLI/MCP). Library + CLI (`save`, `save-as PATH [--format/--overwrite]`,
 `export-pdf PATH`) + MCP (`ppt_render` ops `save`/`save_as`/`deck_pdf`).
 Constants: `PpSaveAsFileType` (`OPEN_XML_PRESENTATION=24`, `PDF=32`) +
 `save_format_for`.
+
+**Authoring-feedback round (2026-06-18) — four fixes from a live Claude Desktop
+session.** All driven by the "build a deck while watching PowerPoint" workflow:
+(1) **"Follow the work" view policy** — the long-standing "jumps back to slide 1
+after a batch" report was the politeness *view-restore* firing as designed, then
+*cascading*: every batch restored to the pre-batch slide, so slide 1 became a fixed
+point. Fix lives in `run_batch` (`_batch.py`): when an atomic batch **adds** a slide
+(`slide_add`/`slide_duplicate`), it leaves the view on the last slide it touched
+(via the existing `EditScope.allow_view_move()` opt-out + an explicit `go_to`)
+instead of snapping back; pure-edit batches keep the polite restore, and a
+deliberate `navigate`/`show` still wins. Configurable: default on, off via
+`PPTLIVE_VIEW_FOLLOW=0` (env), MCP `ppt_batch(follow_view=False)`, or CLI
+`exec --no-follow-view`. (2) **`geometry` read** — `Slide.geometry_report()` returns
+the slide size + each shape's bounding `box` + `off_slide` flag + the `overlaps`
+pairs (biggest first), so an agent catches overlaps / off-edge shapes *without* a
+render. Axis-aligned only (rotation reported, not accounted for). MCP `ppt_read
+op="geometry"`, CLI `slide geometry N` (named `geometry`, **not** `layout`, to avoid
+colliding with `layouts`/`set-layout`). (3) **`shapeid` everywhere** — every shape
+read (`shape_to_dict`) *and* mutation return now echoes the restack-proof
+`shapeid:S:ID` (new `Shape.shapeid`) next to `anchor_id`, so a chained edit survives
+the z-order drift it causes (the reported `shape_order` footgun). (4) **Placeholder
+geometry on `slide_add`** — optional `placeholders={KIND: {left,top,width,height}}`
+(points, any subset) repositions the layout's placeholders in the same op (the
+"body on the left half beside a right panel" case), killing the add-then-resize
+fix-up; validated pre-COM (clean `ValueError`/`invalid_args`), echoes the resulting
+geometry. All four wired library + CLI + MCP + both SKILL guides. Still open from
+that session: **direct-vs-inherited font color** in `text_frame_status` (no general
+COM direct-vs-theme flag exists — needs a live spike first).
 
 Agent skills shipped as **two** guides (`pptlive-cli` + `pptlive-python`), not
 wordlive's single one — `llm-help [--python]` dumps one, `install-skill` writes

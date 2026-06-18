@@ -90,16 +90,19 @@ ambiguous and raises an error listing the candidate `shape:S:N` anchors — addr
 each column by its `shape:S:N` (or `.Name`) instead.
 
 z-order **drifts** as shapes are added, removed, *or restacked* (`reorder`), so
-`shape:S:N` resolves live and is never cached; listings emit `name` (`Shape.Name`)
-and `id` (`Shape.Id`, stable across reorder *and* delete) for re-identification.
-Prefer `ph:S:KIND`, `.Name`, and `shapeid:S:ID` — the last keeps pointing at the
-same shape across a delete/restack that would renumber `shape:S:N`.
+`shape:S:N` resolves live and is never cached. Every shape listing carries a
+ready-to-use `shapeid` (`shapeid:S:ID`) next to `anchor_id`, and `Shape.shapeid`
+gives it on any live wrapper — so after a `reorder` you re-address by the returned
+`shapeid` rather than the drifted index. Prefer `ph:S:KIND`, `.Name`, and
+`shapeid:S:ID` — the last keeps pointing at the same shape across a delete/restack.
 
 ## Slides, shapes, geometry (points throughout — `pl.units` for inches/cm)
 
 ```python
 with deck.edit("Build the results slide"):
     new = deck.slides.add(layout="two_content", index=4)
+    # one op: add + reposition placeholders (points; KIND as in ph:S:KIND) — body on the left half
+    deck.slides.add(layout="title_and_content", placeholders={"body": {"left": 40, "width": 440}})
     deck.slides[7].duplicate()                       # copy lands at slide 8
     deck.slides[9].move_to(2)
     deck.slides[4].set_layout("title_and_content")
@@ -117,9 +120,13 @@ with deck.edit("Build the results slide"):
     panel.set_pattern_fill("percent_50", fore="#1E74B5", back="#fff")  # or panel.set_picture_fill("bg.png")
     panel.set_effect(shadow={"color": "#333", "blur": 8, "offset_x": 4, "offset_y": 4}, soft_edge=4)
     panel.set_line_style(dash="dash_dot")             # line dash; arrowheads (begin_arrow=/end_arrow=) on lines/connectors only
-    panel.reorder("back")                             # tuck the panel behind existing content
+    panel.reorder("back")                             # tuck the panel behind; re-address by panel.shapeid after
     # reads carry fill.type (solid/gradient/patterned/picture), fill/line transparency, line.dash + an effects field
     star.delete()
+
+report = deck.slides[4].geometry_report()             # geometry sanity-check BEFORE rendering
+# -> {slide_size:{width,height}, shapes:[{anchor_id, shapeid, box:{left,top,right,bottom,w,h}, off_slide}],
+#     overlaps:[{a, b, area}] (biggest first), off_slide:[anchor_id, ...]}  -- axis-aligned; rotation not counted
 
     arrow = shapes.add_shape("right_arrow", left=72, top=300)
     arrow.set_hyperlink(url="https://acme.com")        # or slide=2 for an in-deck jump; no text frame needed
