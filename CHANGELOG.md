@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-06-18
+
 ### Added
 
 An **authoring-feedback round**, four fixes distilled from a live Claude Desktop
@@ -589,7 +591,8 @@ error taxonomy, `EditScope` shape, CLI contract, `_com` seam, and test approach.
 - **Release automation** — `bump-my-version` syncs the root and MCPB bundle
   versions; a `v*` tag publishes to PyPI via trusted publishing.
 
-[Unreleased]: https://github.com/thomas-villani/pptlive/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/thomas-villani/pptlive/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/thomas-villani/pptlive/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/thomas-villani/pptlive/compare/v0.3.0...v0.5.0
 [0.3.0]: https://github.com/thomas-villani/pptlive/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/thomas-villani/pptlive/compare/v0.1.3...v0.2.0
