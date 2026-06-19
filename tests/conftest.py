@@ -2102,7 +2102,13 @@ class _FakePresentation:
         like ``"Presentation1"``). `save()` reads this to refuse a path-less save.
         """
         full = str(self.FullName)
-        return os.path.dirname(full) if (os.sep in full or "/" in full) else ""
+        # Split on either separator so the fixture behaves identically on the
+        # Linux CI runner and a Windows dev box. Real COM `FullName` always uses
+        # "\\", but `os.path`/`os.sep` are host-dependent — on Linux they neither
+        # recognize nor split a backslash path, which would wrongly report a
+        # saved deck as never-saved.
+        idx = max(full.rfind("\\"), full.rfind("/"))
+        return full[:idx] if idx != -1 else ""
 
     def Save(self) -> None:
         """Persist to the existing file — here, just clear the dirty flag.
