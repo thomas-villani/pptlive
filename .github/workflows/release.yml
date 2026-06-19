@@ -10,30 +10,10 @@ permissions:
   contents: read
 
 jobs:
-  # Gate the whole release on a green suite. The unit tests run against the fake
-  # COM fixture (no PowerPoint needed), so they run on Linux; smoke tests are
-  # deselected by default. If this job fails, nothing builds or publishes.
+  # Gate the whole release on a green suite (shared with the PR/push CI so the two
+  # can't drift). If this fails, nothing builds or publishes.
   test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: astral-sh/setup-uv@v6
-        with:
-          python-version: '3.13'
-          enable-cache: true
-
-      - name: Install deps
-        run: uv sync --extra dev
-
-      - name: Lint
-        run: uv run ruff check .
-
-      - name: Type-check
-        run: uv run mypy
-
-      - name: Unit tests
-        run: uv run pytest
+    uses: ./.github/workflows/test.yml
 
   build:
     needs: test

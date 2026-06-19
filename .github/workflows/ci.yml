@@ -1,0 +1,22 @@
+name: ci
+
+# Run the test gate on every PR and on pushes to main, so a red suite is caught
+# *before* merge — not only when a release tag is pushed. Delegates to the shared
+# test.yml so the steps match the release gate exactly.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Cancel an in-flight run when a branch is pushed again (PR iteration).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
