@@ -207,14 +207,27 @@ def ppt_read(
       `overlaps` (shape pairs whose boxes intersect, biggest first). Run it after
       placing shapes to catch overlaps / off-edge shapes *without* a render. Axis-
       aligned boxes; rotation isn't accounted for (each shape carries its `rotation`).
+    - "animations": slide `slide`'s shape animations in play order — each a
+      `{seq_index, shapeid, shape, effect, exit, trigger, duration, delay}` mapping
+      an effect back to its target shape. Needs `slide`. Empty if the slide has none.
+    - "sections": the deck's sections (named slide spans) in order — each a
+      `{index, name, first_slide, slide_count}`. Address a section for edit by its
+      1-based `index` (ppt_edit section_rename/section_delete/section_move).
+    - "headers_footers": the footer / slide-number / date settings — pass `slide`
+      for that slide's, or omit it for the deck-wide master default. Returns
+      `{footer:{visible,text}, slide_number:{visible}, date:{visible,text,format,
+      use_format}, display_on_title_slide}` (text/use_format read null when hidden).
     - "anchor": the text of any text anchor (`anchor_id`): `ph:S:KIND` (placeholder,
       e.g. ph:2:title), `shape:S:N` (Nth shape by z-order), `para:S:N:P`,
       `cell:S:N:R:C` (table cell), `notes:S`, or `here:` (the user's selection).
       Returns text plus a `paragraphs` breakdown — each paragraph carries its
       effective `font` (`bold`/`italic`/`underline` as true/false/"mixed", `size`,
-      `font` name, `color` `#RRGGBB` or null for a theme/auto color). These are
-      *rendered* values; COM doesn't expose a per-run "directly set vs inherited"
-      flag (only color distinguishes a literal RGB from an inherited theme color).
+      `font` name, `color` `#RRGGBB` or null for a theme/auto color, plus
+      `color_source` "direct"/"theme"/"mixed" and `theme_color` the inherited slot
+      name when themed). `color_source` is the "is this color set on the run or
+      cascaded from the theme/master?" tell — so a surprise color traces to its
+      origin. The other font attrs are still *rendered* values (COM resolves the
+      cascade before we see them and exposes no directly-set flag beyond color).
     - "text_frame_status": autofit diagnostics for the shape at `anchor_id` —
       `{autosize, word_wrap, margins:{left,right,top,bottom}, overflow_risk}`. The
       read to run when text looks clipped or overflowing: `overflow_risk` is
@@ -302,6 +315,18 @@ def ppt_edit(
     advance_on_click: bool | None = None,
     follow_master: bool = False,
     order: Literal["front", "back", "forward", "backward"] | None = None,
+    trigger: Literal["on_click", "with_previous", "after_previous"] | None = None,
+    delay: float | None = None,
+    exit: bool = False,
+    section: int | None = None,
+    before_slide: int | None = None,
+    delete_slides: bool = False,
+    footer_text: str | None = None,
+    footer_visible: bool | None = None,
+    slide_number_visible: bool | None = None,
+    date_visible: bool | None = None,
+    date_text: str | None = None,
+    date_format: int | None = None,
     list_type: Literal["bulleted", "numbered", "none"] | None = None,
     bullet_char: str | None = None,
     slide: int | None = None,
@@ -396,6 +421,27 @@ def ppt_edit(
       (overriding the master), or pass `follow_master`=true to revert to the master
       background. Exactly one of the two.
 
+    Sections (named spans of slides; addressed by 1-based `section` index — read
+    them with ppt_read op="sections"):
+    - "section_add": add a section named `name`. `before_slide` (1-based) is the
+      slide it starts at (the natural form); adding the first section in front of a
+      later slide auto-creates a leading "Default Section". Omit `before_slide` to
+      append an empty trailing section.
+    - "section_rename": rename section `section` to `name`.
+    - "section_delete": delete section `section`. Keeps its slides by default (drops
+      only the boundary); pass `delete_slides`=true to delete the slides too.
+    - "section_move": move section `section` (and the slides it spans) to position `to`.
+
+    Headers / footers (footer text, auto slide number, date — set on one slide via
+    `slide`, or the deck-wide master default when `slide` is omitted; read with
+    ppt_read op="headers_footers"):
+    - "set_headers_footers": set any of `footer_text` / `footer_visible`,
+      `slide_number_visible`, `date_visible` / `date_text` (a fixed date) /
+      `date_format` (a raw PpDateTimeFormat int for an auto-updating date — mutually
+      exclusive with `date_text`). Setting footer/date text auto-shows it. Pass
+      `slide` for a per-slide override; omit it to set the master default for every
+      inheriting slide.
+
     Shapes (create on `slide`; move/resize/delete/order/tag by `anchor_id`):
     - "shape_add": add `kind`="textbox" (with `text`), "shape" (autoshape via
       `shape_type`, e.g. "star", optional `text`), "picture" (`path`, optional
@@ -416,6 +462,17 @@ def ppt_edit(
       `url` (external URL/file/mailto) or `slide` (1-based in-deck jump, e.g. a
       "back to agenda" button); optional `screen_tip` hover text. A shape needs no
       text frame to carry a link. "shape_remove_hyperlink": clear the link.
+
+    Animations (an entrance/exit effect on a shape; play order is add order):
+    - "shape_animate": animate the shape at `anchor_id`. `effect` is the animation
+      ("fade"/"appear"/"fly_in"/"float_in"/"wipe"/"zoom"/"grow_turn"/"swivel"/
+      "wheel"/"split"); `trigger` is when it fires ("on_click" default/
+      "with_previous"/"after_previous"); `duration` (seconds) and `delay` (seconds)
+      tune the timing; `exit`=true animates the shape OUT instead of in (the
+      "disappear" case). Each call adds one effect (a shape can have several).
+    - "shape_clear_animations": remove every animation targeting the shape at
+      `anchor_id`. "slide_clear_animations": wipe ALL animations on slide `slide`.
+      Use ppt_read op="animations" (needs `slide`) to see a slide's effects first.
 
     Advanced fills & effects (target the shape by `anchor_id`; distinct from the
     solid `fill_color`/`line_color` on op="format"):
@@ -537,6 +594,18 @@ def ppt_edit(
         "advance_on_click": advance_on_click,
         "follow_master": follow_master,
         "order": order,
+        "trigger": trigger,
+        "delay": delay,
+        "exit": exit,
+        "section": section,
+        "before_slide": before_slide,
+        "delete_slides": delete_slides,
+        "footer_text": footer_text,
+        "footer_visible": footer_visible,
+        "slide_number_visible": slide_number_visible,
+        "date_visible": date_visible,
+        "date_text": date_text,
+        "date_format": date_format,
         "list_type": list_type,
         "bullet_char": bullet_char,
         "slide": slide,
@@ -607,10 +676,13 @@ def ppt_render(
       styling land across all slides" read. `max_dim` caps each slide's long edge
       in pixels (only ever lowering resolution); since every slide shares one
       geometry the cap is a uniform, predictable per-slide budget (defaults to
-      ~1000 px when embedding). `slides` selects what to render: a single 1-based
-      slide ("3") or an inclusive span ("2-4"); omit for the whole deck. Each slide
-      comes back as a "slide N" label + image block; the structured result lists the
-      written file `path`s. Polite (does not move the view).
+      ~1000 px when embedding). For an exact size pass `width`/`height` instead (one
+      is enough — the other follows the aspect ratio); it overrides `max_dim`, and
+      passing both is an error. (PowerPoint has no JPEG-quality knob, so pixel
+      dimensions are the only render-cost lever.) `slides` selects what to render: a
+      single 1-based slide ("3") or an inclusive span ("2-4"); omit for the whole
+      deck. Each slide comes back as a "slide N" label + image block; the structured
+      result lists the written file `path`s. Polite (does not move the view).
     - "shape_image": render *just* the shape at `anchor_id` (cropped to its bounds,
       native pixel size) — so a vision model can see one picture/diagram alone.
       Same dual return (inline image + `path`). Polite. `out` defaults to a temp file.
@@ -636,7 +708,9 @@ def ppt_render(
     `fmt` is the image format. `doc` targets a presentation by name."""
     if op == "slide_image" and embed and width is None and height is None:
         width = _EMBED_DEFAULT_WIDTH
-    if op == "deck_snapshot" and embed and max_dim is None:
+    # Default the embed cap only when the caller gave no explicit size at all —
+    # an explicit width/height is the other (conflicting) size lever.
+    if op == "deck_snapshot" and embed and max_dim is None and width is None and height is None:
         max_dim = _EMBED_DEFAULT_MAX_DIM
     params = {
         "slide": slide,

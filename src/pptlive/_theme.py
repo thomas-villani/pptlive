@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import _com
 from ._anchors import apply_font, apply_paragraph_format
+from ._headersfooters import HeadersFooters
 from ._shapes import background_to_dict
 from .constants import (
     THEME_COLOR_CHOICES,
@@ -159,6 +160,15 @@ class Master:
         """Raw COM `SlideMaster`, resolved live."""
         with _com.translate_com_errors():
             return self._deck.com.SlideMaster
+
+    @property
+    def headers_footers(self) -> HeadersFooters:
+        """The deck-wide footer / slide-number / date defaults (the master scope —
+        the per-slide override is `Slide.headers_footers`). See
+        `_headersfooters.HeadersFooters`.
+        """
+        with _com.translate_com_errors():
+            return HeadersFooters(self.com.HeadersFooters)
 
     def _level_dict(self, level_com: Any, level: int) -> dict[str, Any]:
         f = level_com.Font

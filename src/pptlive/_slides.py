@@ -24,7 +24,15 @@ from typing import TYPE_CHECKING, Any
 from . import _com
 from ._anchors import Notes
 from ._comments import CommentCollection
-from ._shapes import PlaceholderShape, ShapeCollection, background_to_dict, is_placeholder
+from ._headersfooters import HeadersFooters
+from ._shapes import (
+    PlaceholderShape,
+    Shape,
+    ShapeCollection,
+    background_to_dict,
+    effect_to_dict,
+    is_placeholder,
+)
 from .constants import (
     DEFAULT_LEGACY_LAYOUT,
     MsoTriState,
@@ -130,6 +138,14 @@ class Slide:
     def comments(self) -> CommentCollection:
         """The slide's review comments (`comments:S`) — read + add/reply/delete."""
         return CommentCollection(self)
+
+    @property
+    def headers_footers(self) -> HeadersFooters:
+        """This slide's footer / slide-number / date placeholders (a per-slide
+        override of the master default). See `_headersfooters.HeadersFooters`.
+        """
+        with _com.translate_com_errors():
+            return HeadersFooters(self._slide.HeadersFooters)
 
     @property
     def layout_name(self) -> str | None:
@@ -239,6 +255,7 @@ class Slide:
             "title": self.title,
             "transition": self.transition(),
             "background": self.background(),
+            "animations": self.animations(),
             "shapes": self.shapes.list(),
         }
 
@@ -260,6 +277,43 @@ class Slide:
                 "advance_on_time": is_true(t.AdvanceOnTime),
                 "advance_time": float(t.AdvanceTime),
             }
+
+    def animations(self) -> list[dict[str, Any]]:
+        """The slide's shape animations, in play order — one row per effect.
+
+        Reads `Slide.TimeLine.MainSequence`: each row is `{seq_index, shapeid,
+        shape, effect, exit, trigger, duration, delay}` (see `effect_to_dict`),
+        ordered by `seq_index` (the 1-based position the effect plays in). The
+        `shapeid` maps each effect back to its target shape (drift-proof), so an
+        agent can tell *what* animates *how* without a render. Empty when the slide
+        has no animations. A read — no view move.
+        """
+        idx = self.index
+        with _com.translate_com_errors():
+            seq = self._slide.TimeLine.MainSequence
+            count = int(seq.Count)
+            return [{"seq_index": i, **effect_to_dict(seq(i), idx)} for i in range(1, count + 1)]
+
+    def clear_animations(self, anchor: Shape | None = None) -> int:
+        """Remove animation effects from the slide; return how many were deleted.
+
+        With `anchor=None` (the default) wipes the **whole** slide's animation
+        sequence; pass a `Shape` to remove only the effects targeting that shape
+        (matched by stable `Shape.Id`, so a restack is irrelevant). Deletes from the
+        end of the sequence so the live indices don't shift mid-loop. A no-op
+        (returns 0) when there's nothing to remove. A mutation: wrap in
+        `deck.edit(...)`.
+        """
+        target_id = None if anchor is None else anchor.shape_id  # COM read before the loop
+        with _com.translate_com_errors():
+            seq = self._slide.TimeLine.MainSequence
+            removed = 0
+            for i in range(int(seq.Count), 0, -1):
+                eff = seq(i)
+                if target_id is None or int(eff.Shape.Id) == target_id:
+                    eff.Delete()
+                    removed += 1
+            return removed
 
     def background(self) -> dict[str, Any]:
         """The slide's background — `{follows_master, type, color}`.

@@ -55,7 +55,7 @@ you chain the next edit on the returned `shapeid` instead of the drifted
 drift-proof forms.
 
 ## Reading
-- `pptlive read anchor --anchor-id ph:2:title` — read any text anchor (`ph:`/`shape:`/`para:`/`cell:`/`notes:`/`here:`).
+- `pptlive read anchor --anchor-id ph:2:title` — read any text anchor (`ph:`/`shape:`/`para:`/`cell:`/`notes:`/`here:`). Each paragraph's `font` carries `color_source` (`direct`/`theme`/`mixed`) + `theme_color` — so if text shows a surprise color you can tell "I set it" (`direct`) from "the master/theme cascaded it" (`theme`, e.g. `text1`).
 - `pptlive read notes --slide 1` — sugar for `--anchor-id notes:1`.
 - `pptlive paragraphs --anchor-id ph:4:body` — `[{anchor_id (para:S:N:P), text, indent_level, bullet}]`.
 - `pptlive table read --slide 4 --shape 5` · `pptlive chart read --slide 4 --shape 5` · `pptlive smartart read --slide 3 --shape 2`.
@@ -110,7 +110,12 @@ PowerPoint's text model has sharp edges that leak through. The big ones:
 - `pptlive slide set-transition --slide 4 --effect fade [--duration 0.5] [--advance-after 3] [--on-click/--no-on-click]` — entrance transition (`fade`/`cut`/`dissolve`/`cover_left`/… or `none`); `--advance-after N` auto-advances after N s. Slide reads carry a `transition` dict.
 - `pptlive slide set-background --slide 4 --color "#1A2B3C"` (per-slide solid override of the master) · `--follow-master` reverts. Slide reads carry a `background` dict (`{follows_master, type, color}`).
 - `pptlive slide export --slide 2 --out slide2.png [--width 1280] [--format png]` — render one slide to an image so a vision model can *see* it.
-- `pptlive snapshot [--slide N | --slides A-B] [--out deck.png] [--max-dim 1000]` — render the **whole deck** (one PNG per slide) so you can check styling across every slide cheaply. `--max-dim` caps each slide's long edge (a uniform, predictable per-slide token cost); with `--out` it writes `<stem>-sN<suffix>`, otherwise base64 inline. The "did my restyle land everywhere?" read.
+- `pptlive snapshot [--slide N | --slides A-B] [--out deck.png] [--max-dim 1000]` — render the **whole deck** (one PNG per slide) so you can check styling across every slide cheaply. `--max-dim` caps each slide's long edge (a uniform, predictable per-slide token cost); or `--width`/`--height` for an exact per-slide size (overrides `--max-dim`; one is enough, the other follows the aspect ratio). With `--out` it writes `<stem>-sN<suffix>`, otherwise base64 inline. (No JPEG-quality knob — PowerPoint doesn't expose one; dimensions are the only render-cost lever.) The "did my restyle land everywhere?" read.
+
+## Deck structure: sections + headers/footers
+- `pptlive section list` — the deck's sections: `{index, name, first_slide, slide_count}` (1-based section index).
+- `pptlive section add --name "Results" [--before-slide 5]` — start a section at slide 5 (omit `--before-slide` for an empty trailing section; the first section before a later slide auto-creates a leading "Default Section"). `section rename --section 2 --name X` · `section move --section 2 --to 1` · `section delete --section 2 [--delete-slides]` (keeps slides by default — drops only the boundary).
+- `pptlive slide headers-footers N` reads a slide's footer/slide-number/date; `pptlive master headers-footers` reads the deck-wide default. Set per-slide: `slide set-footer --slide N --text "Confidential" [--show/--hide]`, `slide slide-number --slide N --show`, `slide set-date --slide N [--text "June 2026" | --format 14] [--show/--hide]`. Same verbs on `master …` set the deck-wide default. Setting footer/date text auto-shows it; a hidden element's text reads back null.
 
 ## Save & export (explicit — pptlive never auto-saves)
 `status` shows each deck's `saved` flag (and flags `(unsaved)` in `--text`).
@@ -130,6 +135,7 @@ PowerPoint's text model has sharp edges that leak through. The big ones:
 - `pptlive shape order --anchor-id shape:4:3 --to back` — restack (`front`/`back`/`forward`/`backward`); send a new background panel behind existing content.
 - `pptlive shape set-alt --anchor-id shape:4:3 --alt-text "Acme logo"` — alt text doubles as a drift-proof re-id handle.
 - `pptlive shape set-link --anchor-id shape:4:3 --url https://acme.com` (or `--slide 2` for an in-deck "back to agenda" jump; `--screen-tip "Acme"`). `pptlive shape remove-link --anchor-id shape:4:3`. A link needs no text frame; reads carry a `hyperlink` field (`{address, sub_address}` or null).
+- **Animations**: `pptlive shape animate --anchor-id shape:4:3 --effect fade [--trigger on_click|with_previous|after_previous] [--duration 1] [--delay 0.5] [--exit]` — entrance effect (`fade`/`appear`/`fly_in`/`float_in`/`wipe`/`zoom`/`grow_turn`/`swivel`/`wheel`/`split`); `--exit` animates the shape **out** (the "disappear" case). Each call adds one effect. `pptlive slide animations 4` lists a slide's effects in play order (each maps back to its target `shapeid`); `pptlive shape clear-animations --anchor-id shape:4:3` clears one shape's, `pptlive slide clear-animations --slide 4` clears the whole slide's. Slide reads carry an `animations` list.
 - `pptlive shape export --anchor-id shape:4:3 --out logo.png` — render one shape (native size).
 - Every shape read carries `fill`/`line` (`{color, visible[, weight]}`) + `hyperlink`; a theme/automatic color is `color: null`. Delete/restack shifts `shape:S:N` — address by `shapeid:S:ID` to survive it.
 

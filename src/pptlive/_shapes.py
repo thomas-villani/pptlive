@@ -33,6 +33,10 @@ from .constants import (
     MsoTriState,
     PpActionType,
     PpMouseActivation,
+    anim_effect_for,
+    anim_effect_name,
+    anim_trigger_for,
+    anim_trigger_name,
     arrowhead_size_for,
     arrowhead_style_for,
     arrowhead_style_name,
@@ -744,6 +748,28 @@ def _hyperlink_to_dict(com_shape: Any) -> dict[str, Any] | None:
     return {"address": address or None, "sub_address": sub_address or None}
 
 
+def effect_to_dict(eff: Any, slide_index: int) -> dict[str, Any]:
+    """One animation `Effect` -> `{shapeid, shape, effect, exit, trigger, duration,
+    delay}` (the row `slide.animations()` and `Shape.animate` echo).
+
+    Maps the effect back to its target shape via the drift-proof
+    `shapeid:S:ID` (`Effect.Shape.Id`) plus the shape `name`, and decodes the
+    `EffectType`/`TriggerType` ints to friendly names. `exit` is True for an exit
+    (animate-out) effect. `duration` is the animation length in seconds and `delay`
+    the `after`/`with` start delay — both read off `Effect.Timing`.
+    """
+    timing = eff.Timing
+    return {
+        "shapeid": f"shapeid:{slide_index}:{int(eff.Shape.Id)}",
+        "shape": str(eff.Shape.Name),
+        "effect": anim_effect_name(int(eff.EffectType)),
+        "exit": is_true(eff.Exit),
+        "trigger": anim_trigger_name(int(timing.TriggerType)),
+        "duration": float(timing.Duration),
+        "delay": float(timing.TriggerDelayTime),
+    }
+
+
 def shape_to_dict(com_shape: Any, slide_index: int, z_index: int) -> dict[str, Any]:
     """Structured snapshot of one shape for `slide.read()` / `shapes.list()`.
 
@@ -1274,6 +1300,55 @@ class Shape(Anchor):
             sh = self._com_shape()  # raw ref tracks the shape across the restack
             sh.ZOrder(cmd)
             return int(sh.ZOrderPosition)
+
+    def animate(
+        self,
+        effect: str | int = "fade",
+        *,
+        trigger: str | int = "on_click",
+        duration: float | None = None,
+        delay: float | None = None,
+        exit: bool = False,
+    ) -> dict[str, Any]:
+        """Give this shape an entrance (or exit) animation; return the effect dict.
+
+        Appends an effect to the slide's main animation sequence
+        (`Slide.TimeLine.MainSequence.AddEffect`). `effect` is a friendly
+        `MsoAnimEffect` name (`"fade"`/`"appear"`/`"fly_in"`/… — see
+        `constants.ANIM_EFFECT_CHOICES`) or a raw int. `trigger` is when it fires —
+        `"on_click"` (default), `"with_previous"`, or `"after_previous"`.
+        `duration` is the animation length in seconds and `delay` the start delay in
+        seconds (both optional; PowerPoint's per-effect default applies when None).
+        Pass `exit=True` to make the shape animate **out** instead of in (the
+        "disappear" case) — the same effect ids serve both.
+
+        A shape can carry several effects; each `animate()` call adds one (clear
+        them with `clear_animations()`). Raises `ValueError` (before any COM) for an
+        unknown effect/trigger name. A mutation: wrap in `deck.edit(...)`.
+        """
+        effect_int = anim_effect_for(effect)  # ValueError before any COM
+        trigger_int = anim_trigger_for(trigger)
+        with _com.translate_com_errors():
+            seq = self._slide.com.TimeLine.MainSequence
+            eff = seq.AddEffect(self._com_shape(), effect_int, 0, trigger_int)
+            if exit:
+                eff.Exit = int(MsoTriState.TRUE)
+            if duration is not None:
+                eff.Timing.Duration = float(duration)
+            if delay is not None:
+                eff.Timing.TriggerDelayTime = float(delay)
+            return effect_to_dict(eff, self.slide.index)
+
+    def clear_animations(self) -> int:
+        """Remove every animation effect targeting **this shape**; return the count.
+
+        Walks the slide's main sequence and deletes each effect whose target is this
+        shape (matched by stable `Shape.Id`, so a restack doesn't matter), leaving
+        other shapes' animations intact. Use `Slide.clear_animations()` to wipe the
+        whole slide. A no-op (returns 0) if the shape has no animations. A mutation:
+        wrap in `deck.edit(...)`.
+        """
+        return self._slide.clear_animations(anchor=self)
 
     def set_hyperlink(
         self,

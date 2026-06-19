@@ -99,6 +99,37 @@ def test_snapshot_no_max_dim_is_native(deck, fake_powerpoint) -> None:  # type: 
     assert (rec["Width"], rec["Height"]) == (1280, 720)
 
 
+# -- explicit width/height override -----------------------------------------
+
+
+def test_explicit_dims_both_exact() -> None:
+    assert _snapshot._explicit_dims(960.0, 540.0, 800, 450) == (800, 450)
+
+
+def test_explicit_dims_width_only_keeps_aspect() -> None:
+    assert _snapshot._explicit_dims(960.0, 540.0, 800, None) == (800, 450)
+
+
+def test_explicit_dims_height_only_keeps_aspect() -> None:
+    assert _snapshot._explicit_dims(960.0, 540.0, None, 450) == (800, 450)
+
+
+def test_explicit_dims_none_when_unset() -> None:
+    assert _snapshot._explicit_dims(960.0, 540.0, None, None) is None
+
+
+def test_snapshot_explicit_width_overrides_native(deck, fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    snaps = deck.snapshot(slides=1, width=800)
+    rec = _last_export(fake_powerpoint, 1)
+    assert (rec["Width"], rec["Height"]) == (800, 450)
+    assert _png_dims(snaps[0].image) == (800, 450)
+
+
+def test_snapshot_width_and_max_dim_conflict_raises(deck) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError, match="not both"):
+        deck.snapshot(slides=1, max_dim=1000, width=800)
+
+
 def test_snapshot_is_polite(deck, fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     # snapshot() is documented as a *read*: exporting every slide must not move
     # the viewed slide or disturb the live Selection (no deck.edit() fence). This
@@ -189,6 +220,22 @@ def test_cli_snapshot_range_and_max_dim(fake_powerpoint) -> None:  # type: ignor
     assert payload["count"] == 2
     assert payload["max_dim"] == 1000
     assert _png_dims(base64.b64decode(payload["images"][0]["base64"])) == (1000, 562)
+
+
+def test_cli_snapshot_explicit_width(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    res = CliRunner().invoke(main, ["--json", "snapshot", "--slide", "1", "--width", "800"])
+    assert res.exit_code == 0
+    payload = json.loads(res.output)
+    assert payload["width"] == 800
+    assert _png_dims(base64.b64decode(payload["images"][0]["base64"])) == (800, 450)
+
+
+def test_cli_snapshot_width_max_dim_conflict_is_exit_1(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    res = CliRunner().invoke(
+        main, ["snapshot", "--slide", "1", "--max-dim", "1000", "--width", "800"]
+    )
+    assert res.exit_code == 1
+    assert "not both" in res.output + str(res.exception or "")
 
 
 def test_cli_snapshot_rejects_both_selectors(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]

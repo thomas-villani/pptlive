@@ -106,7 +106,10 @@ class _FakeFont:
         self.Underline = 0
         self.Size = 18.0
         self.Name = "Calibri"
-        self.Color = SimpleNamespace(RGB=0)
+        # ColorFormat.Type=1 (msoColorTypeRGB) -> color_source "direct"; a theme-
+        # sourced run sets Type=2 (scheme) + ObjectThemeColor (the batch2 spike
+        # signal). RGB=0 reads back "#000000", consistent with a direct black.
+        self.Color = SimpleNamespace(RGB=0, Type=1, ObjectThemeColor=0)
 
 
 class _FakeBullet:
@@ -1588,6 +1591,64 @@ class _FakeSlideTransition:
         self.AdvanceTime = 0.0
 
 
+class _FakeEffectTiming:
+    """`Effect.Timing` — duration / trigger / start delay (seconds)."""
+
+    def __init__(self, trigger: int) -> None:
+        self.Duration = 0.5
+        self.TriggerType = int(trigger)
+        self.TriggerDelayTime = 0.0
+        self.Speed = 0.5
+
+
+class _FakeEffect:
+    """One animation effect in a `Sequence`. Mirrors the spike: `EffectType` and
+    `Exit` round-trip, `.Shape` maps the effect back to its target, and `Delete()`
+    drops it from the sequence."""
+
+    def __init__(self, sequence: _FakeSequence, shape: _FakeShape, effect_id: int, trigger: int):
+        self._sequence = sequence
+        self.Shape = shape
+        self.EffectType = int(effect_id)
+        self.Exit = _MSO_FALSE
+        self.DisplayName = ""
+        self.Timing = _FakeEffectTiming(trigger)
+
+    def Delete(self) -> None:
+        self._sequence._effects.remove(self)
+
+
+class _FakeSequence:
+    """`TimeLine.MainSequence` — 1-based `(i)` access + `Count` + `AddEffect`."""
+
+    def __init__(self) -> None:
+        self._effects: list[_FakeEffect] = []
+
+    @property
+    def Count(self) -> int:
+        return len(self._effects)
+
+    def __call__(self, index: int) -> _FakeEffect:
+        return self._effects[int(index) - 1]
+
+    def __iter__(self) -> Any:
+        return iter(self._effects)
+
+    def AddEffect(
+        self, shape: _FakeShape, effect_id: int, level: int = 0, trigger: int = 1
+    ) -> _FakeEffect:
+        eff = _FakeEffect(self, shape, int(effect_id), int(trigger))
+        self._effects.append(eff)
+        return eff
+
+
+class _FakeTimeLine:
+    """`Slide.TimeLine` — just the `MainSequence` the animation verbs touch."""
+
+    def __init__(self) -> None:
+        self.MainSequence = _FakeSequence()
+
+
 class _FakeSlide:
     """A slide. `SlideIndex` is derived from list position so add/move/delete
     shift indices the way real PowerPoint does; `SlideID` stays stable."""
@@ -1609,6 +1670,8 @@ class _FakeSlide:
         self.NotesPage = _FakeNotesPage(notes_text)
         self.Comments = _FakeCommentCollection(comments)
         self.SlideShowTransition = _FakeSlideTransition()
+        self.TimeLine = _FakeTimeLine()
+        self.HeadersFooters = _FakeHeadersFooters(is_master=False)
         # Per-slide background: inherits the master by default (msoTrue), with its
         # own solid-fill object for when an override is set.
         self.FollowMasterBackground = _MSO_TRUE
@@ -1861,6 +1924,66 @@ class _FakeFillFormat:
         self.Type = 1  # msoFillSolid
 
 
+class _FakeHeaderFooter:
+    """One `HeaderFooter` element. Mirrors the batch2 spike: reading `.Text` /
+    `.UseFormat` while `.Visible` is msoFalse raises 'Invalid request', so the
+    wrapper's guarded read degrades them to None until the element is shown."""
+
+    def __init__(self, *, gate_use_format: bool = False) -> None:
+        self.Visible = _MSO_FALSE
+        self.Format = 14  # a PpDateTimeFormat int
+        self._text = ""
+        self._use_format = _MSO_TRUE
+        self._gate_use_format = gate_use_format
+
+    def _guard(self) -> None:
+        if self.Visible != _MSO_TRUE:
+            raise RuntimeError("Invalid request.")  # what live COM raises when hidden
+
+    @property
+    def Text(self) -> str:
+        self._guard()
+        return self._text
+
+    @Text.setter
+    def Text(self, value: str) -> None:
+        self._text = str(value)
+
+    @property
+    def UseFormat(self) -> int:
+        if self._gate_use_format:
+            self._guard()
+        return self._use_format
+
+    @UseFormat.setter
+    def UseFormat(self, value: int) -> None:
+        self._use_format = int(value)
+
+
+class _FakeHeadersFooters:
+    """`Slide.HeadersFooters` / `SlideMaster.HeadersFooters` — footer / slide
+    number / date, plus the master-only DisplayOnTitleSlide."""
+
+    def __init__(self, *, is_master: bool = False) -> None:
+        self.Footer = _FakeHeaderFooter()
+        self.SlideNumber = _FakeHeaderFooter()
+        self.DateAndTime = _FakeHeaderFooter(gate_use_format=True)
+        self._is_master = is_master
+        self._display_on_title = _MSO_TRUE
+
+    @property
+    def DisplayOnTitleSlide(self) -> int:
+        if not self._is_master:
+            raise RuntimeError("This property must be set using slide or title master.")
+        return self._display_on_title
+
+    @DisplayOnTitleSlide.setter
+    def DisplayOnTitleSlide(self, value: int) -> None:
+        if not self._is_master:
+            raise RuntimeError("This property must be set using slide or title master.")
+        self._display_on_title = value
+
+
 class _FakeSlideMaster:
     """`Presentation.SlideMaster` — layouts + text styles + theme + background."""
 
@@ -1870,9 +1993,81 @@ class _FakeSlideMaster:
         self._text_styles = {1: _FakeTextStyle(), 2: _FakeTextStyle(), 3: _FakeTextStyle()}
         self.Theme = _FakeTheme()
         self.Background = SimpleNamespace(Fill=_FakeFillFormat())
+        self.HeadersFooters = _FakeHeadersFooters(is_master=True)
 
     def TextStyles(self, style_type: int) -> _FakeTextStyle:
         return self._text_styles[int(style_type)]
+
+
+class _FakeSectionProperties:
+    """`Presentation.SectionProperties` — named slide spans, 1-based section index.
+
+    Models the batch2-spike findings the wrapper relies on: `AddBeforeSlide(slide,
+    name)` starts a section at a slide and auto-creates a leading "Default Section"
+    when it's the first section in front of slide >1; `AddSection(index, name)`
+    inserts an empty trailing boundary (`FirstSlide` -1, `SlidesCount` 0);
+    `Delete(index, deleteSlides)` drops the boundary (keeping slides unless the bool
+    is msoTrue); `SlidesCount` derives from the next section's start.
+    """
+
+    def __init__(self, pres: _FakePresentation) -> None:
+        self._pres = pres
+        self._sections: list[dict[str, Any]] = []  # {"name": str, "first": int | None}
+
+    @property
+    def Count(self) -> int:
+        return len(self._sections)
+
+    def Name(self, index: int) -> str:
+        return str(self._sections[int(index) - 1]["name"])
+
+    def FirstSlide(self, index: int) -> int:
+        first = self._sections[int(index) - 1]["first"]
+        return int(first) if first is not None else -1
+
+    def SlidesCount(self, index: int) -> int:
+        i = int(index) - 1
+        first = self._sections[i]["first"]
+        if first is None:
+            return 0
+        # The next section (positionally) that has a real start bounds this one.
+        next_first = None
+        for s in self._sections[i + 1 :]:
+            if s["first"] is not None:
+                next_first = s["first"]
+                break
+        end = next_first if next_first is not None else self._pres.Slides.Count + 1
+        return max(0, int(end) - int(first))
+
+    def _insert_ordered(self, name: str, first: int) -> int:
+        """Insert a real (slide-anchored) section in first-slide order; return index."""
+        pos = len(self._sections)
+        for idx, s in enumerate(self._sections):
+            if s["first"] is None or s["first"] > first:
+                pos = idx
+                break
+        self._sections.insert(pos, {"name": str(name), "first": int(first)})
+        return pos + 1
+
+    def AddBeforeSlide(self, slide_index: int, name: str) -> int:
+        if not self._sections and int(slide_index) > 1:
+            self._sections.insert(0, {"name": "Default Section", "first": 1})
+        return self._insert_ordered(name, int(slide_index))
+
+    def AddSection(self, section_index: int, name: str) -> int:
+        pos = max(0, min(len(self._sections), int(section_index) - 1))
+        self._sections.insert(pos, {"name": str(name), "first": None})
+        return pos + 1
+
+    def Rename(self, index: int, name: str) -> None:
+        self._sections[int(index) - 1]["name"] = str(name)
+
+    def Delete(self, index: int, delete_slides: int = 0) -> None:
+        self._sections.pop(int(index) - 1)
+
+    def Move(self, index: int, to: int) -> None:
+        s = self._sections.pop(int(index) - 1)
+        self._sections.insert(int(to) - 1, s)
 
 
 class _FakePresentation:
@@ -1894,6 +2089,7 @@ class _FakePresentation:
         self.Slides = _FakeSlides(slides)
         self.PageSetup = SimpleNamespace(SlideWidth=slide_width, SlideHeight=slide_height)
         self.SlideMaster = _FakeSlideMaster(layout_names)
+        self.SectionProperties = _FakeSectionProperties(self)
         self._show_settings = _FakeSlideShowSettings(self)
         self._show_window: _FakeSlideShowWindow | None = None
 

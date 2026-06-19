@@ -32,8 +32,10 @@ from .constants import (
     bullet_type_for,
     bullet_type_name,
     color_hex_or_none,
+    color_source_name,
     is_true,
     parse_color,
+    theme_color_name,
     tristate_value,
 )
 from .exceptions import AnchorNotFoundError
@@ -569,22 +571,44 @@ def _font_color_hex(font: Any) -> str | None:
     return color_hex_or_none(font.Color.RGB)
 
 
+def _color_source(font: Any) -> tuple[str | None, str | None]:
+    """`(color_source, theme_color)` for a run's font color (the direct-vs-theme tell).
+
+    `color_source` is `"direct"` (a literal RGB set on the run), `"theme"` (a scheme
+    color cascaded from the theme/master), or `"mixed"` — read off
+    `ColorFormat.Type` (spike-verified in scripts/batch2_spike.py). When the source
+    is `"theme"`, `theme_color` names the slot it points at (`ObjectThemeColor`,
+    e.g. `"text1"`); otherwise it's `None`. This is the answer to "is this green
+    because I set it, or because the master pulled it there?".
+    """
+    color = font.Color
+    source = _safe(lambda: color_source_name(color.Type), None)
+    theme = (
+        _safe(lambda: theme_color_name(color.ObjectThemeColor), None) if source == "theme" else None
+    )
+    return source, theme
+
+
 def font_to_dict(text_range: Any) -> dict[str, Any]:
     """The *effective* font of a text range, with tri-state fidelity (PPTLIVE-003).
 
     Returns the resolved font attributes PowerPoint reports for the range —
     `bold`/`italic`/`underline` as `True`/`False`/`"mixed"` (the `"mixed"` case is
     a range spanning differing runs, the signal `is_true` used to discard),
-    `size` (points; `None` when mixed/unset), `font` (typeface name), and `color`
-    (`"#RRGGBB"`, or `None` for a theme/automatic color — see `_font_color_hex`).
+    `size` (points; `None` when mixed/unset), `font` (typeface name), `color`
+    (`"#RRGGBB"`, or `None` for a theme/automatic color — see `_font_color_hex`),
+    and the `color_source` tell.
 
-    Honest scope: these are *effective* values. COM resolves the master/layout
-    style cascade before we see them and exposes no general "directly set on the
-    run vs inherited" flag (only color carries a usable RGB-vs-theme distinction,
-    surfaced here as a literal hex vs `None`). So this is "what is rendered", not
-    "what was set on this run".
+    `color_source` (`"direct"`/`"theme"`/`"mixed"`) finally distinguishes a color
+    *set on the run* from one *cascaded from the theme/master* — the discriminator
+    the Claude Desktop session asked for, off `ColorFormat.Type`; `theme_color`
+    names the inherited slot when the source is `"theme"`. The other attributes are
+    still *effective* values (COM resolves the cascade before we see them and
+    exposes no per-attribute directly-set flag), so this stays "what is rendered",
+    now with the color provenance made explicit.
     """
     font = text_range.Font
+    color_source, theme_color = _color_source(font)
 
     def _size() -> float | None:
         v = float(font.Size)
@@ -601,6 +625,8 @@ def font_to_dict(text_range: Any) -> dict[str, Any]:
         "size": _safe(_size, None),
         "font": _safe(_name, None),
         "color": _safe(lambda: _font_color_hex(font), None),
+        "color_source": color_source,
+        "theme_color": theme_color,
     }
 
 

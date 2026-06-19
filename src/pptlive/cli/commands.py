@@ -35,6 +35,8 @@ from .._presentation import Presentation
 from .._shapes import Shape
 from ..constants import (
     ALIGNMENT_CHOICES,
+    ANIM_EFFECT_CHOICES,
+    ANIM_TRIGGER_CHOICES,
     ARROWHEAD_SIZE_CHOICES,
     ARROWHEAD_STYLE_CHOICES,
     AUTOSHAPE_CHOICES,
@@ -444,12 +446,29 @@ def _parse_slides_range(
     "fraction of the tokens; a uniform per-slide cost across the deck.",
 )
 @click.option(
+    "--width",
+    "width",
+    type=int,
+    default=None,
+    help="Exact per-slide width in pixels (overrides --max-dim; height follows the "
+    "aspect ratio if omitted). Can't be combined with --max-dim.",
+)
+@click.option(
+    "--height",
+    "height",
+    type=int,
+    default=None,
+    help="Exact per-slide height in pixels (overrides --max-dim; width follows the "
+    "aspect ratio if omitted). Can't be combined with --max-dim.",
+)
+@click.option(
     "--format",
     "fmt",
     type=click.Choice(IMAGE_FORMAT_CHOICES),
     default="png",
     show_default=True,
-    help="Image format.",
+    help="Image format. Note: PowerPoint exposes no JPEG-quality knob, so pixel "
+    "dimensions are the only render-cost lever.",
 )
 @_deck_command
 def snapshot_cmd(
@@ -459,23 +478,33 @@ def snapshot_cmd(
     slides_range: str | None,
     out: Path | None,
     max_dim: int | None,
+    width: int | None,
+    height: int | None,
     fmt: str,
 ) -> None:
     """Render slides to PNG so a vision model can *see* the whole deck cheaply.
 
     The token-cost-aware read: `--max-dim` caps each slide's long edge in pixels,
     giving a predictable, uniform per-slide budget — the lever for "render the
-    whole deck and check my styling landed" without full-resolution bloat. Renders
-    the current unsaved state; polite (doesn't move the view). With `--out` the
-    PNGs are written (single → that path, multiple → `<stem>-s<N><suffix>`) and the
-    JSON reports each `path`; without it, base64 PNG data is returned inline.
+    whole deck and check my styling landed" without full-resolution bloat. For an
+    exact size pass `--width`/`--height` instead (overrides `--max-dim`; one is
+    enough, the other follows the aspect ratio). Renders the current unsaved state;
+    polite (doesn't move the view). With `--out` the PNGs are written (single → that
+    path, multiple → `<stem>-s<N><suffix>`) and the JSON reports each `path`;
+    without it, base64 PNG data is returned inline.
     """
     try:
         selector = _parse_slides_range(slide, slides_range)
     except ValueError as exc:
         click.echo(f"error: {exc}", err=True)
         sys.exit(1)
-    snaps = deck.snapshot(out, slides=selector, fmt=fmt, max_dim=max_dim)
+    try:
+        snaps = deck.snapshot(
+            out, slides=selector, fmt=fmt, max_dim=max_dim, width=width, height=height
+        )
+    except ValueError as exc:
+        click.echo(f"error: {exc}", err=True)
+        sys.exit(1)
     images = [
         {
             "slide": s.slide,
@@ -499,6 +528,8 @@ def snapshot_cmd(
         "count": len(snaps),
         "format": fmt,
         "max_dim": max_dim,
+        "width": width,
+        "height": height,
         "images": images,
     }
     written = [str(s.path) for s in snaps if s.path is not None]
@@ -618,6 +649,7 @@ def register(group: click.Group) -> None:
     group.add_command(chart)
     group.add_command(smartart)
     group.add_command(comment)
+    group.add_command(section)
     group.add_command(theme)
     group.add_command(master)
     group.add_command(selection_cmd)
@@ -717,6 +749,41 @@ def slide_geometry(ctx: click.Context, deck: Presentation, index: int) -> None:
         text=(
             f"slide {index}: {len(report['shapes'])} shapes, {n_over} overlap(s), {n_off} off-slide"
         ),
+    )
+
+
+@slide.command(name="animations")
+@click.argument("index", type=int)
+@_deck_command
+def slide_animations(ctx: click.Context, deck: Presentation, index: int) -> None:
+    """List slide INDEX's shape animations in play order (effect, trigger, target).
+
+    Each row maps an effect back to its target `shapeid` so you can see *what*
+    animates *how* without a render. A read; the user's view doesn't move.
+    """
+    rows = deck.slides[index].animations()
+    text = (
+        "\n".join(
+            f"{r['seq_index']}. {r['shape']} ({r['shapeid']}): "
+            f"{'exit ' if r['exit'] else ''}{r['effect']} / {r['trigger']}"
+            for r in rows
+        )
+        or f"slide {index}: no animations"
+    )
+    emit(rows, as_text=not ctx.obj["as_json"], text=text)
+
+
+@slide.command(name="clear-animations")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@_deck_command
+def slide_clear_animations(ctx: click.Context, deck: Presentation, slide_index: int) -> None:
+    """Remove every animation from a slide; print how many effects were deleted."""
+    with deck.edit(f"CLI: clear animations on slide {slide_index}"):
+        removed = deck.slides[slide_index].clear_animations()
+    emit(
+        {"ok": True, "index": slide_index, "removed": removed},
+        as_text=not ctx.obj["as_json"],
+        text=f"slide {slide_index}: cleared {removed} animation(s)",
     )
 
 
@@ -996,6 +1063,102 @@ def slide_set_background(
         {"ok": True, "index": slide_index, "background": bg},
         as_text=not ctx.obj["as_json"],
         text=f"slide {slide_index} background -> {dest}",
+    )
+
+
+# ---------------------------------------------------------------------------
+# headers / footers — footer / slide-number / date (slide override + master default)
+# ---------------------------------------------------------------------------
+
+
+def _fmt_hf(hf: dict[str, Any]) -> str:
+    f, s, d = hf["footer"], hf["slide_number"], hf["date"]
+    return (
+        f"footer: {'on' if f['visible'] else 'off'}"
+        + (f" {f['text']!r}" if f["text"] else "")
+        + f" | slide#: {'on' if s['visible'] else 'off'}"
+        + f" | date: {'on' if d['visible'] else 'off'}"
+        + (f" {d['text']!r}" if d["text"] else "")
+    )
+
+
+@slide.command(name="headers-footers")
+@click.argument("index", type=int)
+@_deck_command
+def slide_headers_footers(ctx: click.Context, deck: Presentation, index: int) -> None:
+    """Read slide INDEX's footer / slide-number / date settings."""
+    hf = deck.slides[index].headers_footers.read()
+    emit(hf, as_text=not ctx.obj["as_json"], text=_fmt_hf(hf))
+
+
+@slide.command(name="set-footer")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--text", "text", default=None, help="Footer text (setting it auto-shows the footer)."
+)
+@click.option("--show/--hide", "visible", default=None, help="Show or hide the footer.")
+@_deck_command
+def slide_set_footer(
+    ctx: click.Context, deck: Presentation, slide_index: int, text: str | None, visible: bool | None
+) -> None:
+    """Set slide S's footer text and/or visibility."""
+    if text is None and visible is None:
+        raise click.UsageError("slide set-footer requires --text and/or --show/--hide")
+    with deck.edit(f"CLI: set footer on slide {slide_index}"):
+        hf = deck.slides[slide_index].headers_footers.set_footer(text=text, visible=visible)
+    emit(
+        {"ok": True, "slide": slide_index, "headers_footers": hf},
+        as_text=not ctx.obj["as_json"],
+        text=_fmt_hf(hf),
+    )
+
+
+@slide.command(name="slide-number")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option("--show/--hide", "visible", default=True, help="Show or hide the slide number.")
+@_deck_command
+def slide_slide_number(
+    ctx: click.Context, deck: Presentation, slide_index: int, visible: bool
+) -> None:
+    """Show or hide slide S's auto slide number."""
+    with deck.edit(f"CLI: slide number on slide {slide_index}"):
+        hf = deck.slides[slide_index].headers_footers.set_slide_number(visible)
+    emit(
+        {"ok": True, "slide": slide_index, "headers_footers": hf},
+        as_text=not ctx.obj["as_json"],
+        text=_fmt_hf(hf),
+    )
+
+
+@slide.command(name="set-date")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option("--text", "text", default=None, help="Fixed date text (auto-shows the date).")
+@click.option(
+    "--format",
+    "fmt",
+    type=int,
+    default=None,
+    help="Auto-updating date format (PpDateTimeFormat int).",
+)
+@click.option("--show/--hide", "visible", default=None, help="Show or hide the date.")
+@_deck_command
+def slide_set_date(
+    ctx: click.Context,
+    deck: Presentation,
+    slide_index: int,
+    text: str | None,
+    fmt: int | None,
+    visible: bool | None,
+) -> None:
+    """Set slide S's date placeholder (fixed --text or auto --format)."""
+    if text is None and fmt is None and visible is None:
+        raise click.UsageError("slide set-date requires --text, --format, and/or --show/--hide")
+    with deck.edit(f"CLI: set date on slide {slide_index}"):
+        hf = deck.slides[slide_index].headers_footers.set_date(visible=visible, text=text, fmt=fmt)
+    emit(
+        {"ok": True, "slide": slide_index, "headers_footers": hf},
+        as_text=not ctx.obj["as_json"],
+        text=_fmt_hf(hf),
     )
 
 
@@ -1713,6 +1876,79 @@ def shape_order(ctx: click.Context, deck: Presentation, anchor_id: str, to: str)
     )
 
 
+@shape.command(name="animate")
+@click.option(
+    "--anchor-id",
+    "anchor_id",
+    required=True,
+    help="Shape to animate (shape:S:N / shapeid:S:ID / ph).",
+)
+@click.option(
+    "--effect",
+    "effect",
+    type=click.Choice(ANIM_EFFECT_CHOICES),
+    default="fade",
+    show_default=True,
+    help="Animation effect.",
+)
+@click.option(
+    "--trigger",
+    "trigger",
+    type=click.Choice(ANIM_TRIGGER_CHOICES),
+    default="on_click",
+    show_default=True,
+    help="When the animation fires.",
+)
+@click.option("--duration", type=float, default=None, help="Animation length in seconds.")
+@click.option("--delay", type=float, default=None, help="Start delay in seconds.")
+@click.option(
+    "--exit", "exit_", is_flag=True, default=False, help="Animate the shape OUT (exit effect)."
+)
+@_deck_command
+def shape_animate(
+    ctx: click.Context,
+    deck: Presentation,
+    anchor_id: str,
+    effect: str,
+    trigger: str,
+    duration: float | None,
+    delay: float | None,
+    exit_: bool,
+) -> None:
+    """Add an entrance (or --exit) animation to a shape; print the effect."""
+    sh = _resolve_shape(deck, anchor_id)
+    with deck.edit(f"CLI: animate {anchor_id} {effect}"):
+        animation = sh.animate(effect, trigger=trigger, duration=duration, delay=delay, exit=exit_)
+    emit(
+        {"ok": True, "anchor_id": sh.anchor_id, "shapeid": sh.shapeid, "animation": animation},
+        as_text=not ctx.obj["as_json"],
+        text=(
+            f"animated {sh.anchor_id}: {'exit ' if animation['exit'] else ''}"
+            f"{animation['effect']} / {animation['trigger']}"
+        ),
+    )
+
+
+@shape.command(name="clear-animations")
+@click.option(
+    "--anchor-id",
+    "anchor_id",
+    required=True,
+    help="Shape whose animations to clear (shape:S:N / shapeid:S:ID / ph).",
+)
+@_deck_command
+def shape_clear_animations(ctx: click.Context, deck: Presentation, anchor_id: str) -> None:
+    """Remove all animations targeting a shape; print how many were deleted."""
+    sh = _resolve_shape(deck, anchor_id)
+    with deck.edit(f"CLI: clear animations on {anchor_id}"):
+        removed = sh.clear_animations()
+    emit(
+        {"ok": True, "anchor_id": sh.anchor_id, "shapeid": sh.shapeid, "removed": removed},
+        as_text=not ctx.obj["as_json"],
+        text=f"{sh.anchor_id}: cleared {removed} animation(s)",
+    )
+
+
 @shape.command(name="set-link")
 @click.option(
     "--anchor-id",
@@ -2419,6 +2655,114 @@ def comment_delete(ctx: click.Context, deck: Presentation, slide_index: int, ind
 
 
 # ---------------------------------------------------------------------------
+# section — deck structure: named slide spans (list / add / rename / delete / move)
+# ---------------------------------------------------------------------------
+
+
+def _fmt_sections(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "(no sections)"
+    return "\n".join(
+        f"{r['index']}. {r['name']} (slides {r['first_slide']}..+{r['slide_count']})"
+        if r["first_slide"] is not None
+        else f"{r['index']}. {r['name']} (empty)"
+        for r in rows
+    )
+
+
+@click.group(name="section")
+def section() -> None:
+    """Deck sections — named spans of slides: list, add, rename, delete, move.
+
+    Addressed by 1-based section index (see `section list`). A section starts at a
+    slide and runs to the next one; `add --before-slide N` starts a section there.
+    """
+
+
+@section.command(name="list")
+@_deck_command
+def section_list(ctx: click.Context, deck: Presentation) -> None:
+    """List the deck's sections: index, name, first slide, slide count."""
+    rows = deck.sections.list()
+    emit(rows, as_text=not ctx.obj["as_json"], text=_fmt_sections(rows))
+
+
+@section.command(name="add")
+@click.option("--name", "name", required=True, help="The new section's name.")
+@click.option(
+    "--before-slide",
+    "before_slide",
+    type=int,
+    default=None,
+    help="1-based slide the section starts at. Omit to append an empty trailing section.",
+)
+@_deck_command
+def section_add(
+    ctx: click.Context, deck: Presentation, name: str, before_slide: int | None
+) -> None:
+    """Add a section (one Ctrl-Z); print its resulting row."""
+    with deck.edit(f"CLI: add section {name!r}"):
+        row = deck.sections.add(name, before_slide=before_slide)
+    emit(
+        {"ok": True, "section": row},
+        as_text=not ctx.obj["as_json"],
+        text=f"added section {row['index']}: {row['name']}",
+    )
+
+
+@section.command(name="rename")
+@click.option("--section", "index", type=int, required=True, help="1-based section index.")
+@click.option("--name", "name", required=True, help="The new name.")
+@_deck_command
+def section_rename(ctx: click.Context, deck: Presentation, index: int, name: str) -> None:
+    """Rename section INDEX (one Ctrl-Z)."""
+    with deck.edit(f"CLI: rename section {index}"):
+        row = deck.sections.rename(index, name)
+    emit(
+        {"ok": True, "section": row},
+        as_text=not ctx.obj["as_json"],
+        text=f"renamed section {index} -> {row['name']}",
+    )
+
+
+@section.command(name="delete")
+@click.option("--section", "index", type=int, required=True, help="1-based section index.")
+@click.option(
+    "--delete-slides",
+    "delete_slides",
+    is_flag=True,
+    default=False,
+    help="Also delete the section's slides (default: keep them, drop only the boundary).",
+)
+@_deck_command
+def section_delete(ctx: click.Context, deck: Presentation, index: int, delete_slides: bool) -> None:
+    """Delete section INDEX (keeps its slides unless --delete-slides; one Ctrl-Z)."""
+    with deck.edit(f"CLI: delete section {index}"):
+        out = deck.sections.delete(index, delete_slides=delete_slides)
+    emit(
+        {"ok": True, **out},
+        as_text=not ctx.obj["as_json"],
+        text=f"deleted section {index}: {out['name']}"
+        + (" (with slides)" if delete_slides else ""),
+    )
+
+
+@section.command(name="move")
+@click.option("--section", "index", type=int, required=True, help="1-based section index.")
+@click.option("--to", "to", type=int, required=True, help="1-based target position.")
+@_deck_command
+def section_move(ctx: click.Context, deck: Presentation, index: int, to: int) -> None:
+    """Move section INDEX to position TO (carries its slides; one Ctrl-Z)."""
+    with deck.edit(f"CLI: move section {index} -> {to}"):
+        row = deck.sections.move(index, to)
+    emit(
+        {"ok": True, "section": row},
+        as_text=not ctx.obj["as_json"],
+        text=f"moved section to position {row['index']}: {row['name']}",
+    )
+
+
+# ---------------------------------------------------------------------------
 # theme — deck-wide palette + typefaces (read / set-color / set-font)
 # ---------------------------------------------------------------------------
 
@@ -2591,6 +2935,75 @@ def master_set_background(ctx: click.Context, deck: Presentation, color: str) ->
         deck.master.set_background(color)
     info = deck.master.read()
     emit(info, as_text=not ctx.obj["as_json"], text=_fmt_master_read(info))
+
+
+@master.command(name="headers-footers")
+@_deck_command
+def master_headers_footers(ctx: click.Context, deck: Presentation) -> None:
+    """Read the deck-wide footer / slide-number / date defaults (master scope)."""
+    hf = deck.master.headers_footers.read()
+    emit(hf, as_text=not ctx.obj["as_json"], text=_fmt_hf(hf))
+
+
+@master.command(name="set-footer")
+@click.option(
+    "--text", "text", default=None, help="Footer text (setting it auto-shows the footer)."
+)
+@click.option("--show/--hide", "visible", default=None, help="Show or hide the footer.")
+@_deck_command
+def master_set_footer(
+    ctx: click.Context, deck: Presentation, text: str | None, visible: bool | None
+) -> None:
+    """Set the deck-wide default footer (master)."""
+    if text is None and visible is None:
+        raise click.UsageError("master set-footer requires --text and/or --show/--hide")
+    with deck.edit("CLI: set master footer"):
+        hf = deck.master.headers_footers.set_footer(text=text, visible=visible)
+    emit(
+        {"ok": True, "scope": "master", "headers_footers": hf},
+        as_text=not ctx.obj["as_json"],
+        text=_fmt_hf(hf),
+    )
+
+
+@master.command(name="slide-number")
+@click.option("--show/--hide", "visible", default=True, help="Show or hide the slide number.")
+@_deck_command
+def master_slide_number(ctx: click.Context, deck: Presentation, visible: bool) -> None:
+    """Show or hide the deck-wide auto slide number (master)."""
+    with deck.edit("CLI: master slide number"):
+        hf = deck.master.headers_footers.set_slide_number(visible)
+    emit(
+        {"ok": True, "scope": "master", "headers_footers": hf},
+        as_text=not ctx.obj["as_json"],
+        text=_fmt_hf(hf),
+    )
+
+
+@master.command(name="set-date")
+@click.option("--text", "text", default=None, help="Fixed date text (auto-shows the date).")
+@click.option(
+    "--format",
+    "fmt",
+    type=int,
+    default=None,
+    help="Auto-updating date format (PpDateTimeFormat int).",
+)
+@click.option("--show/--hide", "visible", default=None, help="Show or hide the date.")
+@_deck_command
+def master_set_date(
+    ctx: click.Context, deck: Presentation, text: str | None, fmt: int | None, visible: bool | None
+) -> None:
+    """Set the deck-wide default date placeholder (master)."""
+    if text is None and fmt is None and visible is None:
+        raise click.UsageError("master set-date requires --text, --format, and/or --show/--hide")
+    with deck.edit("CLI: set master date"):
+        hf = deck.master.headers_footers.set_date(visible=visible, text=text, fmt=fmt)
+    emit(
+        {"ok": True, "scope": "master", "headers_footers": hf},
+        as_text=not ctx.obj["as_json"],
+        text=_fmt_hf(hf),
+    )
 
 
 # ---------------------------------------------------------------------------

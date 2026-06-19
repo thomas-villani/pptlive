@@ -27,7 +27,9 @@ from ._app import PowerPoint, attach, connect
 from ._charts import Chart
 from ._comments import Comment, CommentCollection
 from ._edit import EditScope
+from ._headersfooters import HeadersFooters
 from ._presentation import Presentation, PresentationCollection
+from ._sections import SectionCollection
 from ._selection import SelectionInfo, SelectionSnapshot
 from ._shapes import PlaceholderShape, Shape, ShapeById, ShapeCollection, TextFrameStatus
 from ._show import SlideShow
@@ -61,6 +63,7 @@ __all__ = [
     "Comment",
     "CommentCollection",
     "EditScope",
+    "HeadersFooters",
     "LayoutNotFoundError",
     "Master",
     "NoTextFrameError",
@@ -75,6 +78,7 @@ __all__ = [
     "PresentationCollection",
     "PresentationNotFoundError",
     "PptliveError",
+    "SectionCollection",
     "SelectionInfo",
     "SelectionSnapshot",
     "Shape",

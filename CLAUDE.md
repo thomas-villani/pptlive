@@ -50,13 +50,15 @@ src/pptlive/
                      (tests monkeypatch the getters)
   _app.py            PowerPoint handle + attach() / connect()
   _presentation.py   Presentation (the wordlive Document analog) + PresentationCollection
-  _slides.py         SlideCollection / Slide  (add [+placeholder geometry]/delete/duplicate/move_to/set_layout, notes, read(), geometry_report())
-  _shapes.py         ShapeCollection / Shape / ShapeById  (a Shape IS an Anchor when it has a text frame; geometry + fill/line + z-order verbs)
+  _slides.py         SlideCollection / Slide  (add [+placeholder geometry]/delete/duplicate/move_to/set_layout, notes, read(), geometry_report(), animations()/clear_animations())
+  _shapes.py         ShapeCollection / Shape / ShapeById  (a Shape IS an Anchor when it has a text frame; geometry + fill/line + z-order + animate() verbs)
   _anchors.py        Anchor base + Paragraph, Cell, Notes  (set_paragraphs / reset_format + line-spacing unit knobs [v1.6])
   _tables.py         Table / Cell  (a table is a shape; cell:S:N:R:C anchors)         [v0.5]
   _charts.py         Chart       (a chart is a shape; data via embedded Excel)         [v0.7]
   _smartart.py       SmartArt    (a diagram is a shape; node tree read/set_nodes)      [v0.8]
-  _theme.py          Theme + Master  (deck-wide palette/fonts/text-styles/background)  [v0.9]
+  _theme.py          Theme + Master  (deck-wide palette/fonts/text-styles/background + headers_footers)  [v0.9]
+  _sections.py       SectionCollection (deck.sections; named slide spans, 1-based index)  [v0.6.0]
+  _headersfooters.py HeadersFooters (shared; Slide.headers_footers override + Master.headers_footers default)  [v0.6.0]
   _findreplace.py    fuzzy match core (find_matches/normalize); find()/find_replace() on Presentation [v1.0]
   _comments.py       Comment / CommentCollection (slide.comments; threaded, identity-bound add/reply) [v1.3]
   _snapshot.py       Snapshot + deck.snapshot() — whole-deck low-res PNGs, max_dim token cap [v1.1]
@@ -183,6 +185,55 @@ fix-up; validated pre-COM (clean `ValueError`/`invalid_args`), echoes the result
 geometry. All four wired library + CLI + MCP + both SKILL guides. Still open from
 that session: **direct-vs-inherited font color** in `text_frame_status` (no general
 COM direct-vs-theme flag exists — needs a live spike first).
+
+**Shape animations (v0.10) shipped 2026-06-18 — the v1.5 long tail deferred at
+v0.4.0.** The sibling of slide transitions: whole-shape entrance/exit effects over
+`Slide.TimeLine.MainSequence.AddEffect`. `Shape.animate(effect="fade", *,
+trigger="on_click", duration=None, delay=None, exit=False)` appends one effect;
+`exit=True` makes the shape animate **out** (the "disappear" ask — the same
+`MsoAnimEffect` ids serve entrance and exit, the `Effect.Exit` flag is the only
+difference). `Slide.animations()` reads the `MainSequence` back as ordered
+`{seq_index, shapeid, shape, effect, exit, trigger, duration, delay}` rows (each
+mapped to its target by the drift-proof `shapeid:S:ID` off `Effect.Shape.Id`), and
+is folded into `Slide.read()`. `Slide.clear_animations(anchor=None)` wipes the whole
+slide or one shape's effects (tail-first delete so live indices don't shift);
+`Shape.clear_animations()` delegates to it. Curated `MsoAnimEffect`
+(appear/fade/fly_in/float_in/wipe/zoom/grow_turn/swivel/wheel/split) +
+`MsoAnimTriggerType` (on_click/with_previous/after_previous) follow the
+`entry_effect_for` pattern with raw-int passthrough. A confirmation spike
+(`scripts/animation_curated_spike.py`, net-zero) verified the full curated set
+round-trips `EffectType` and that `Timing.TriggerDelayTime` (the `delay` knob)
+round-trips before hardening. Library + CLI (`shape animate`/`shape
+clear-animations`/`slide animations`/`slide clear-animations`) + MCP (`ppt_edit`
+`shape_animate`/`shape_clear_animations`/`slide_clear_animations`; `ppt_read`
+`animations`) + both SKILL guides. Deferred: per-paragraph levels, motion paths,
+`EffectParameters`, in-sequence reordering.
+
+**Deck-structure & feedback batch (v0.6.0) shipped 2026-06-18 — four roadmap-v2
+items de-risked together by `scripts/batch2_spike.py` (net-zero).** (1) **Sections**
+(`_sections.py`, `deck.sections`) over `Presentation.SectionProperties`: `list`/`add(
+name, before_slide=)`/`rename`/`delete(*, delete_slides=False)`/`move`, 1-based
+section index. The spike pinned the model — `AddBeforeSlide` starts a span at a slide
+and **auto-creates a leading "Default Section"** when it's the first section in front
+of a later slide; `Delete` keeps slides unless told otherwise. (2) **Headers/footers**
+(`_headersfooters.py`, a shared `HeadersFooters`) mounted at `Slide.headers_footers`
+(per-slide override) and `Master.headers_footers` (deck-wide default), with
+`read`/`set_footer`/`set_slide_number`/`set_date`; the spike footgun is handled —
+`Footer.Text`/`DateAndTime.UseFormat` only read while the element is **visible**
+(hidden → "Invalid request"), so reads are guarded (null when hidden) and setting text
+auto-shows. (3) **Direct-vs-inherited font color** — the open Claude Desktop ask is
+answered: `ColorFormat.Type` distinguishes a run color *set on the run* (`rgb`) from
+one *cascaded from the theme/master* (`scheme`), so `font_to_dict` now emits
+`color_source` (`direct`/`theme`/`mixed`) + `theme_color` (the inherited slot). (4)
+**Snapshot size override** — `deck.snapshot(width=, height=)` for exact per-slide
+pixels (overrides `max_dim`; both is a `ValueError`); the spike confirmed **JPEG
+quality is not COM-exposable** on `Slide.Export`, so pixel dimensions stay the only
+render-cost lever. All wired CLI (`section …`, `slide`/`master` `headers-footers`/
+`set-footer`/`slide-number`/`set-date`, `snapshot --width/--height`) + MCP (`ppt_read`
+`sections`/`headers_footers`; `ppt_edit` `section_*`/`set_headers_footers`;
+`ppt_render` `deck_snapshot` width/height) + both SKILL guides. New constants
+`MsoColorType`/`color_source_name`/`theme_color_name`. Still open: per-element
+color-source on `text_frame_status`, friendly `PpDateTimeFormat` names.
 
 Agent skills shipped as **two** guides (`pptlive-cli` + `pptlive-python`), not
 wordlive's single one — `llm-help [--python]` dumps one, `install-skill` writes

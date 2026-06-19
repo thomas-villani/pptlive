@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from . import _com, _findreplace, _snapshot
 from ._anchors import Anchor
 from ._edit import EditScope
+from ._sections import SectionCollection
 from ._selection import SelectionInfo, read_selection
 from ._shapes import Shape, has_table, has_text_frame
 from ._show import SlideShow
@@ -167,6 +168,14 @@ class Presentation:
         return SlideCollection(self)
 
     @property
+    def sections(self) -> SectionCollection:
+        """The deck's sections — named spans of slides (`list`/`add`/`rename`/
+        `delete`/`move`), addressed by 1-based section index. See
+        `_sections.SectionCollection`. Structural; wrap mutations in `deck.edit(...)`.
+        """
+        return SectionCollection(self)
+
+    @property
     def show(self) -> SlideShow:
         """Live slide-show control (`start`/`next`/`goto`/`black`/`state`/…).
 
@@ -233,6 +242,8 @@ class Presentation:
         slides: int | tuple[int, int] | None = None,
         fmt: str = "png",
         max_dim: int | None = None,
+        width: int | None = None,
+        height: int | None = None,
     ) -> list[Snapshot]:
         """Render slides to PNG so a vision model can *see* the whole deck cheaply.
 
@@ -242,6 +253,14 @@ class Presentation:
         budget is uniform across the deck. The lever for "render the whole deck
         and check my styling landed" without full-resolution token bloat
         (~1000 stays legible). `max_dim=None` renders at native size.
+
+        For an *exact* per-slide pixel size instead of the cap, pass `width`/
+        `height` (one is enough — the other follows the slide aspect ratio); this
+        overrides the cap, and passing it together with `max_dim` is a `ValueError`
+        (two conflicting size levers). Note PowerPoint exposes **no** JPEG-quality
+        knob on `Slide.Export`, so pixel dimensions — `max_dim` or `width`/`height`
+        — are the only render-cost levers (which is fine: a vision model bills on
+        pixel area, not encoder quality).
 
         `slides` selects what to render: `None` (default) every slide, an `int`
         a single 1-based slide, a `(start, end)` tuple an inclusive span. Returns
@@ -254,7 +273,9 @@ class Presentation:
         current unsaved state and leaves the viewed slide and Selection untouched
         (no `edit()` fence needed).
         """
-        return _snapshot.snapshot(self, out, slides=slides, fmt=fmt, max_dim=max_dim)
+        return _snapshot.snapshot(
+            self, out, slides=slides, fmt=fmt, max_dim=max_dim, width=width, height=height
+        )
 
     def selection(self) -> SelectionInfo:
         """The user's current selection, resolved to anchors — a polite read.

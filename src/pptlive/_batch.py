@@ -85,6 +85,9 @@ class ReadOp(StrEnum):
     OUTLINE = "outline"
     SLIDE = "slide"
     GEOMETRY = "geometry"
+    ANIMATIONS = "animations"
+    SECTIONS = "sections"
+    HEADERS_FOOTERS = "headers_footers"
     ANCHOR = "anchor"
     TEXT_FRAME_STATUS = "text_frame_status"
     SELECTION = "selection"
@@ -114,6 +117,9 @@ class EditOp(StrEnum):
     SHAPE_RESIZE = "shape_resize"
     SHAPE_DELETE = "shape_delete"
     SHAPE_ORDER = "shape_order"
+    SHAPE_ANIMATE = "shape_animate"
+    SHAPE_CLEAR_ANIMATIONS = "shape_clear_animations"
+    SLIDE_CLEAR_ANIMATIONS = "slide_clear_animations"
     SHAPE_RESET_LAYOUT = "shape_reset_layout"
     SHAPE_GRADIENT_FILL = "shape_gradient_fill"
     SHAPE_PICTURE_FILL = "shape_picture_fill"
@@ -124,6 +130,11 @@ class EditOp(StrEnum):
     SHAPE_REMOVE_HYPERLINK = "shape_remove_hyperlink"
     SLIDE_SET_TRANSITION = "slide_set_transition"
     SLIDE_SET_BACKGROUND = "slide_set_background"
+    SECTION_ADD = "section_add"
+    SECTION_RENAME = "section_rename"
+    SECTION_DELETE = "section_delete"
+    SECTION_MOVE = "section_move"
+    SET_HEADERS_FOOTERS = "set_headers_footers"
     SET_ALT = "set_alt"
     TABLE_ADD_ROW = "table_add_row"
     TABLE_DELETE_ROW = "table_delete_row"
@@ -263,6 +274,33 @@ def _read_slide(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
 def _read_geometry(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
     _require(p.get("slide") is not None, "read op='geometry' requires `slide`")
     return _pick_deck(ppt, p.get("doc")).slides[p["slide"]].geometry_report()
+
+
+@read_op(ReadOp.ANIMATIONS)
+def _read_animations(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
+    _require(p.get("slide") is not None, "read op='animations' requires `slide`")
+    deck = _pick_deck(ppt, p.get("doc"))
+    return {"slide": p["slide"], "animations": deck.slides[p["slide"]].animations()}
+
+
+@read_op(ReadOp.SECTIONS)
+def _read_sections(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
+    return {"sections": _pick_deck(ppt, p.get("doc")).sections.list()}
+
+
+def _headers_footers_for(deck: Presentation, slide: int | None) -> Any:
+    """The slide's HeadersFooters (when `slide` given) or the master's default."""
+    if slide is not None:
+        return deck.slides[slide].headers_footers
+    return deck.master.headers_footers
+
+
+@read_op(ReadOp.HEADERS_FOOTERS)
+def _read_headers_footers(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
+    deck = _pick_deck(ppt, p.get("doc"))
+    scope = "slide" if p.get("slide") is not None else "master"
+    hf = _headers_footers_for(deck, p.get("slide"))
+    return {"scope": scope, "slide": p.get("slide"), "headers_footers": hf.read()}
 
 
 @read_op(ReadOp.ANCHOR)
@@ -636,6 +674,34 @@ def _edit_shape_order(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+@edit_op(EditOp.SHAPE_ANIMATE)
+def _edit_shape_animate(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    sh = _resolve_shape(deck, p.get("anchor_id"))
+    _require(p.get("effect") is not None, "edit op='shape_animate' requires `effect`")
+    animation = sh.animate(
+        p["effect"],
+        trigger=p.get("trigger") or "on_click",
+        duration=p.get("duration"),
+        delay=p.get("delay"),
+        exit=bool(p.get("exit", False)),
+    )
+    return {"ok": True, "anchor_id": sh.anchor_id, "shapeid": sh.shapeid, "animation": animation}
+
+
+@edit_op(EditOp.SHAPE_CLEAR_ANIMATIONS)
+def _edit_shape_clear_animations(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    sh = _resolve_shape(deck, p.get("anchor_id"))
+    removed = sh.clear_animations()
+    return {"ok": True, "anchor_id": sh.anchor_id, "shapeid": sh.shapeid, "removed": removed}
+
+
+@edit_op(EditOp.SLIDE_CLEAR_ANIMATIONS)
+def _edit_slide_clear_animations(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    _require(p.get("slide") is not None, "edit op='slide_clear_animations' requires `slide`")
+    removed = deck.slides[p["slide"]].clear_animations()
+    return {"ok": True, "index": p["slide"], "removed": removed}
+
+
 @edit_op(EditOp.SHAPE_RESET_LAYOUT)
 def _edit_shape_reset_layout(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
     sh = _resolve_shape(deck, p.get("anchor_id"))
@@ -790,6 +856,60 @@ def _edit_slide_set_background(deck: Presentation, p: dict[str, Any]) -> dict[st
     target = deck.slides[p["slide"]]
     bg = target.follow_master_background() if follow_master else target.set_background(p["color"])
     return {"ok": True, "index": p["slide"], "background": bg}
+
+
+@edit_op(EditOp.SECTION_ADD)
+def _edit_section_add(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    _require(p.get("name") is not None, "edit op='section_add' requires `name`")
+    row = deck.sections.add(p["name"], before_slide=p.get("before_slide"))
+    return {"ok": True, "section": row}
+
+
+@edit_op(EditOp.SECTION_RENAME)
+def _edit_section_rename(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    _require(p.get("section") is not None, "edit op='section_rename' requires `section`")
+    _require(p.get("name") is not None, "edit op='section_rename' requires `name`")
+    row = deck.sections.rename(p["section"], p["name"])
+    return {"ok": True, "section": row}
+
+
+@edit_op(EditOp.SECTION_DELETE)
+def _edit_section_delete(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    _require(p.get("section") is not None, "edit op='section_delete' requires `section`")
+    return {
+        "ok": True,
+        **deck.sections.delete(p["section"], delete_slides=bool(p.get("delete_slides", False))),
+    }
+
+
+@edit_op(EditOp.SECTION_MOVE)
+def _edit_section_move(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    _require(p.get("section") is not None, "edit op='section_move' requires `section`")
+    _require(p.get("to") is not None, "edit op='section_move' requires `to`")
+    row = deck.sections.move(p["section"], p["to"])
+    return {"ok": True, "section": row}
+
+
+@edit_op(EditOp.SET_HEADERS_FOOTERS)
+def _edit_set_headers_footers(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    footer_keys = ("footer_text", "footer_visible")
+    date_keys = ("date_visible", "date_text", "date_format")
+    _require(
+        any(p.get(k) is not None for k in (*footer_keys, "slide_number_visible", *date_keys)),
+        "edit op='set_headers_footers' needs at least one of footer_text / footer_visible / "
+        "slide_number_visible / date_visible / date_text / date_format",
+    )
+    scope = "slide" if p.get("slide") is not None else "master"
+    hf = _headers_footers_for(deck, p.get("slide"))
+    if any(p.get(k) is not None for k in footer_keys):
+        hf.set_footer(text=p.get("footer_text"), visible=p.get("footer_visible"))
+    if p.get("slide_number_visible") is not None:
+        hf.set_slide_number(bool(p["slide_number_visible"]))
+    if any(p.get(k) is not None for k in date_keys):
+        hf.set_date(
+            visible=p.get("date_visible"), text=p.get("date_text"), fmt=p.get("date_format")
+        )
+    return {"ok": True, "scope": scope, "slide": p.get("slide"), "headers_footers": hf.read()}
 
 
 @edit_op(EditOp.TABLE_ADD_ROW)
@@ -1089,12 +1209,21 @@ def _render_deck_snapshot(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
     selector = _parse_slide_selector(p.get("slides"))
     out_dir = tempfile.mkdtemp(prefix="pptlive_snap_")
     base = os.path.join(out_dir, f"snap.{fmt}")
-    snaps = deck.snapshot(base, slides=selector, fmt=fmt, max_dim=p.get("max_dim"))
+    snaps = deck.snapshot(
+        base,
+        slides=selector,
+        fmt=fmt,
+        max_dim=p.get("max_dim"),
+        width=p.get("width"),
+        height=p.get("height"),
+    )
     return {
         "ok": True,
         "count": len(snaps),
         "format": fmt,
         "max_dim": p.get("max_dim"),
+        "width": p.get("width"),
+        "height": p.get("height"),
         "images": [{"slide": s.slide, "path": str(s.path), "format": fmt} for s in snaps],
     }
 

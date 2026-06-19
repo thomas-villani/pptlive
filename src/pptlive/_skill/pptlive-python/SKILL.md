@@ -132,6 +132,8 @@ report = deck.slides[4].geometry_report()             # geometry sanity-check BE
     arrow.set_hyperlink(url="https://acme.com")        # or slide=2 for an in-deck jump; no text frame needed
     deck.slides[4].set_transition("fade", duration=0.5, advance_after=3)   # entrance + auto-advance
     deck.slides[4].set_background("#1A2B3C")            # per-slide solid bg; follow_master_background() reverts
+    star.animate("fade", trigger="after_previous", duration=1)  # entrance effect; exit=True animates it OUT
+    star.clear_animations()                            # drop this shape's effects (deck.slides[4].clear_animations() wipes all)
 
 logo.set_alt_text("Acme logo (top-right)")            # alt text = drift-proof re-id handle
 logo.remove_hyperlink()                               # clear a link (set_hyperlink's inverse)
@@ -139,8 +141,11 @@ chart_png = deck.slides[4].shapes["Chart 2"].export_image()   # one shape, nativ
 ```
 
 Reads surface the new state: every shape carries `hyperlink` (`{address, sub_address}`
-or `None`); each slide read carries `transition` (`{effect, duration, advance_*}`) and
-`background` (`{follows_master, type, color}`).
+or `None`); each slide read carries `transition` (`{effect, duration, advance_*}`),
+`background` (`{follows_master, type, color}`), and `animations`
+(`[{seq_index, shapeid, shape, effect, exit, trigger, duration, delay}]`, play order —
+also via `deck.slides[N].animations()`). Effect names: `fade`/`appear`/`fly_in`/
+`float_in`/`wipe`/`zoom`/`grow_turn`/`swivel`/`wheel`/`split` (or a raw `MsoAnimEffect` int).
 
 ## Text structure, tables, charts, SmartArt
 
@@ -244,6 +249,23 @@ with deck.edit("Rebrand the deck"):
 palette = deck.theme.read()                           # {colors:{slot:#RRGGBB}, fonts:{major, minor}}
 ```
 
+## Deck structure: sections + headers/footers
+
+```python
+deck.sections.list()                                  # [{index, name, first_slide, slide_count}], 1-based
+with deck.edit("Organize"):
+    deck.sections.add("Results", before_slide=5)      # starts a section at slide 5 (auto-makes a leading "Default Section")
+    deck.sections.rename(2, "Appendix")               # · deck.sections.move(2, 1) · deck.sections.delete(2) keeps slides
+    # footer / slide-number / date — per-slide override OR deck-wide via deck.master.headers_footers
+    deck.slides[5].headers_footers.set_footer(text="Confidential")   # auto-shows; set_slide_number(True); set_date(text=.. | fmt=14)
+hf = deck.slides[5].headers_footers.read()            # {footer:{visible,text}, slide_number:{visible}, date:{...}}; text reads None while hidden
+```
+
+**Why is this text green?** Every paragraph's `font` carries `color_source`
+(`"direct"`/`"theme"`/`"mixed"`) + `theme_color` — so `shape.paragraphs.list()[0]
+["font"]["color_source"] == "theme"` means the master/theme cascaded it (vs `"direct"`
+= you set it on the run). The fix for the "master cascade surprised me" loop.
+
 ## Render, selection, slide show
 
 ```python
@@ -254,6 +276,8 @@ png = deck.slides[4].export_image(width=1280)         # one slide -> temp PNG (o
 # pixel area, not DPI). slides=None (all) | int (one) | (start, end) inclusive.
 for snap in deck.snapshot(max_dim=1000):              # -> [Snapshot(slide, image, path), ...]
     review(snap.image)                                # bytes; pass out="deck.png" to also write -sN files
+# exact size instead of the cap: deck.snapshot(width=1280) (overrides max_dim; height follows aspect).
+# No JPEG-quality knob exists in PowerPoint COM — pixel dimensions are the only render-cost lever.
 
 # Save / export — explicit, never implicit (pptlive never auto-saves). save_as
 # REBINDS the working file (the deck becomes that path); export_pdf is a READ
