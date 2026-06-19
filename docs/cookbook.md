@@ -545,3 +545,68 @@ pptlive save
 pptlive save-as "Q3 Review v2.pptx" --overwrite
 pptlive export-pdf "Q3 Review.pdf"
 ```
+
+## 20. Animate a build
+
+Give shapes whole-shape entrance (or exit) animations — the per-shape sibling of
+slide transitions. Each `animate` appends one effect to the slide's main sequence;
+read them back with `slide.animations()` and clear with `clear_animations()`.
+
+```python
+with pl.attach() as ppt:
+    deck = ppt.presentations.active
+    slide = deck.slides[3]
+    title, bullets = slide.shapes["Title 1"], slide.placeholder("body")
+
+    with deck.edit("Animate the build"):
+        title.animate("fade")                                   # on first click
+        bullets.animate("fly_in", trigger="after_previous")     # then auto-builds
+        slide.shapes["Old Note"].animate("fade", exit=True)     # animates OUT
+
+    for row in slide.animations():        # play order, each mapped to its shapeid
+        print(row["seq_index"], row["shape"], row["effect"], "exit" if row["exit"] else "")
+
+    # Start over:
+    # with deck.edit("Reset"): slide.clear_animations()
+```
+
+```bash
+pptlive shape animate --anchor-id ph:3:title --effect fade
+pptlive shape animate --anchor-id ph:3:body  --effect fly_in --trigger after_previous
+pptlive slide animations 3
+```
+
+`--effect` is one of `appear`/`fade`/`fly_in`/`float_in`/`wipe`/`zoom`/
+`grow_turn`/`swivel`/`wheel`/`split` (or a raw `MsoAnimEffect` int).
+
+## 21. Organize a long deck — sections, footers, slide numbers
+
+Group slides into named **sections**, and set a deck-wide footer / slide number
+that every slide inherits (with per-slide overrides where you need them).
+
+```python
+with pl.attach() as ppt:
+    deck = ppt.presentations.active
+
+    with deck.edit("Structure the deck"):
+        deck.sections.add("Results", before_slide=4)     # a span starting at slide 4
+        deck.sections.add("Appendix", before_slide=12)
+
+        deck.master.headers_footers.set_footer(text="Acme — Confidential")  # deck default
+        deck.master.headers_footers.set_slide_number(True)
+        deck.slides[1].headers_footers.set_footer(visible=False)            # hide on the title
+
+    for s in deck.sections.list():       # {index, name, first_slide, slide_count}
+        print(s["index"], s["name"], "→ slides from", s["first_slide"])
+```
+
+```bash
+pptlive section add --name "Results" --before-slide 4
+pptlive master set-footer --text "Acme — Confidential"
+pptlive master slide-number --show
+pptlive slide set-footer --slide 1 --hide
+```
+
+Starting a section in front of a later slide auto-creates a leading "Default
+Section" for the slides ahead of it; `section delete` keeps the slides unless you
+pass `--delete-slides`.

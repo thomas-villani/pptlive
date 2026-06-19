@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+An **authoring-feedback round**, four fixes distilled from a live Claude Desktop
+"build a deck while watching PowerPoint" session — each closing a real footgun
+that surfaced mid-build:
+
+- **"Follow the work" view policy.** The long-standing "the view jumps back to
+  slide 1 after a batch" report was the polite view-restore firing *as designed*
+  and then cascading: every atomic batch restored to its pre-batch slide, so slide
+  1 became a fixed point. Now `run_batch` (`_batch.py`) detects a batch that
+  **adds** a slide (`slide_add` / `slide_duplicate`) and leaves the view on the
+  last slide it touched (via `EditScope.allow_view_move()` + an explicit `go_to`)
+  instead of snapping back. Pure-edit batches keep the polite restore, and a
+  deliberate `navigate` / `show` still wins. Default on; opt out with
+  `PPTLIVE_VIEW_FOLLOW=0` (env), MCP `ppt_batch(follow_view=False)`, or CLI
+  `exec --no-follow-view`.
+- **`geometry` read.** `Slide.geometry_report()` returns the slide size, each
+  shape's bounding `box`, an `off_slide` flag, and the `overlaps` pairs (biggest
+  first) — so an agent can catch overlapping or off-edge shapes *without* a render.
+  Axis-aligned only (rotation is reported, not accounted for). CLI `slide geometry
+  N`; MCP `ppt_read` op `geometry`. (Named `geometry`, not `layout`, to avoid
+  colliding with `layouts` / `set-layout`.)
+- **`shapeid` everywhere.** Every shape read (`shape_to_dict`) *and* every shape
+  mutation's return now echoes the restack-proof `shapeid:S:ID` (the new
+  `Shape.shapeid`) alongside `anchor_id`, so a chained edit survives the z-order
+  drift it causes (the reported `shape_order` footgun — add a shape and every
+  later `shape:S:N` shifts).
+- **Placeholder geometry on `slide_add`.** An optional `placeholders={KIND:
+  {left, top, width, height}}` (points, any subset) repositions the layout's
+  placeholders in the *same* op (the "body on the left half beside a right panel"
+  case), so there's no add-then-resize fix-up. Validated before any COM call (a
+  clean `ValueError` / `invalid_args`); the resulting geometry is echoed back.
+
 The **v1.5-rest animations** work: whole-shape entrance and exit animations,
 the sibling of the slide transitions shipped in 0.4.0. De-risked first by the
 2026-06-11 spike (`scripts/animation_spike.py`) and a confirmation spike before
@@ -558,7 +589,8 @@ error taxonomy, `EditScope` shape, CLI contract, `_com` seam, and test approach.
 - **Release automation** — `bump-my-version` syncs the root and MCPB bundle
   versions; a `v*` tag publishes to PyPI via trusted publishing.
 
-[Unreleased]: https://github.com/thomas-villani/pptlive/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/thomas-villani/pptlive/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/thomas-villani/pptlive/compare/v0.3.0...v0.5.0
 [0.3.0]: https://github.com/thomas-villani/pptlive/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/thomas-villani/pptlive/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/thomas-villani/pptlive/compare/v0.1.2...v0.1.3

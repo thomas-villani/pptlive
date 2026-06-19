@@ -306,6 +306,11 @@ for snap in deck.snapshot(max_dim=1000):
     show_to_vision_model(snap.image)      # snap.slide, snap.image (bytes), snap.path
 ```
 
+When you need an exact per-slide size rather than the long-edge cap, pass
+`width=` / `height=` instead of `max_dim` (they override it). Pixel area — not
+encoder quality — is what a vision model bills on, and `Slide.Export` exposes no
+JPEG-quality knob, so the dimensions are the only render-cost lever there is.
+
 Snapshotting is a **read**: the export reflects the current unsaved state but
 leaves the viewed slide and Selection untouched, so it needs no `edit()` fence.
 (Not to be confused with the *Selection* snapshot above, which `EditScope` uses to

@@ -209,7 +209,7 @@ clear-animations`/`slide animations`/`slide clear-animations`) + MCP (`ppt_edit`
 `animations`) + both SKILL guides. Deferred: per-paragraph levels, motion paths,
 `EffectParameters`, in-sequence reordering.
 
-**Deck-structure & feedback batch (v0.6.0) shipped 2026-06-18 — four roadmap-v2
+**Deck-structure & feedback batch (v0.6.0) shipped 2026-06-18 — four roadmap
 items de-risked together by `scripts/batch2_spike.py` (net-zero).** (1) **Sections**
 (`_sections.py`, `deck.sections`) over `Presentation.SectionProperties`: `list`/`add(
 name, before_slide=)`/`rename`/`delete(*, delete_slides=False)`/`move`, 1-based

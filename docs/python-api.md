@@ -58,7 +58,18 @@ lifecycle verbs (`add` / `delete` / `duplicate` / `move_to` / `set_layout`). A
 text frame (so it inherits `text` / `set_text` / `format_text` / the list and
 paragraph verbs), and always carries geometry (`move`, `resize`, `geometry()`)
 in **points**, plus `alt_text` / `set_alt_text` and per-shape
-`export_image(...)`.
+`export_image(...)`. Every shape also carries a stable `shapeid` (`shapeid:S:ID`,
+the delete-proof handle) alongside its z-order `anchor_id`.
+
+A shape can also animate: `Shape.animate(effect="fade", *, trigger="on_click",
+duration=None, delay=None, exit=False)` appends a whole-shape entrance (or, with
+`exit=True`, exit) effect to the slide's main sequence, and
+`Shape.clear_animations()` removes just that shape's effects. Read them back per
+slide with [`Slide.animations()`](#pptlive.Slide) (ordered rows, each mapped to its
+target by `shapeid`) and wipe a whole slide with `Slide.clear_animations()`. A
+slide's spatial layout is available without a render via
+[`Slide.geometry_report()`](#pptlive.Slide) (slide size + per-shape boxes +
+overlaps + off-slide flags).
 
 ::: pptlive.ShapeCollection
 
@@ -74,7 +85,10 @@ same verbs — `text`, `set_text`, `insert_paragraph_before/after`,
 calls work uniformly on a whole shape, one paragraph, a table cell, or a
 slide's notes. PowerPoint has no named paragraph styles, so "styling" is direct
 font formatting via `format_text` (bold / italic / underline / size / font /
-color).
+color). A paragraph read's `font` block also reports `color_source`
+(`"direct"` / `"theme"` / `"mixed"`) and `theme_color` (the inherited slot when
+themed), so you can tell a run color *set on the run* from one *cascaded from the
+theme* — the one place PowerPoint exposes that direct-vs-inherited distinction.
 
 ::: pptlive.Anchor
 
@@ -129,15 +143,33 @@ in `deck.edit()` for the one-Ctrl-Z fence (the user's view doesn't move).
 
 ::: pptlive.Master
 
+## Deck structure — sections & headers/footers
+
+[`deck.sections`](#pptlive.SectionCollection) is the deck's named slide spans —
+`list()` returns `{index, name, first_slide, slide_count}` rows, and
+`add(name, *, before_slide=None)` / `rename` / `delete(*, delete_slides=False)` /
+`move` edit them by 1-based section index. [`HeadersFooters`](#pptlive.HeadersFooters)
+is a shared wrapper mounted at two scopes — `slide.headers_footers` (a per-slide
+override) and `deck.master.headers_footers` (the deck-wide default every slide
+inherits) — with `read()` plus `set_footer` / `set_slide_number` / `set_date`.
+A footer / date text reads back as `None` while that element is hidden (PowerPoint
+only exposes the text on a visible element), and setting text auto-shows it.
+
+::: pptlive.SectionCollection
+
+::: pptlive.HeadersFooters
+
 ## Rendering
 
 [`slide.export_image`](#pptlive.Slide) renders one slide to an image;
 [`deck.snapshot`](#pptlive.Presentation) renders the whole deck (or a slide
 selection) to one PNG per slide so a vision model can *see* every slide cheaply.
 Its `max_dim` long-edge pixel cap gives a predictable, uniform per-slide token
-budget (a model is billed on pixel area, not DPI). Both are reads — they reflect
-the current unsaved state but leave the viewed slide and Selection untouched.
-Each rendered slide comes back as a `Snapshot`.
+budget (a model is billed on pixel area, not DPI); pass exact `width` / `height`
+instead for a fixed per-slide size (they override `max_dim`, and passing both
+forms is a `ValueError`). Both are reads — they reflect the current unsaved state
+but leave the viewed slide and Selection untouched. Each rendered slide comes back
+as a `Snapshot`.
 
 ::: pptlive.Snapshot
 
