@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+The **v1.5-rest animations** work: whole-shape entrance and exit animations,
+the sibling of the slide transitions shipped in 0.4.0. De-risked first by the
+2026-06-11 spike (`scripts/animation_spike.py`) and a confirmation spike before
+hardening (`scripts/animation_curated_spike.py`, net-zero) that verified the full
+curated effect set round-trips its `EffectType` and that the `delay` knob
+(`Timing.TriggerDelayTime`) round-trips. Shipped across all four front-ends.
+
+- **Shape animations.** `Shape.animate(effect="fade", *, trigger="on_click",
+  duration=None, delay=None, exit=False)` appends an effect to the slide's main
+  animation sequence (`Slide.TimeLine.MainSequence.AddEffect`). `effect` resolves
+  through a curated `MsoAnimEffect` map (`appear`/`fade`/`fly_in`/`float_in`/`wipe`/
+  `zoom`/`grow_turn`/`swivel`/`wheel`/`split`) + raw-int passthrough; `trigger` is
+  `on_click`/`with_previous`/`after_previous`; `duration`/`delay` are seconds.
+  `exit=True` animates the shape **out** (the "disappear" case — the same effect ids
+  serve entrance and exit). A shape can carry several effects.
+- **Animation reads + clears.** `Slide.animations()` returns the main sequence as
+  ordered `{seq_index, shapeid, shape, effect, exit, trigger, duration, delay}` rows
+  (each mapped back to its target shape by the drift-proof `shapeid:S:ID`), and is
+  folded into `Slide.read()`. `Slide.clear_animations(anchor=None)` wipes the whole
+  slide or just one shape's effects; `Shape.clear_animations()` delegates to it.
+- **Constants.** Curated `MsoAnimEffect` + `MsoAnimTriggerType` IntEnums with
+  `anim_effect_for`/`anim_effect_name`/`ANIM_EFFECT_CHOICES` and
+  `anim_trigger_for`/`anim_trigger_name`/`ANIM_TRIGGER_CHOICES` (the
+  `entry_effect_for` pattern).
+- **Front-ends.** CLI `shape animate`, `shape clear-animations`, `slide animations`,
+  `slide clear-animations`; MCP `ppt_edit` ops `shape_animate`/`shape_clear_animations`/
+  `slide_clear_animations` (+ params `trigger`/`delay`/`exit`) and `ppt_read` op
+  `animations`. Both SKILL guides updated.
+
+A **deck-structure & feedback batch**, four items de-risked together by
+`scripts/batch2_spike.py` (net-zero) before hardening:
+
+- **Sections.** `deck.sections` (`SectionCollection`) over
+  `Presentation.SectionProperties`: `list()` → `{index, name, first_slide,
+  slide_count}` rows, plus `add(name, before_slide=…)` / `rename` / `delete(*,
+  delete_slides=False)` / `move`, addressed by 1-based section index. The spike
+  pinned the model: `AddBeforeSlide` starts a span at a slide and auto-creates a
+  leading "Default Section"; `Delete` keeps slides by default. CLI `section
+  list|add|rename|delete|move`; MCP `ppt_read` op `sections` + `ppt_edit`
+  `section_add`/`section_rename`/`section_delete`/`section_move`.
+- **Headers / footers.** A shared `HeadersFooters` wrapper at two scopes —
+  `Slide.headers_footers` (per-slide override) and `Master.headers_footers`
+  (deck-wide default) — with `read()` + `set_footer`/`set_slide_number`/`set_date`.
+  The spike's footgun is handled: `Footer.Text` / `DateAndTime.UseFormat` are only
+  readable while the element is visible, so reads are guarded (null when hidden) and
+  setting text auto-shows the element. CLI `slide`/`master` `headers-footers` (read)
+  + `set-footer`/`slide-number`/`set-date`; MCP `ppt_read` op `headers_footers`
+  (slide-or-master by presence of `slide`) + `ppt_edit` `set_headers_footers`.
+- **Direct-vs-inherited font color.** The font read (`anchor` paragraphs) now
+  carries `color_source` (`"direct"`/`"theme"`/`"mixed"`) + `theme_color` (the
+  inherited slot when themed), the long-open Claude Desktop ask — the spike found
+  `ColorFormat.Type` cleanly distinguishes a run color *set on the run* from one
+  *cascaded from the theme/master*. New constants `MsoColorType` / `color_source_name`
+  / `theme_color_name`.
+- **Snapshot size override.** `deck.snapshot(..., width=, height=)` — exact per-slide
+  pixels as an alternative to the `max_dim` long-edge cap (one is enough; the other
+  follows the aspect ratio; passing both errors). CLI `--width`/`--height`; MCP
+  `ppt_render` `deck_snapshot` `width`/`height`. (JPEG quality is **not** controllable
+  via COM `Slide.Export` — pixel dimensions are the only render-cost lever, which is
+  what a vision model bills on anyway.)
+
+### Notes
+
+Deferred animation long tail (unchanged): per-paragraph effect levels, motion paths,
+`EffectParameters`, and reordering effects within a sequence.
+
 ## [0.5.0] — 2026-06-12
 
 ### Added

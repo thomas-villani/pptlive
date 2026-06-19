@@ -41,6 +41,41 @@ def test_font_to_dict_reports_effective_attributes() -> None:
     assert font["color"] == "#FF0000"
 
 
+def test_font_to_dict_color_source_direct_vs_theme() -> None:
+    # The batch2-spike signal: ColorFormat.Type distinguishes a directly-set RGB
+    # from a theme-cascaded scheme color (and names the inherited slot).
+    direct = font_to_dict(
+        SimpleNamespace(
+            Font=SimpleNamespace(
+                Bold=0,
+                Italic=0,
+                Underline=0,
+                Size=18.0,
+                Name="Calibri",
+                Color=SimpleNamespace(RGB=0x0000FF, Type=1, ObjectThemeColor=0),
+            )
+        )
+    )
+    assert direct["color_source"] == "direct"
+    assert direct["theme_color"] is None
+
+    themed = font_to_dict(
+        SimpleNamespace(
+            Font=SimpleNamespace(
+                Bold=0,
+                Italic=0,
+                Underline=0,
+                Size=18.0,
+                Name="Calibri",
+                Color=SimpleNamespace(RGB=0x80000000, Type=2, ObjectThemeColor=13),
+            )
+        )
+    )
+    assert themed["color_source"] == "theme"
+    assert themed["theme_color"] == "text1"
+    assert themed["color"] is None  # the automatic sentinel still reads as no literal hex
+
+
 def test_shape_text_read(deck) -> None:  # type: ignore[no-untyped-def]
     body = deck.slides[2].shapes[2]
     assert body.text == "Intro\rDemo\rQ&A"

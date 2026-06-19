@@ -174,7 +174,16 @@ def test_read_anchor_paragraph_has_effective_font(fake_powerpoint: Any) -> None:
     font = para["font"]
     assert font["bold"] is True and font["italic"] is True
     assert font["font"] == "Georgia" and font["size"] == 28.0
-    assert set(font) == {"bold", "italic", "underline", "size", "font", "color"}
+    assert set(font) == {
+        "bold",
+        "italic",
+        "underline",
+        "size",
+        "font",
+        "color",
+        "color_source",
+        "theme_color",
+    }
 
 
 def test_read_text_frame_status(fake_powerpoint: Any) -> None:

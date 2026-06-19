@@ -675,6 +675,75 @@ def color_hex_or_none(value: Any) -> str | None:
     return color_hex(rgb)
 
 
+class MsoColorType(IntEnum):
+    """`ColorFormat.Type` — how a font/fill color is *sourced*.
+
+    The spike-verified (scripts/batch2_spike.py) signal that finally answers the
+    "directly set vs theme-cascaded" question the Claude Desktop session raised: a
+    freshly-inherited run reads `SCHEME`, an explicit RGB reads `RGB`.
+    """
+
+    MIXED = -2
+    RGB = 1
+    SCHEME = 2
+    CMYK = 3
+    CMS = 4
+    INK = 5
+
+
+def color_source_name(type_value: Any) -> str | None:
+    """Friendly source for a `ColorFormat.Type` int: `"direct"` (a literal RGB/CMYK
+    set on the run) / `"theme"` (a scheme color cascaded from the theme/master) /
+    `"mixed"` (a range spanning both), or `None` if PowerPoint can't report it.
+
+    This is the "is it green because I set it, or because the master pulled it?"
+    discriminator — `text_frame_status` / the font read surface it as `color_source`.
+    """
+    try:
+        t = int(type_value)
+    except (TypeError, ValueError):
+        return None
+    if t == int(MsoColorType.SCHEME):
+        return "theme"
+    if t in (int(MsoColorType.RGB), int(MsoColorType.CMYK), int(MsoColorType.CMS)):
+        return "direct"
+    if t == int(MsoColorType.MIXED):
+        return "mixed"
+    return None
+
+
+# `ColorFormat.ObjectThemeColor` (msoThemeColorIndex) -> the friendly theme slot a
+# scheme-sourced color points at, so a `color_source="theme"` read can name *which*
+# theme color cascaded in (e.g. 13 -> "text1"). Curated to the slots PowerPoint
+# actually reports on text; unknown values fall through to None.
+_THEME_COLOR_NAMES: dict[int, str] = {
+    1: "dark1",
+    2: "light1",
+    3: "dark2",
+    4: "light2",
+    5: "accent1",
+    6: "accent2",
+    7: "accent3",
+    8: "accent4",
+    9: "accent5",
+    10: "accent6",
+    11: "hyperlink",
+    12: "followed_hyperlink",
+    13: "text1",
+    14: "background1",
+    15: "text2",
+    16: "background2",
+}
+
+
+def theme_color_name(value: Any) -> str | None:
+    """Friendly theme-slot name for a `ColorFormat.ObjectThemeColor` int, or None."""
+    try:
+        return _THEME_COLOR_NAMES.get(int(value))
+    except (TypeError, ValueError):
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Shape fill / effects (v1.2 advanced cut): gradient / pattern / picture fills,
 # shadow / glow / soft-edge / reflection effects. Curated friendly subsets +
@@ -1774,5 +1843,145 @@ def entry_effect_name(value: Any) -> str:
     """Friendly name for a `PpEntryEffect` int (e.g. 1793 -> "fade")."""
     try:
         return _ENTRY_EFFECT_NAMES.get(int(value), f"effect:{int(value)}")
+    except (TypeError, ValueError):
+        return "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Shape animations (v0.10, the v1.5-rest cut) — MsoAnimEffect + MsoAnimTriggerType
+# ---------------------------------------------------------------------------
+#
+# `Slide.TimeLine.MainSequence.AddEffect(Shape, EffectId, Level, Trigger)` takes a
+# `MsoAnimEffect` int for the entrance/exit effect and a `MsoAnimTriggerType` int
+# for when it fires. Like transitions we expose a **curated** subset of the common
+# effects and pass any other int straight through. Every value below is round-trip-
+# verified on a live build (scripts/animation_spike.py + animation_curated_spike.py):
+# each `AddEffect(... EffectId ...)` reads its `EffectType` back unchanged. The same
+# effect ids serve entrance and exit — the `exit=` flag (`Effect.Exit`) is what makes
+# a shape animate *out* rather than *in*.
+
+
+class MsoAnimEffect(IntEnum):
+    """`Sequence.AddEffect` EffectId — the curated common animation effects.
+
+    A small, well-documented subset of the large `MsoAnimEffect` enum; pass a raw
+    int to reach any effect pptlive hasn't named. An effect animates a shape *in*
+    by default and *out* when applied as an exit effect (`Effect.Exit`).
+    """
+
+    APPEAR = 1
+    FLY_IN = 2
+    FADE = 10
+    GROW_TURN = 14
+    FLOAT_IN = 21  # the classic msoAnimEffectRiseUp ("float in" in modern UI)
+    SPLIT = 23
+    SWIVEL = 26
+    WHEEL = 28
+    WIPE = 29
+    ZOOM = 31
+
+
+# Friendly token -> MsoAnimEffect int.
+_ANIM_EFFECTS: dict[str, int] = {
+    "appear": int(MsoAnimEffect.APPEAR),
+    "fly_in": int(MsoAnimEffect.FLY_IN),
+    "fade": int(MsoAnimEffect.FADE),
+    "grow_turn": int(MsoAnimEffect.GROW_TURN),
+    "float_in": int(MsoAnimEffect.FLOAT_IN),
+    "split": int(MsoAnimEffect.SPLIT),
+    "swivel": int(MsoAnimEffect.SWIVEL),
+    "wheel": int(MsoAnimEffect.WHEEL),
+    "wipe": int(MsoAnimEffect.WIPE),
+    "zoom": int(MsoAnimEffect.ZOOM),
+}
+
+# The friendly names offered as a CLI choice (canonical spellings, ordered so the
+# two headline asks — "show this" / "fade this in" — come first).
+ANIM_EFFECT_CHOICES: tuple[str, ...] = (
+    "appear",
+    "fade",
+    "fly_in",
+    "float_in",
+    "wipe",
+    "zoom",
+    "grow_turn",
+    "swivel",
+    "wheel",
+    "split",
+)
+
+# Reverse map (int -> a canonical friendly name) for read-backs.
+_ANIM_EFFECT_NAMES: dict[int, str] = {v: k for k, v in _ANIM_EFFECTS.items()}
+
+
+def anim_effect_for(effect: str | int) -> int:
+    """Resolve a friendly animation name (or raw int) to its `MsoAnimEffect` int.
+
+    Accepts `"fade"`/`"appear"`/`"fly_in"`/… (case- and separator-insensitive) or a
+    raw int (passed through, so exotic `MsoAnimEffect` values still work). Raises
+    `ValueError` for an unknown name — symmetric with `entry_effect_for`.
+    """
+    if isinstance(effect, bool):  # guard: bool is an int subclass
+        raise ValueError(f"invalid animation effect: {effect!r}")
+    if isinstance(effect, int):
+        return int(effect)
+    key = str(effect).strip().lower().replace(" ", "_").replace("-", "_")
+    found = _ANIM_EFFECTS.get(key)
+    if found is None:
+        choices = ", ".join(ANIM_EFFECT_CHOICES)
+        raise ValueError(f"unknown animation effect {effect!r}; expected one of: {choices}")
+    return found
+
+
+def anim_effect_name(value: Any) -> str:
+    """Friendly name for a `MsoAnimEffect` int (e.g. 10 -> "fade")."""
+    try:
+        return _ANIM_EFFECT_NAMES.get(int(value), f"effect:{int(value)}")
+    except (TypeError, ValueError):
+        return "unknown"
+
+
+class MsoAnimTriggerType(IntEnum):
+    """`Effect.Timing.TriggerType` — when an animation fires."""
+
+    ON_CLICK = 1  # msoAnimTriggerOnPageClick
+    WITH_PREVIOUS = 2  # msoAnimTriggerWithPrevious
+    AFTER_PREVIOUS = 3  # msoAnimTriggerAfterPrevious
+
+
+_ANIM_TRIGGERS: dict[str, int] = {
+    "on_click": int(MsoAnimTriggerType.ON_CLICK),
+    "with_previous": int(MsoAnimTriggerType.WITH_PREVIOUS),
+    "after_previous": int(MsoAnimTriggerType.AFTER_PREVIOUS),
+}
+
+ANIM_TRIGGER_CHOICES: tuple[str, ...] = ("on_click", "with_previous", "after_previous")
+
+_ANIM_TRIGGER_NAMES: dict[int, str] = {v: k for k, v in _ANIM_TRIGGERS.items()}
+
+
+def anim_trigger_for(trigger: str | int) -> int:
+    """Resolve a friendly trigger name (or raw int) to its `MsoAnimTriggerType` int.
+
+    `"on_click"` / `"with_previous"` / `"after_previous"` (the start-timing the
+    PowerPoint animation pane offers), or a raw int. Raises `ValueError` for an
+    unknown name.
+    """
+    if isinstance(trigger, bool):
+        raise ValueError(f"invalid animation trigger: {trigger!r}")
+    if isinstance(trigger, int):
+        return int(trigger)
+    key = str(trigger).strip().lower().replace(" ", "_").replace("-", "_")
+    found = _ANIM_TRIGGERS.get(key)
+    if found is None:
+        choices = ", ".join(ANIM_TRIGGER_CHOICES)
+        raise ValueError(f"unknown animation trigger {trigger!r}; expected one of: {choices}")
+    return found
+
+
+def anim_trigger_name(value: Any) -> str:
+    """Friendly name for a `MsoAnimTriggerType` int (e.g. 1 -> "on_click")."""
+    try:
+        return _ANIM_TRIGGER_NAMES.get(int(value), f"trigger:{int(value)}")
     except (TypeError, ValueError):
         return "unknown"

@@ -78,6 +78,30 @@ def _capped_dims(
     return max(1, round(slide_w_pt * scale)), max(1, round(slide_h_pt * scale))
 
 
+def _explicit_dims(
+    slide_w_pt: float, slide_h_pt: float, width: int | None, height: int | None
+) -> tuple[int, int] | None:
+    """Resolve an explicit per-slide `(width_px, height_px)` override.
+
+    The escape hatch from the uniform `max_dim` cap when a caller wants exact
+    pixels (e.g. a fixed thumbnail size). Pass both for an exact size, or one and
+    the other is filled from the slide's point aspect ratio (so proportions hold),
+    matching `Slide.export_image`. Returns `None` when neither is given. Pure /
+    COM-free. Unlike `_capped_dims` this does **not** clamp to native — an explicit
+    size is taken at face value (PowerPoint will upscale if asked).
+    """
+    if width is None and height is None:
+        return None
+    if slide_w_pt <= 0 or slide_h_pt <= 0:
+        return None
+    if width is not None and height is not None:
+        return max(1, int(width)), max(1, int(height))
+    if width is not None:
+        return max(1, int(width)), max(1, round(width * slide_h_pt / slide_w_pt))
+    assert height is not None
+    return max(1, round(height * slide_w_pt / slide_h_pt)), max(1, int(height))
+
+
 def _resolve_slides(deck: Presentation, slides: int | tuple[int, int] | None) -> list[Slide]:
     """Resolve a `slides` selector to the list of `Slide`s to render.
 
@@ -109,21 +133,28 @@ def render(
     slides: int | tuple[int, int] | None = None,
     fmt: str = "png",
     max_dim: int | None = None,
+    width: int | None = None,
+    height: int | None = None,
 ) -> list[tuple[int, bytes]]:
     """Render the selected slides to `(slide_index, png_bytes)` pairs.
 
-    Each slide is exported to a temp file at the `max_dim`-capped size via
-    `Slide.export_image`, read back to bytes, and the temp file removed. The
-    deck's `PageSetup` (slide geometry, deck-wide) is read once to size the cap.
-    Isolated from file placement (`build_snapshots`) so the rendering is testable
-    on its own.
+    Each slide is exported to a temp file via `Slide.export_image`, read back to
+    bytes, and the temp file removed. The deck's `PageSetup` (slide geometry,
+    deck-wide) is read once to size the export. Sizing is either the `max_dim`
+    long-edge cap (the uniform token-budget lever) **or** an explicit `width`/
+    `height` override (exact pixels; one is enough, the other follows the aspect
+    ratio) — passing `max_dim` together with `width`/`height` is a `ValueError`
+    (two conflicting size levers). Isolated from file placement (`build_snapshots`)
+    so the rendering is testable on its own.
     """
     image_filter_for(fmt)  # validate the format up front (ValueError before any COM)
+    if max_dim is not None and (width is not None or height is not None):
+        raise ValueError("pass either max_dim or width/height, not both (conflicting size levers)")
     targets = _resolve_slides(deck, slides)
     with _com.translate_com_errors():
         ps = deck.com.PageSetup
         w_pt, h_pt = float(ps.SlideWidth), float(ps.SlideHeight)
-    dims = _capped_dims(w_pt, h_pt, max_dim)
+    dims = _explicit_dims(w_pt, h_pt, width, height) or _capped_dims(w_pt, h_pt, max_dim)
     out: list[tuple[int, bytes]] = []
     for slide in targets:
         if dims is None:
@@ -169,6 +200,10 @@ def snapshot(
     slides: int | tuple[int, int] | None = None,
     fmt: str = "png",
     max_dim: int | None = None,
+    width: int | None = None,
+    height: int | None = None,
 ) -> list[Snapshot]:
     """Render slides to PNG and (optionally) write them — see `Presentation.snapshot`."""
-    return build_snapshots(render(deck, slides=slides, fmt=fmt, max_dim=max_dim), out)
+    return build_snapshots(
+        render(deck, slides=slides, fmt=fmt, max_dim=max_dim, width=width, height=height), out
+    )

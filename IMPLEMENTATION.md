@@ -1044,6 +1044,99 @@ before hardening; the spike findings live in `roadmap.md`.
 
 ---
 
+## v0.10 — shape animations (the v1.5-rest cut) — SHIPPED (2026-06-18)
+
+Closes the v1.5 long tail deferred at v0.4.0: whole-shape entrance/exit animations,
+the sibling of slide transitions. The 2026-06-11 spike (`scripts/animation_spike.py`)
+already proved the `AddEffect` round-trip; a confirmation spike before hardening
+(`scripts/animation_curated_spike.py`, net-zero) verified the **full curated effect
+set** (all 10 effect ids read their `EffectType` back) and the **`delay` knob**
+(`Timing.TriggerDelayTime` round-trips).
+
+- [x] **`Shape.animate(effect="fade", *, trigger="on_click", duration=None,
+  delay=None, exit=False)`** over `Slide.TimeLine.MainSequence.AddEffect(Shape,
+  EffectId, 0, Trigger)`. `exit=True` sets `Effect.Exit=msoTrue` (the "disappear"
+  ask — the same effect ids serve entrance and exit); `duration`/`delay` write
+  `Effect.Timing.Duration`/`.TriggerDelayTime`. Returns an `effect_to_dict` row.
+  Each call appends one effect (a shape can carry several).
+- [x] **Curated `MsoAnimEffect` + `MsoAnimTriggerType`** (`constants.py`, the
+  `entry_effect_for` pattern): `anim_effect_for`/`_name` + `ANIM_EFFECT_CHOICES`
+  (appear/fade/fly_in/float_in/wipe/zoom/grow_turn/swivel/wheel/split) and
+  `anim_trigger_for`/`_name` + `ANIM_TRIGGER_CHOICES` (on_click/with_previous/
+  after_previous) + raw-int passthrough.
+- [x] **`Slide.animations()`** read — one `{seq_index, shapeid, shape, effect, exit,
+  trigger, duration, delay}` row per effect in play order, each mapped back to its
+  target shape by the drift-proof `shapeid:S:ID` (`Effect.Shape.Id`). Folded into
+  `Slide.read()` next to `transition`/`background`. **`Slide.clear_animations(anchor
+  =None)`** wipes the whole slide (or just one shape's effects); **`Shape.
+  clear_animations()`** delegates to it. Both delete from the sequence tail-first so
+  live indices don't shift mid-loop.
+- [x] **Front-ends:** CLI `shape animate` / `shape clear-animations` / `slide
+  animations N` / `slide clear-animations`; MCP `ppt_edit` ops `shape_animate`/
+  `shape_clear_animations`/`slide_clear_animations` (+ params `trigger`/`delay`/
+  `exit`) and `ppt_read` op `animations`. Both SKILL guides updated.
+- [x] **Tests:** `tests/test_animations.py` (18) against an extended fake-COM fixture
+  (`_FakeTimeLine`/`_FakeSequence`/`_FakeEffect` on `_FakeSlide`); suite green (777),
+  `ruff`/`mypy` clean. Live net-zero confirmed.
+
+**Still deferred (animation long tail):** per-paragraph effect levels, motion paths,
+`EffectParameters`, and reordering effects within a sequence.
+
+---
+
+## v0.11 — deck structure & feedback batch — SHIPPED (2026-06-18)
+
+Four roadmap-v2 items chosen as a batch and **de-risked together first** by
+`scripts/batch2_spike.py` (net-zero), then hardened library + CLI + MCP + tests.
+
+- [x] **Spike RESOLVED (2026-06-18, `scripts/batch2_spike.py`, net-zero).**
+  1. **Sections** — `AddBeforeSlide(slide, name)` returns the new 1-based index and
+     starts a span at that slide; adding the first section in front of slide N>1
+     auto-creates a leading **"Default Section"**. `AddSection(index, name)` inserts
+     an empty trailing boundary (`FirstSlide` -1, `SlidesCount` 0). `Delete(index,
+     deleteSlides=msoFalse)` drops only the boundary and keeps slides. `Name` /
+     `FirstSlide` / `SlidesCount` / `Rename` / `Move` all read/round-trip.
+  2. **Headers/footers** — slide-level `Footer.Visible/.Text`, `SlideNumber.Visible`,
+     `DateAndTime.Visible/.Format/.UseFormat` set + round-trip; **reading `.Text` /
+     `.UseFormat` while the element is hidden raises "Invalid request"** (so reads are
+     guarded → null when hidden). `DisplayOnTitleSlide` is master-only. Master HF
+     reads cleanly.
+  3. **Direct-vs-inherited color** — the open Claude Desktop ask: `ColorFormat.Type`
+     reads `2 (scheme)` for a theme-cascaded run and `1 (rgb)` after an explicit RGB,
+     on both classic `Font.Color` and modern `TextFrame2`; `ObjectThemeColor` names
+     the slot. The signal exists.
+  4. **Snapshot JPEG quality** — **not COM-exposable** (`Slide.Export` has no quality
+     param; no `ExportBitmapResolution`/`JPEGQuality`/`ExportConfiguration`). So only
+     the width/height override is built; quality is documented as unavailable.
+- [x] **Sections** (`_sections.py`, `deck.sections` → `SectionCollection`):
+  `list`/`add(name, before_slide=)`/`rename`/`delete(*, delete_slides=False)`/`move`,
+  1-based section index. CLI `section list|add|rename|delete|move`; MCP `ppt_read`
+  `sections` + `ppt_edit` `section_add`/`section_rename`/`section_delete`/`section_move`.
+- [x] **Headers/footers** (`_headersfooters.py`, shared `HeadersFooters`): mounted at
+  `Slide.headers_footers` (override) + `Master.headers_footers` (default);
+  `read`/`set_footer`/`set_slide_number`/`set_date` (guarded reads; text auto-shows).
+  CLI `slide`/`master` `headers-footers`/`set-footer`/`slide-number`/`set-date`; MCP
+  `ppt_read` `headers_footers` + `ppt_edit` `set_headers_footers` (one op, slide-or-
+  master by presence of `slide`).
+- [x] **Color-source** (`_anchors.font_to_dict`): every font read gains `color_source`
+  (`direct`/`theme`/`mixed`) + `theme_color`, off `ColorFormat.Type` /
+  `ObjectThemeColor`. New constants `MsoColorType` / `color_source_name` /
+  `theme_color_name`. The `font_to_dict` "no directly-set flag" caveat is rewritten.
+- [x] **Snapshot size override** (`_snapshot.py`): `deck.snapshot(width=, height=)`
+  exact per-slide pixels (overrides `max_dim`; one fills from aspect ratio; both with
+  `max_dim` is a `ValueError`). CLI `--width`/`--height`; MCP `deck_snapshot`
+  `width`/`height`. JPEG-quality documented as not-COM-exposable.
+- [x] **Tests** (`test_sections.py` 14, `test_headers_footers.py` 15, snapshot +5,
+  anchor/mcp color-source +2) against extended fake-COM (`_FakeSectionProperties`,
+  `_FakeHeadersFooters`, fake-font `Color.Type`/`ObjectThemeColor`). Suite green
+  (815), `ruff`/`mypy` clean. Live net-zero confirmed through the shipped wrappers.
+
+**Still deferred from this batch:** section read of which slides belong (beyond
+first_slide+count), `DisplayOnTitleSlide` setter, friendly `PpDateTimeFormat` names,
+and a `text_frame_status`-level color-source roll-up (it lives on the per-run font).
+
+---
+
 ## Cross-cutting (any release)
 
 - [ ] **HRESULT coverage** — start from wordlive's `_BUSY_HRESULTS`; widen as
