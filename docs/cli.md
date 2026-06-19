@@ -244,6 +244,16 @@ pptlive slide add --layout two_content --index 4
 {"ok": true, "index": 4, "id": 261, "layout": "Two Content"}
 ```
 
+Reposition the layout's placeholders **in the same op** with `--placeholders` (a
+JSON map of `KIND → {left, top, width, height}` in points, any subset) — the
+"body on the left half beside a right panel" case, without an add-then-resize
+fix-up. The validated geometry is echoed back:
+
+```bash
+pptlive slide add --layout two_content \
+    --placeholders '{"body": {"left": 40, "width": 440}}'
+```
+
 Exits `2` ([`LayoutNotFoundError`](errors.md)) on an unknown layout name — the
 error lists the available ones.
 
@@ -276,6 +286,71 @@ pptlive slide export --slide 2                          # temp PNG
  "format": "png", "width": 1280, "height": null}
 ```
 
+### `slide geometry N`
+
+A spatial map of slide `N` — the slide size, every shape's bounding `box`, an
+`off_slide` flag, and the `overlaps` pairs (biggest first) — so you can catch
+overlapping or off-edge shapes **without** a render. Axis-aligned only (rotation
+is reported, not accounted for). A read; the view doesn't move.
+
+```bash
+pptlive slide geometry 2
+```
+
+```json
+{"slide": 2, "size": {"width": 960, "height": 540},
+ "shapes": [{"shapeid": "shapeid:2:3", "name": "Title 1",
+             "box": {"left": 36, "top": 28, "width": 888, "height": 90},
+             "off_slide": false}],
+ "overlaps": [], "off_slide": []}
+```
+
+### `slide animations` · `slide clear-animations`
+
+`slide animations N` lists slide `N`'s shape animations in play order — each row
+maps an effect back to its target `shapeid`, so you can see *what* animates *how*
+without a render (a read). `slide clear-animations --slide N` removes **every**
+animation from a slide and reports how many effects it deleted.
+
+```bash
+pptlive slide animations 3
+pptlive slide clear-animations --slide 3
+```
+
+```json
+[{"seq_index": 1, "shapeid": "shapeid:3:4", "shape": "Title 1",
+  "effect": "fade", "exit": false, "trigger": "on_click",
+  "duration": null, "delay": null}]
+```
+
+### `slide headers-footers` · `set-footer` · `slide-number` · `set-date`
+
+Per-slide footer / slide-number / date overrides (the deck-wide defaults live on
+the `master` group below — same verb names). `slide headers-footers N` reads the
+current settings; the setters mutate (one Ctrl-Z). Setting footer or date **text**
+auto-shows that element. A date is either a **fixed** string (`--text`) or an
+**auto-updating** format (`--format`, a `PpDateTimeFormat` int) — not both.
+
+```bash
+pptlive slide headers-footers 2
+pptlive slide set-footer   --slide 2 --text "Acme — Confidential"   # auto-shows
+pptlive slide set-footer   --slide 2 --hide                         # just hide it
+pptlive slide slide-number --slide 2 --show
+pptlive slide set-date     --slide 2 --format 1                     # auto-updating
+pptlive slide set-date     --slide 2 --text "June 2026"             # fixed
+```
+
+```json
+{"ok": true, "slide": 2,
+ "headers_footers": {"footer": {"visible": true, "text": "Acme — Confidential"},
+                     "slide_number": {"visible": true},
+                     "date": {"visible": false, "text": null, "use_format": null}}}
+```
+
+A footer / date `text` reads back `null` while that element is hidden — PowerPoint
+only exposes the text on a visible element — so a `null` text next to `visible:
+false` means "hidden", not "empty".
+
 ---
 
 ## `snapshot` — see the whole deck cheaply
@@ -292,10 +367,17 @@ for the whole deck. With `--out PATH` the PNGs are written (a single slide to
 that path, multiple as `<stem>-s<N><suffix>`) and each `path` is reported;
 without `--out`, base64 PNG data is returned inline.
 
+For an exact per-slide pixel size instead of the long-edge cap, pass `--width N`
+/ `--height N` (one or both; they **override** `--max-dim`, and passing `--max-dim`
+together with either is an error). Pixel area — not encoder quality — is what a
+vision model is billed on, and `Slide.Export` exposes no JPEG-quality knob, so the
+dimensions are the only render-cost lever.
+
 ```bash
 pptlive snapshot --max-dim 1000                        # whole deck, base64 inline
 pptlive snapshot --out deck.png --max-dim 1000         # -> deck-s1.png, deck-s2.png, …
 pptlive snapshot --slides 2-4 --max-dim 800            # just slides 2–4
+pptlive snapshot --slide 1 --width 1280 --height 720   # exact pixels (overrides --max-dim)
 ```
 
 ```json
@@ -472,6 +554,28 @@ after z-order drift.
 
 ```bash
 pptlive shape set-alt --anchor-id shape:4:3 --alt-text "Acme logo (top-right)"
+```
+
+### `shape animate` · `shape clear-animations`
+
+Give a shape an entrance (or, with `--exit`, an exit) animation — the per-shape
+sibling of slide transitions, appended to the slide's main animation sequence. A
+shape can carry several effects. `--effect` is a curated name
+(`appear`/`fade`/`fly_in`/`float_in`/`wipe`/`zoom`/`grow_turn`/`swivel`/`wheel`/
+`split`); `--trigger` is `on_click` / `with_previous` / `after_previous`;
+`--duration` / `--delay` are seconds. `shape clear-animations` removes just that
+shape's effects (vs. the whole-slide `slide clear-animations`).
+
+```bash
+pptlive shape animate --anchor-id shape:3:2 --effect fly_in --trigger after_previous
+pptlive shape animate --anchor-id shape:3:2 --effect fade --exit          # animate OUT
+pptlive shape clear-animations --anchor-id shape:3:2
+```
+
+```json
+{"ok": true, "anchor_id": "shape:3:2", "shapeid": "shapeid:3:7",
+ "animation": {"shapeid": "shapeid:3:7", "shape": "Rectangle 4", "effect": "fly_in",
+               "exit": false, "trigger": "after_previous", "duration": null, "delay": null}}
 ```
 
 ### `shapeid:S:ID` — the delete-proof handle
@@ -821,6 +925,47 @@ to one anchor. `--level` defaults to `1` (the natural choice for `title`); pass
 `--level N` (1–5) for the other outline levels. Each needs at least one
 formatting option.
 
+The master also carries the deck's **default** headers / footers — the same four
+verbs as the `slide` group (`headers-footers` / `set-footer` / `slide-number` /
+`set-date`), but setting the deck-wide default every slide inherits unless it has
+its own per-slide override:
+
+```bash
+pptlive master headers-footers                       # read the deck defaults
+pptlive master set-footer --text "Acme — Confidential"
+pptlive master slide-number --show
+pptlive master set-date --format 1                    # auto-updating on every slide
+```
+
+---
+
+## Sections — the `section` group
+
+PowerPoint **sections** — named spans of slides for organizing a long deck.
+Structural edits (no view move), each one Ctrl-Z. Sections are addressed by a
+1-based `--section` index.
+
+```bash
+pptlive section list
+pptlive section add    --name "Appendix" --before-slide 9   # start a span at slide 9
+pptlive section add    --name "Backup"                      # append an empty trailing section
+pptlive section rename --section 2 --name "Results"
+pptlive section move   --section 3 --to 1                   # carries its slides
+pptlive section delete --section 3                          # keeps the slides…
+pptlive section delete --section 3 --delete-slides          # …unless you say so
+```
+
+```json
+[{"index": 1, "name": "Intro", "first_slide": 1, "slide_count": 3},
+ {"index": 2, "name": "Results", "first_slide": 4, "slide_count": 5}]
+```
+
+Two model notes the spike pinned: starting a section with `--before-slide` in
+front of a later slide **auto-creates a leading "Default Section"** for the slides
+ahead of it, and `delete` keeps the section's slides by default (it just drops the
+boundary) — pass `--delete-slides` to remove them too. A section with no slides
+reports `first_slide: null`.
+
 ---
 
 ## Selection & navigation
@@ -917,6 +1062,12 @@ pptlive exec --script ops.json
   exit code (`2` not-found, `5` ambiguous, …). Pass `--continue` to run every op
   and report each outcome.
 - `--no-atomic` fences each op as its own undo entry instead of one.
+- **"Follow the work" view policy.** When a batch *adds* a slide
+  (`slide_add` / `slide_duplicate`), the view is left on the last slide it touched
+  rather than snapped back to the pre-batch slide (so building a deck doesn't keep
+  bouncing you to slide 1). Pure-edit batches keep the polite view-restore. Opt out
+  with `--no-follow-view` (or the `PPTLIVE_VIEW_FOLLOW=0` env var); a deliberate
+  `navigate` op in the batch still wins.
 
 Each result entry carries its `index`, `tool`, `op`, `ok`, and either the op's
 `result` payload or an `error` token + `message`:

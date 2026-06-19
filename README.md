@@ -216,6 +216,7 @@ pptlive slide move --slide 9 --to 2
 pptlive slide set-layout --slide 4 --layout title_and_content
 pptlive slide delete --slide 5
 pptlive slide export --slide 2 --out slide2.png [--width 1280] [--format png]  # render to image
+pptlive slide geometry 2                         # slide size + shape boxes + overlaps + off-slide (no render)
 
 pptlive shape add --slide 4 --kind textbox --text "Revenue up 12%" --left 72 --top 72
 pptlive shape add --slide 4 --kind shape --shape-type star --left 400 --top 120 --width 120 --height 120
@@ -228,6 +229,8 @@ pptlive shape set-alt --anchor-id shape:4:3 --alt-text "Acme logo"      # drift-
 pptlive shape fill    --anchor-id shape:4:3 --fill "#C00000" --line none --line-width 2  # fill/border
 pptlive shape order   --anchor-id shape:4:3 --to front       # z-order: front/back/forward/backward
 pptlive shape export  --anchor-id shape:4:3 --out logo.png   # render one shape (native size)
+pptlive shape animate --anchor-id shape:4:3 --effect fly_in [--trigger after_previous] [--exit]
+pptlive slide animations 4                       # a slide's shape animations in play order
 
 pptlive shape add --slide 4 --kind chart --chart-type column \
     --categories "Q1,Q2,Q3" --series '{"Revenue":[10,20,30]}'
@@ -276,7 +279,12 @@ pptlive comment add   --slide 2 --text "Tighten this" [--left 100 --top 80]
 pptlive comment reply  --slide 2 --index 1 --text "Agreed"
 pptlive comment delete --slide 2 --index 1       # takes its replies too
 
-pptlive snapshot [--slides 2-4] [--max-dim 1000] # one PNG per slide — the whole-deck vision read
+pptlive section list                             # named slide spans (deck structure)
+pptlive section add --name "Appendix" --before-slide 9   # rename/move/delete too
+pptlive slide  set-footer --slide 2 --text "Confidential" # per-slide footer/slide-number/date
+pptlive master set-footer --text "Confidential"           # deck-wide default
+
+pptlive snapshot [--slides 2-4] [--max-dim 1000] [--width 1280 --height 720]  # one PNG per slide — the whole-deck vision read
 pptlive save                                     # persist to the existing file (explicit)
 pptlive save-as v2.pptx [--overwrite]            # write + rebind the working file
 pptlive export-pdf deck.pdf                      # a read: PDF without rebinding the working file
@@ -332,9 +340,9 @@ one-Ctrl-Z `edit` fencing carry over and reads never move the view:
 
 | tool | `op`s |
 | ---- | ----- |
-| `ppt_read` | `status` · `slides` · `outline` · `slide` · `anchor` · `selection` · `find` · `table` · `chart` · `smartart` · `comments` · `theme` · `master` · `layouts` — every read; never moves the view |
-| `ppt_edit` | `write` · `find_replace` · `format` (font + paragraph + shape fill/line + bullets) · `slide_add`/`slide_delete`/`slide_duplicate`/`slide_move`/`set_layout` · `shape_add`/`shape_move`/`shape_resize`/`shape_delete`/`shape_order`/`set_alt` · `table_add_row`/`table_delete_row` · `chart_set_type`/`chart_set_data`/`chart_recolor_text` · `smartart_set_nodes`/`smartart_recolor_text` · `comment_add`/`comment_reply`/`comment_delete` · `theme_set_color`/`theme_set_font` · `master_format_text_style`/`master_format_paragraph_style`/`master_set_background` — every mutation; one Ctrl-Z each |
-| `ppt_render` | `slide_image` · `shape_image` · `deck_snapshot` (one PNG per slide — the whole-deck vision read) · `deck_pdf`/`save`/`save_as` (explicit output) · `navigate` (the one deliberate view move) |
+| `ppt_read` | `status` · `slides` · `outline` · `slide` · `anchor` · `geometry` (slide size + shape boxes + overlaps + off-slide) · `selection` · `find` · `table` · `chart` · `smartart` · `comments` · `animations` · `sections` · `headers_footers` · `theme` · `master` · `layouts` — every read; never moves the view |
+| `ppt_edit` | `write` · `find_replace` · `format` (font + paragraph + shape fill/line + bullets) · `slide_add`/`slide_delete`/`slide_duplicate`/`slide_move`/`set_layout` · `shape_add`/`shape_move`/`shape_resize`/`shape_delete`/`shape_order`/`set_alt` · `shape_animate`/`shape_clear_animations`/`slide_clear_animations` · `table_add_row`/`table_delete_row` · `chart_set_type`/`chart_set_data`/`chart_recolor_text` · `smartart_set_nodes`/`smartart_recolor_text` · `comment_add`/`comment_reply`/`comment_delete` · `section_add`/`section_rename`/`section_delete`/`section_move` · `set_headers_footers` · `theme_set_color`/`theme_set_font` · `master_format_text_style`/`master_format_paragraph_style`/`master_set_background` — every mutation; one Ctrl-Z each |
+| `ppt_render` | `slide_image` · `shape_image` · `deck_snapshot` (one PNG per slide — the whole-deck vision read; `max_dim` or exact `width`/`height`) · `deck_pdf`/`save`/`save_as` (explicit output) · `navigate` (the one deliberate view move) |
 | `ppt_show` | live slide show: `state` · `start` · `end` · `next` · `previous` · `goto` · `black` · `white` · `resume` |
 | `ppt_batch` | run a **list** of the ops above against one connection — all `edit`s fenced into a **single** undo entry (`atomic`), with `stop_on_error` control |
 
