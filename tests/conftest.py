@@ -16,7 +16,6 @@ same object, the way the real COM property does.
 
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
