@@ -38,8 +38,8 @@ the rest are agent findings not yet independently reproduced.
 | P-18 | Low | `_tables.py:413` | `set_fill` validates color per-cell, not up-front (vs `set_border`) | **done** ✅ |
 | P-19 | Low | `_smartart.py:169` | No runtime cross-check that depth-first walk == `AllNodes.Count` | **done** ✅ |
 | P-20 | Low | `_theme.py:96` | Theme palette read uses `color_hex` not `color_hex_or_none` | **done** ✅ |
-| P-21 | Low | `_snapshot.py:190` | Multi-slide filenames can get wrong extension when `fmt`≠`out` suffix | todo |
-| P-22 | Low | `_batch.py:1293` | `deck_snapshot` temp dirs never cleaned up (long-lived MCP leak) | todo |
+| P-21 | Low | `_snapshot.py:190` | Multi-slide filenames can get wrong extension when `fmt`≠`out` suffix | **done** ✅ |
+| P-22 | Low | `_batch.py:1293` | `deck_snapshot` temp dirs never cleaned up (long-lived MCP leak) | **done** ✅ |
 | P-23 | Low | `_shapes.py:524` | Swallowed `LockAspectRatio` failure silently reintroduces aspect-snap | **done** ✅ |
 | P-24 | Low | `_shapes.py:1742` | Shape name lookup returns first of duplicates, no `AmbiguousMatchError` | todo |
 | P-25 | Low | `_selection.py:91` | Selection restore keys on non-unique `Shape.Name` | todo |

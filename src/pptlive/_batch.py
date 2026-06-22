@@ -12,7 +12,9 @@ maps `BatchOpError` back to a `ToolError`; `cli/commands.py exec` maps it to exi
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
+import time
 from collections.abc import Callable
 from contextlib import nullcontext
 from enum import StrEnum
@@ -1264,12 +1266,42 @@ def _render_slide_image(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "slide": p["slide"], "path": str(path), "format": fmt}
 
 
+_SNAPSHOT_TMP_PREFIX = "pptlive_snap_"
+
+
+def _reap_old_snapshot_dirs(max_age_seconds: float = 3600.0) -> None:
+    """Best-effort cleanup of leftover snapshot temp dirs from prior calls.
+
+    `deck_snapshot` must keep its temp dir alive until the MCP reply has read the
+    PNG bytes back, so it can't delete its own dir inline. Instead each call sweeps
+    away earlier `pptlive_snap_*` dirs older than `max_age_seconds`, bounding the
+    leak in a long-lived server without risking a dir still being read this turn
+    (or one a concurrent process just created).
+    """
+    root = tempfile.gettempdir()
+    now = time.time()
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return
+    for name in names:
+        if not name.startswith(_SNAPSHOT_TMP_PREFIX):
+            continue
+        path = os.path.join(root, name)
+        try:
+            if os.path.isdir(path) and (now - os.path.getmtime(path)) > max_age_seconds:
+                shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            pass
+
+
 @render_op(RenderOp.DECK_SNAPSHOT)
 def _render_deck_snapshot(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
     deck = _pick_deck(ppt, p.get("doc"))
     fmt = p.get("fmt") or "png"
     selector = _parse_slide_selector(p.get("slides"))
-    out_dir = tempfile.mkdtemp(prefix="pptlive_snap_")
+    _reap_old_snapshot_dirs()  # bound the temp-dir leak from earlier calls
+    out_dir = tempfile.mkdtemp(prefix=_SNAPSHOT_TMP_PREFIX)
     base = os.path.join(out_dir, f"snap.{fmt}")
     snaps = deck.snapshot(
         base,
