@@ -160,6 +160,28 @@ class AmbiguousMatchError(PptliveError):
         return cls(anchor_id, candidates, message=message)
 
 
+class ReplaceVerificationError(PptliveError):
+    """A `find_replace` target span no longer matched the located text.
+
+    The fuzzy matcher locates a span, then `find_replace` re-reads that span just
+    before overwriting it and confirms it still equals the located text (under the
+    same fuzzy normalization). A non-empty mismatch means the frame text shifted
+    between the locate and apply passes (or an offset map drifted), so we refuse
+    rather than overwrite the wrong characters. Maps to exit 1 / MCP `error`.
+    """
+
+    def __init__(self, find: str, expected: str, found: str, *, anchor_id: str | None = None) -> None:
+        where = f" at {anchor_id}" if anchor_id else ""
+        super().__init__(
+            f"refusing to replace {find!r}{where}: the target span changed "
+            f"(expected {expected!r}, found {found!r})"
+        )
+        self.find = find
+        self.expected = expected
+        self.found = found
+        self.anchor_id = anchor_id
+
+
 class BatchOpError(PptliveError):
     """A dispatch op got invalid arguments (the `invalid_args` category).
 

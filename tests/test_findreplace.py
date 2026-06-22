@@ -56,6 +56,15 @@ def test_find_matches_is_case_sensitive() -> None:
     ]
 
 
+def test_normalized_equal_is_fuzzy() -> None:
+    # The find_replace verify guard compares the re-read span to the located text
+    # under normalization, so a smart-quote vs straight round-trip still counts as
+    # equal (the guard won't refuse a cosmetically-different-but-equal span).
+    assert _findreplace.normalized_equal("don't", "don’t")
+    assert _findreplace.normalized_equal("a  b", "a b")  # whitespace collapse
+    assert not _findreplace.normalized_equal("cat", "dog")
+
+
 def test_find_matches_at_eol_does_not_span_the_paragraph_mark() -> None:
     # PowerPoint paragraph marks are \r (folded to \n then stripped). A match
     # ending right before a trailing \r must NOT include that \r in its span —

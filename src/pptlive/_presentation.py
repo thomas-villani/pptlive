@@ -38,6 +38,7 @@ from .exceptions import (
     NoTextFrameError,
     PowerPointBusyError,
     PresentationNotFoundError,
+    ReplaceVerificationError,
     UnsavedPresentationError,
 )
 
@@ -660,7 +661,16 @@ class Presentation:
         applied: list[dict[str, Any]] = []
         with _com.translate_com_errors():
             for anchor_id, tr, start, end, text in reversed(to_apply):
-                tr.Characters(start + 1, end - start).Text = replace
+                span = tr.Characters(start + 1, end - start)
+                # Re-verify the span still holds the located text before
+                # overwriting. An empty resolved text can't be checked (the fake
+                # COM, or a genuinely empty range) — proceed; a non-empty mismatch
+                # means the frame drifted between locate and apply, so refuse
+                # rather than corrupt the wrong characters.
+                resolved = str(span.Text or "")
+                if resolved and not _findreplace.normalized_equal(resolved, text):
+                    raise ReplaceVerificationError(find, text, resolved, anchor_id=anchor_id)
+                span.Text = replace
                 applied.append(
                     {"anchor_id": anchor_id, "start": start, "length": end - start, "text": text}
                 )
