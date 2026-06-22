@@ -277,7 +277,10 @@ class Chart:
                 if int(sc.Count) != nseries:
                     return False
                 return len(list(sc(1).XValues)) == ncats
-        except PptliveError:
+        except (PptliveError, TypeError, ValueError):
+            # Any COM hiccup or a degenerate read-back (e.g. XValues coming back
+            # as a non-iterable scalar) counts as "not yet reflected" — retry the
+            # idempotent write rather than letting it escape the retry loop.
             return False
 
     def recolor_text(self, color: str | int | tuple[int, int, int]) -> dict[str, Any]:
@@ -355,6 +358,8 @@ class Chart:
                 with _com.translate_com_errors():
                     self.com.Axes(axis_type).TickLabels.Font.Color = rgb
                 return True
+            except PowerPointBusyError:
+                raise  # a transient busy is retryable — don't mask it as "axis absent"
             except PptliveError:
                 return False
 

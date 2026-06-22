@@ -33,6 +33,7 @@ to the hardening spike.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -183,8 +184,20 @@ class SmartArt:
         with _com.translate_com_errors():
             sa = self.com
             layout_id = str(sa.Layout.Id)
-            nodes = self._dump(sa.Nodes, [0])
+            counter = [0]
+            nodes = self._dump(sa.Nodes, counter)
             total = int(sa.AllNodes.Count)
+        if counter[0] != total:
+            # The recursive Nodes walk and AllNodes must enumerate the same set in
+            # the same order (the spike-verified depth-first assumption) for a
+            # read()'s node_index to address the right node in format_node. A
+            # mismatch (e.g. a layout with assistant/hidden nodes AllNodes counts
+            # but Nodes doesn't reach) means node_index is unreliable — surface it.
+            warnings.warn(
+                f"SmartArt node walk ({counter[0]}) != AllNodes.Count ({total}); "
+                "node_index values may not line up with format_node",
+                stacklevel=2,
+            )
         return {
             "slide": self._shape.slide.index,
             "shape": self._shape.index,

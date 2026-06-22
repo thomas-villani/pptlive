@@ -521,14 +521,27 @@ def replace_picture(
         -1.0,
     )
     new_id = int(new_com.Id)
-    try:
-        new_com.LockAspectRatio = int(MsoTriState.FALSE)  # let the copied box win
-    except Exception:
-        pass
-    new_com.Left = left
-    new_com.Top = top
-    new_com.Width = width
-    new_com.Height = height
+
+    def _force_box() -> None:
+        # Clearing LockAspectRatio lets the copied box win; if the assignment is
+        # rejected (some builds/shape states), setting Width snaps Height to the
+        # new image's ratio (and vice versa) — the exact drift this re-source
+        # guards against. Best-effort clear, then set the box.
+        try:
+            new_com.LockAspectRatio = int(MsoTriState.FALSE)
+        except Exception:  # noqa: BLE001 — best-effort; verified/retried below
+            pass
+        new_com.Left = left
+        new_com.Top = top
+        new_com.Width = width
+        new_com.Height = height
+
+    _force_box()
+    # Verify the box stuck; if a wedged aspect-lock snapped it, retry once. A
+    # genuinely stuck lock can't be cleared in software, but the retry recovers
+    # the common transient case instead of silently shipping a wrong-sized picture.
+    if abs(float(new_com.Width) - width) > 0.5 or abs(float(new_com.Height) - height) > 0.5:
+        _force_box()
     new_com.Rotation = rotation
     new_com.AlternativeText = carried_alt if alt_text is None else str(alt_text)
 

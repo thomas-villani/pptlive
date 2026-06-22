@@ -156,6 +156,14 @@ def test_retry_on_busy_reraises_after_exhausting(monkeypatch) -> None:  # type: 
     assert calls["n"] == 3  # tried exactly `attempts` times
 
 
+def test_retry_on_busy_rejects_nonpositive_attempts() -> None:
+    # attempts < 1 is a programming error; raise a clean ValueError rather than
+    # relying on an `assert` (stripped under python -O, which would then raise a
+    # confusing `raise None` TypeError).
+    with pytest.raises(ValueError, match="attempts must be >= 1"):
+        _com.retry_on_busy(lambda: "x", attempts=0)
+
+
 def test_retry_on_busy_passes_through_non_busy() -> None:
     # A real error must surface immediately, not be retried.
     def boom() -> None:

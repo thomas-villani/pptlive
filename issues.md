@@ -36,17 +36,17 @@ the rest are agent findings not yet independently reproduced.
 | P-16 | Low | `cli/main.py` + `__init__.py` | No `__version__` / `--version` / `--about` (wordlive-drift) | **done** ✅ (`--version`; `--about` skipped) |
 | P-17 | Low | `_findreplace` / `_presentation.py:663` | `find_replace` drops wordlive's `normalized_equal` re-verify | **done** ✅ |
 | P-18 | Low | `_tables.py:413` | `set_fill` validates color per-cell, not up-front (vs `set_border`) | **done** ✅ |
-| P-19 | Low | `_smartart.py:169` | No runtime cross-check that depth-first walk == `AllNodes.Count` | todo |
+| P-19 | Low | `_smartart.py:169` | No runtime cross-check that depth-first walk == `AllNodes.Count` | **done** ✅ |
 | P-20 | Low | `_theme.py:96` | Theme palette read uses `color_hex` not `color_hex_or_none` | **done** ✅ |
 | P-21 | Low | `_snapshot.py:190` | Multi-slide filenames can get wrong extension when `fmt`≠`out` suffix | todo |
 | P-22 | Low | `_batch.py:1293` | `deck_snapshot` temp dirs never cleaned up (long-lived MCP leak) | todo |
-| P-23 | Low | `_shapes.py:524` | Swallowed `LockAspectRatio` failure silently reintroduces aspect-snap | todo |
+| P-23 | Low | `_shapes.py:524` | Swallowed `LockAspectRatio` failure silently reintroduces aspect-snap | **done** ✅ |
 | P-24 | Low | `_shapes.py:1742` | Shape name lookup returns first of duplicates, no `AmbiguousMatchError` | todo |
 | P-25 | Low | `_selection.py:91` | Selection restore keys on non-unique `Shape.Name` | todo |
 | P-26 | Low | `_sections.py:99` | `add()` validates inside `translate_com_errors` (vs siblings) | **done** ✅ |
 | P-27 | Low | `_tables.py:385` | `_resolve_axis` accepts `bool` selector (inconsistent w/ other validators) | **done** ✅ |
-| P-28 | Low | `_charts.py:264,346` | `_reflects_data`/`_attempt_axis` `except` masks busy / non-COM errors | todo |
-| P-29 | Low | `_com.py:133` | `assert last is not None` stripped under `python -O` | todo |
+| P-28 | Low | `_charts.py:264,346` | `_reflects_data`/`_attempt_axis` `except` masks busy / non-COM errors | **done** ✅ |
+| P-29 | Low | `_com.py:133` | `assert last is not None` stripped under `python -O` | **done** ✅ |
 | P-30 | Low | `cli/commands.py:3362` | `set-paragraphs --json` option shadows global `--json/--text` | todo |
 | P-31 | Low | `cli/commands.py:496` | `snapshot_cmd` hand-rolls `sys.exit(1)` instead of `_run` boundary | todo |
 | P-32 | Low | `cli/commands.py:1316` | `shape add --kind chart` with no data passes `None,None` to `add_chart` | todo |
