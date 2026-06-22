@@ -9,8 +9,11 @@ robustness, docs).
 
 **Status legend:** `todo` · `wip` · `done` · `wontfix` · `needs-repro`.
 
-Two High items (P-01, P-02) were **verified against the code** during the review;
-the rest are agent findings not yet independently reproduced.
+**Resolution (2026-06-22):** all 36 findings resolved on branch
+`fix/code-review-batch-2026-06` (8 commits, grouped by theme). Two were
+verified-already-correct (P-14 save_as pdf redirect, P-32 add_chart default
+data); the rest are real fixes with regression tests. Final gate: 890 tests
+pass, ruff + mypy clean.
 
 ---
 
