@@ -117,6 +117,16 @@ def test_format_text_whole_shape_applies_to_all_paragraphs(deck) -> None:  # typ
     assert all(int(com.Paragraphs(p, 1).Font.Italic) == -1 for p in (1, 2, 3))
 
 
+def test_format_text_bad_color_does_not_half_format(deck) -> None:  # type: ignore[no-untyped-def]
+    # color is validated before any font property is written, so a bad color
+    # raises ValueError without leaving bold applied (no partial mutation).
+    para = _body(deck).paragraphs[1]
+    before = int(_body_com(deck).Paragraphs(1, 1).Font.Bold)
+    with pytest.raises(ValueError):
+        para.format_text(bold=True, color="not-a-color")
+    assert int(_body_com(deck).Paragraphs(1, 1).Font.Bold) == before
+
+
 # -- paragraph formatting ---------------------------------------------------
 
 

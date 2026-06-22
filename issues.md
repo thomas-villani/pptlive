@@ -23,15 +23,15 @@ the rest are agent findings not yet independently reproduced.
 | P-03 | High | `_anchors.py:265` | `set_paragraphs` on a `Paragraph` anchor silently corrupts/drops | **done** ✅ |
 | P-04 | High | `_slides.py:658` | Placeholder-geometry apply isn't atomic; bad KIND leaves half-built slide | **done** ✅ |
 | P-05 | High | `_slides.py:163` | `_find_placeholder` unwrapped COM + swallows transient busy | **done** ✅ |
-| P-06 | Med | `_batch.py:540` | Inconsistent `ValueError→BatchOpError` wrapping across handlers | todo |
-| P-07 | Med | `_shapes.py:835` | `effect_to_dict` unguarded reads break whole `animations()` listing | todo |
-| P-08 | Med | `_shapes.py:1696` | `ShapeById`/`reorder` use `ZOrderPosition`, can emit wrong `shape:S:N` | todo |
-| P-09 | Med | `_presentation.py:741` | `active`/`list` remap `PowerPointBusyError` to not-found (wrong exit) | todo |
-| P-10 | Med | `_charts.py:67` | Non-numeric chart value raises unhelpful bare `float()` error | todo |
-| P-11 | Med | `_anchors.py:337` | `format_text` double-parses color; validation lives in two places | todo |
-| P-12 | Med | `_shapes.py:1529` | `set_hyperlink` re-resolves shape COM twice (TOCTOU) | todo |
-| P-13 | Med | `_presentation.py:690` | `go_to(select=True)` swallows all non-busy select failures | todo |
-| P-14 | Med | `_presentation.py:122` | `save_as("pdf")` may not redirect to `export_pdf` (verify) | todo |
+| P-06 | Med | `_batch.py:540` | Inconsistent `ValueError→BatchOpError` wrapping across handlers | **done** ✅ |
+| P-07 | Med | `_shapes.py:835` | `effect_to_dict` unguarded reads break whole `animations()` listing | **done** ✅ |
+| P-08 | Med | `_shapes.py:1696` | `ShapeById`/`reorder` use `ZOrderPosition`, can emit wrong `shape:S:N` | **done** ✅ |
+| P-09 | Med | `_presentation.py:741` | `active`/`list` remap `PowerPointBusyError` to not-found (wrong exit) | **done** ✅ |
+| P-10 | Med | `_charts.py:67` | Non-numeric chart value raises unhelpful bare `float()` error | **done** ✅ |
+| P-11 | Med | `_anchors.py:337` | `format_text` double-parses color; validation lives in two places | **done** ✅ |
+| P-12 | Med | `_shapes.py:1529` | `set_hyperlink` re-resolves shape COM twice (TOCTOU) | **done** ✅ |
+| P-13 | Med | `_presentation.py:690` | `go_to(select=True)` swallows all non-busy select failures | **done** ✅ |
+| P-14 | Med | `_presentation.py:122` | `save_as("pdf")` may not redirect to `export_pdf` (verify) | **done** ✅ (already correct) |
 | P-15 | Low | exceptions / cli / batch | No shared `classify()`; exit-code ladder duplicated 2× (wordlive-drift) | todo |
 | P-16 | Low | `cli/main.py` + `__init__.py` | No `__version__` / `--version` / `--about` (wordlive-drift) | todo |
 | P-17 | Low | `_findreplace` / `_presentation.py:663` | `find_replace` drops wordlive's `normalized_equal` re-verify | todo |

@@ -533,12 +533,9 @@ def _format_warnings(anchor: Any, p: dict[str, Any]) -> list[str]:
 @edit_op(EditOp.SLIDE_ADD)
 def _edit_slide_add(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
     placeholders = p.get("placeholders")
-    try:
-        new = deck.slides.add(
-            layout=p.get("layout"), index=p.get("index"), placeholders=placeholders
-        )
-    except ValueError as exc:
-        raise BatchOpError(f"invalid_args: {exc}") from exc
+    # A bad layout/index/placeholders ValueError is mapped to invalid_args
+    # centrally (run_batch + the MCP _mcp_errors wrapper), so no per-handler wrap.
+    new = deck.slides.add(layout=p.get("layout"), index=p.get("index"), placeholders=placeholders)
     result: dict[str, Any] = {
         "ok": True,
         "index": new.index,
@@ -1340,10 +1337,9 @@ def _render_save_as(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
     deck = _pick_deck(ppt, p.get("doc"))
     _require(p.get("out") is not None, "render op='save_as' requires `out` (the .pptx path)")
     fmt = str(p.get("save_format", "pptx"))
-    try:
-        written = deck.save_as(p["out"], fmt=fmt, overwrite=bool(p.get("overwrite", False)))
-    except (FileExistsError, ValueError) as exc:
-        raise BatchOpError(f"invalid_args: {exc}") from exc
+    # FileExistsError (clobber) / ValueError (bad format) map to invalid_args
+    # centrally (run_batch + _mcp_errors), so no per-handler wrap.
+    written = deck.save_as(p["out"], fmt=fmt, overwrite=bool(p.get("overwrite", False)))
     return {"ok": True, "path": written, "format": fmt}
 
 
@@ -1509,13 +1505,14 @@ def run_batch(
                     if fs is not None:
                         focus_slide = fs
                 entry.update(ok=True, result=result)
-            except (PptliveError, ValueError, FileNotFoundError) as exc:
+            except (PptliveError, ValueError, FileNotFoundError, FileExistsError) as exc:
                 # Library handlers raise bare ValueError (e.g. format_paragraph
-                # line_spacing > 5, empty set_paragraphs) and FileNotFoundError
-                # (picture sourcing) without wrapping them in BatchOpError. Record
-                # those as invalid_args per-command — mirroring the single-op MCP
-                # path (_mcp_errors) — so one bad op doesn't abort the whole batch
-                # or escape the per-op contract.
+                # line_spacing > 5, empty set_paragraphs), FileNotFoundError
+                # (picture sourcing), and FileExistsError (save_as clobber)
+                # without wrapping them in BatchOpError. Record those as
+                # invalid_args per-command — mirroring the single-op MCP path
+                # (_mcp_errors) — so one bad op doesn't abort the whole batch or
+                # escape the per-op contract.
                 code = _error_code(exc) if isinstance(exc, PptliveError) else "invalid_args"
                 entry.update(ok=False, error=code, message=str(exc))
                 results.append(entry)

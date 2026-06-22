@@ -135,7 +135,13 @@ def apply_font(
     surfaces format fonts identically. `size` is points; `color` is `"#RRGGBB"`,
     an `(r, g, b)` tuple, or a raw RGB int. Caller wraps this in
     `translate_com_errors()`.
+
+    Color is parsed/validated *first* — before any property is written — so a bad
+    color raises `ValueError` without leaving the font half-formatted (bold/size
+    applied, color rejected). This makes `apply_font` the single color-validation
+    point shared by `format_text` and the master text styles.
     """
+    rgb = parse_color(color) if color is not None else None
     if bold is not None:
         f.Bold = _tristate(bold)
     if italic is not None:
@@ -146,8 +152,8 @@ def apply_font(
         f.Size = float(size)
     if font is not None:
         f.Name = str(font)
-    if color is not None:
-        f.Color.RGB = parse_color(color)
+    if rgb is not None:
+        f.Color.RGB = rgb
 
 
 #: Above this, a `line_spacing` *multiple* is almost always a points-vs-multiple
@@ -333,9 +339,10 @@ class Anchor(ABC):
         PowerPoint has no named paragraph styles, so styling is direct font
         formatting. Only the kwargs you pass are written. `size` is in points;
         `color` is `"#RRGGBB"`, an `(r, g, b)` tuple, or a raw RGB int.
+
+        A bad `color` raises `ValueError` before any font property is written
+        (`apply_font` validates it first), so the font is never left half-styled.
         """
-        if color is not None:
-            parse_color(color)  # validate before any COM
         with _com.translate_com_errors():
             apply_font(
                 self._text_range().Font,

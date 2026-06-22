@@ -94,10 +94,11 @@ def _mcp_errors() -> Iterator[None]:
         raise ToolError(str(exc)) from exc
     except PptliveError as exc:
         raise ToolError(f"{type(exc).__name__} ({_error_code(exc)}): {exc}") from exc
-    except (ValueError, FileNotFoundError) as exc:
+    except (ValueError, FileNotFoundError, FileExistsError) as exc:
         # Library-level input validation (e.g. a line_spacing multiple > 5, an
-        # out-of-range indent level, a missing picture/picture-fill path) — surface
-        # as invalid_args, not a 500.
+        # out-of-range indent level, a missing picture/picture-fill path, a
+        # save_as that would clobber an existing file) — surface as invalid_args,
+        # not a 500.
         raise ToolError(f"invalid_args: {exc}") from exc
 
 

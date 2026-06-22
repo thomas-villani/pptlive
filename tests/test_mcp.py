@@ -1557,6 +1557,19 @@ def test_batch_bare_valueerror_can_stop_the_run(fake_powerpoint: Any) -> None:
     assert out["results"][1]["error"] == "invalid_args"
 
 
+def test_batch_save_as_clobber_is_invalid_args(fake_powerpoint: Any, tmp_path: Any) -> None:
+    # save_as raises FileExistsError (not a PptliveError) when it would clobber.
+    # It is mapped to invalid_args centrally now that the per-handler wrap is gone.
+    target = tmp_path / "deck.pptx"
+    target.write_text("existing")
+    out = ppt_batch(
+        [{"tool": "render", "op": "save_as", "out": str(target)}],
+        stop_on_error=False,
+    )
+    assert out["results"][0]["ok"] is False
+    assert out["results"][0]["error"] == "invalid_args"
+
+
 # ---------------------------------------------------------------------------
 # Tool discoverability (PPTLIVE-002): a search for the product name must surface
 # every tool, so each tool's description carries the word "PowerPoint".

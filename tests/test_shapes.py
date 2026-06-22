@@ -233,6 +233,34 @@ def test_set_picture_on_non_picture_raises(deck, tmp_path) -> None:  # type: ign
         deck.slides[3].shapes[1].set_picture(_png(tmp_path))  # a textbox
 
 
+def test_shapeid_index_follows_collection_not_zorderposition() -> None:
+    # On a flat slide ZOrderPosition == Shapes-collection index, but with
+    # grouped/placeholder orderings they diverge. ShapeById must report the
+    # collection index (the basis shape:S:N resolves by), not ZOrderPosition —
+    # else the emitted shape:S:N would point at a different shape.
+    from types import SimpleNamespace
+
+    from pptlive._shapes import ShapeById
+    from pptlive._slides import Slide
+
+    class _Coll:
+        def __init__(self, shapes: list) -> None:  # type: ignore[type-arg]
+            self._shapes = shapes
+
+        @property
+        def Count(self) -> int:
+            return len(self._shapes)
+
+        def __call__(self, idx: int) -> object:
+            return self._shapes[idx - 1]
+
+    # One shape at collection index 1 whose ZOrderPosition lies (reports 9).
+    sh = SimpleNamespace(Id=42, ZOrderPosition=9)
+    slide_com = SimpleNamespace(Shapes=_Coll([sh]), SlideIndex=3)
+    handle = ShapeById(Slide(None, slide_com), 42)  # type: ignore[arg-type]
+    assert handle.index == 1  # collection index, not ZOrderPosition (9)
+
+
 # -- delete (v0.2) ----------------------------------------------------------
 
 

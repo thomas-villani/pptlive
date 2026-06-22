@@ -841,16 +841,21 @@ def effect_to_dict(eff: Any, slide_index: int) -> dict[str, Any]:
     `EffectType`/`TriggerType` ints to friendly names. `exit` is True for an exit
     (animate-out) effect. `duration` is the animation length in seconds and `delay`
     the `after`/`with` start delay — both read off `Effect.Timing`.
+
+    Every field is read defensively (`_safe`): one unreadable property on a single
+    effect (an exotic `Timing`, a motion-path `EffectType`) degrades to `None`
+    rather than failing the whole `slide.animations()` listing — matching the
+    rest of the read-to-dict helpers. A genuine busy still propagates.
     """
-    timing = eff.Timing
+    shape_id = _safe(lambda: int(eff.Shape.Id), None)
     return {
-        "shapeid": f"shapeid:{slide_index}:{int(eff.Shape.Id)}",
-        "shape": str(eff.Shape.Name),
-        "effect": anim_effect_name(int(eff.EffectType)),
-        "exit": is_true(eff.Exit),
-        "trigger": anim_trigger_name(int(timing.TriggerType)),
-        "duration": float(timing.Duration),
-        "delay": float(timing.TriggerDelayTime),
+        "shapeid": None if shape_id is None else f"shapeid:{slide_index}:{shape_id}",
+        "shape": _safe(lambda: str(eff.Shape.Name), None),
+        "effect": _safe(lambda: anim_effect_name(int(eff.EffectType)), None),
+        "exit": _safe(lambda: is_true(eff.Exit), None),
+        "trigger": _safe(lambda: anim_trigger_name(int(eff.Timing.TriggerType)), None),
+        "duration": _safe(lambda: float(eff.Timing.Duration), None),
+        "delay": _safe(lambda: float(eff.Timing.TriggerDelayTime), None),
     }
 
 
@@ -1433,8 +1438,13 @@ class Shape(Anchor):
         cmd = zorder_cmd_for(to)  # ValueError before any COM
         with _com.translate_com_errors():
             sh = self._com_shape()  # raw ref tracks the shape across the restack
+            shape_id = int(sh.Id)
             sh.ZOrder(cmd)
-            return int(sh.ZOrderPosition)
+            # Report the Shapes-collection index (the basis shape:S:N resolves by),
+            # not ZOrderPosition — they coincide on a flat slide but can diverge,
+            # and the returned position should be usable as shape:S:N.
+            found = find_shape_by_id(self._slide.com, shape_id)
+            return found[0] if found is not None else int(sh.ZOrderPosition)
 
     def animate(
         self,
@@ -1516,7 +1526,8 @@ class Shape(Anchor):
             assert slide is not None  # narrowed by the exactly-one check above
             sub_address = self._slide_jump_subaddress(int(slide))  # ValueError if out of range
         with _com.translate_com_errors():
-            acts = self._com_shape().ActionSettings(int(PpMouseActivation.MOUSE_CLICK))
+            sh = self._com_shape()  # resolve once; reuse for mutation + readback
+            acts = sh.ActionSettings(int(PpMouseActivation.MOUSE_CLICK))
             link = acts.Hyperlink
             if url is not None:
                 link.Address = url
@@ -1526,7 +1537,7 @@ class Shape(Anchor):
                 link.SubAddress = sub_address
             if screen_tip is not None:
                 link.ScreenTip = str(screen_tip)
-            return _hyperlink_to_dict(self._com_shape()) or {}
+            return _hyperlink_to_dict(sh) or {}
 
     def _slide_jump_subaddress(self, slide_index: int) -> str:
         """Build the `"<SlideID>,<index>,<title>"` SubAddress for an in-deck jump.
@@ -1686,23 +1697,34 @@ class ShapeById(Shape):
     def anchor_id(self) -> str:
         return f"shapeid:{self._slide.index}:{self._shape_id}"
 
-    def _com_shape(self) -> Any:
-        """Resolve the COM `Shape` live by stable `.Id`. Never cached."""
+    def _resolve(self) -> tuple[int, Any]:
+        """Resolve to `(1-based Shapes-collection index, COM Shape)` live by `.Id`.
+
+        Uses the collection index from `find_shape_by_id`, *not* `ZOrderPosition`:
+        `shape:S:N` resolves via `Shapes(N)`, so the emitted `shape:S:N` anchor
+        must use the same basis or it could point at a different shape than the
+        `shapeid` it was read from (the two coincide on a flat slide but can
+        diverge with grouped/placeholder orderings).
+        """
         found = find_shape_by_id(self._slide.com, self._shape_id)
         if found is None:
             raise AnchorNotFoundError("shape", self.anchor_id)
-        return found[1]
+        return found
+
+    def _com_shape(self) -> Any:
+        """Resolve the COM `Shape` live by stable `.Id`. Never cached."""
+        return self._resolve()[1]
 
     @property
     def index(self) -> int:
-        """Current 1-based z-order index of the resolved shape."""
+        """Current 1-based `Shapes`-collection index of the resolved shape."""
         with _com.translate_com_errors():
-            return int(self._com_shape().ZOrderPosition)
+            return self._resolve()[0]
 
     def to_dict(self) -> dict[str, Any]:
         with _com.translate_com_errors():
-            sh = self._com_shape()
-            return shape_to_dict(sh, self._slide.index, int(sh.ZOrderPosition))
+            idx, sh = self._resolve()
+            return shape_to_dict(sh, self._slide.index, idx)
 
 
 # ---------------------------------------------------------------------------

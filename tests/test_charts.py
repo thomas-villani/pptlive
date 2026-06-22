@@ -127,6 +127,14 @@ def test_set_data_empty_raises(deck) -> None:  # type: ignore[no-untyped-def]
         ch.set_data([], {"X": []})
 
 
+def test_set_data_non_numeric_value_names_series(deck) -> None:  # type: ignore[no-untyped-def]
+    ch = deck.slides[3].shapes.add_chart("column").chart
+    # A non-numeric value points at the offending series + value, not a bare
+    # "could not convert string to float" message.
+    with pytest.raises(ValueError, match="series 'Revenue' value 'oops' is not a number"):
+        ch.set_data(["A", "B"], {"Revenue": [1, "oops"]})
+
+
 def test_set_data_references_worksheet_by_actual_name(deck) -> None:  # type: ignore[no-untyped-def]
     # Regression: the plotted-range reference must use the embedded sheet's real
     # `.Name`, not a hardcoded "Sheet1" — that name is localized on non-English

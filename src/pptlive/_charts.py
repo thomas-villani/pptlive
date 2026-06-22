@@ -65,13 +65,28 @@ def _sheet_ref(name: str) -> str:
 
 
 def _normalize_series(series: SeriesInput) -> list[tuple[str, list[float]]]:
-    """Coerce a SeriesInput into an ordered `list[(name, [float, ...])]`."""
+    """Coerce a SeriesInput into an ordered `list[(name, [float, ...])]`.
+
+    Raises a `ValueError` naming the offending series and value when a value is
+    not numeric (before any COM), instead of a bare `float()` message that
+    doesn't say which series it came from.
+    """
     items: list[tuple[str, Sequence[float]]]
     if isinstance(series, Mapping):
         items = list(series.items())
     else:
         items = [(name, values) for name, values in series]
-    return [(str(name), [float(v) for v in values]) for name, values in items]
+    out: list[tuple[str, list[float]]] = []
+    for name, values in items:
+        sname = str(name)
+        floats: list[float] = []
+        for v in values:
+            try:
+                floats.append(float(v))
+            except (TypeError, ValueError):
+                raise ValueError(f"series {sname!r} value {v!r} is not a number") from None
+        out.append((sname, floats))
+    return out
 
 
 class Chart:
