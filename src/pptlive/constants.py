@@ -1095,6 +1095,64 @@ def arrowhead_size_for(size: str | int) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Table cell borders (v-next): the `Cell.Borders(index)` edge ordering
+# ---------------------------------------------------------------------------
+#
+# Visually confirmed on the live build (scripts/cell_border_map_spike.py): a
+# table `Cell.Borders(index)` is 1-based top / left / bottom / right plus the two
+# diagonals — the standard Office order. `edges="all"` paints the four sides
+# (diagonals stay opt-in by name).
+_BORDER_EDGES: dict[str, int] = {
+    "top": 1,
+    "left": 2,
+    "bottom": 3,
+    "right": 4,
+    "diagonal_down": 5,
+    "diagonal_up": 6,
+}
+
+_BORDER_SIDES: tuple[str, ...] = ("top", "left", "bottom", "right")
+
+BORDER_EDGE_CHOICES: tuple[str, ...] = ("all", *_BORDER_EDGES)
+
+
+def border_edges_for(edges: str | int | Sequence[str | int]) -> list[int]:
+    """Friendly edge selector -> a deduplicated, ordered list of `Borders()` indices.
+
+    Accepts `"all"` (the four sides 1-4, diagonals excluded), a single edge name
+    or raw int (`"bottom"`, `3`), or a sequence of those (`["top", "bottom"]`).
+    Names are case-/separator-insensitive. Raises `ValueError` for an unknown edge.
+    """
+
+    def one(edge: str | int) -> list[int]:
+        if isinstance(edge, bool):
+            raise ValueError(f"invalid border edge: {edge!r}")
+        if isinstance(edge, int):
+            return [int(edge)]
+        token = str(edge).strip().lower().replace(" ", "_").replace("-", "_")
+        if token == "all":
+            return [_BORDER_EDGES[s] for s in _BORDER_SIDES]
+        found = _BORDER_EDGES.get(token)
+        if found is None:
+            choices = ", ".join(BORDER_EDGE_CHOICES)
+            raise ValueError(f"unknown border edge {edge!r}; expected one of: {choices}")
+        return [found]
+
+    items: Sequence[str | int]
+    if isinstance(edges, (str, int)) and not isinstance(edges, bool):
+        items = [edges]
+    else:
+        items = list(edges)  # type: ignore[arg-type]
+    seen: dict[int, None] = {}
+    for item in items:
+        for idx in one(item):
+            seen[idx] = None
+    if not seen:
+        raise ValueError("border edge selector resolved to no edges")
+    return list(seen)
+
+
+# ---------------------------------------------------------------------------
 # Slide render (v0.4): image-export formats
 # ---------------------------------------------------------------------------
 
@@ -1426,6 +1484,19 @@ class MsoSmartArtNodePosition(IntEnum):
     BEFORE = 3
     ABOVE = 4
     BELOW = 5
+
+
+class MsoTextUnderlineType(IntEnum):
+    """`Font2.UnderlineStyle` (TextFrame2) — a SmartArt node's underline.
+
+    A node's text lives on `TextFrame2`, whose `Font2` has no classic
+    `Font.Underline` tristate; underline is this enum instead. Only the two ends
+    `SmartArt.format_node` needs are populated — no underline vs. a plain single
+    line (widen on demand, the "add only as needed" rule).
+    """
+
+    NONE = 0
+    SINGLE_LINE = 2
 
 
 # Friendly name -> the trailing segment of the layout's URN `.Id`. The 7 core

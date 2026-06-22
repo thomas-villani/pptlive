@@ -257,6 +257,103 @@ def test_smartart_recolor_text_bad_color_raises(deck) -> None:  # type: ignore[n
         sa.smartart.recolor_text("nope")
 
 
+# -- read echoes node_index + format_node (per-node text) --------------------
+
+
+def test_read_echoes_depth_first_node_index(deck) -> None:  # type: ignore[no-untyped-def]
+    # node_index is a 1-based depth-first walk == AllNodes order (spike-verified).
+    sa = (
+        deck.slides[3]
+        .shapes.add_smartart(
+            "orgchart", [{"text": "Root", "children": ["A", {"text": "B", "children": ["b1"]}]}]
+        )
+        .smartart
+    )
+    info = sa.read()
+    root = info["nodes"][0]
+    assert root["node_index"] == 1
+    assert [c["node_index"] for c in root["children"]] == [2, 3]
+    assert root["children"][1]["children"][0]["node_index"] == 4  # b1
+    # and the index addresses the matching AllNodes item
+    allnodes = sa.com.AllNodes
+    assert str(allnodes.Item(4).TextFrame2.TextRange.Text) == "b1"
+
+
+def test_format_node_sets_font_on_one_node(deck) -> None:  # type: ignore[no-untyped-def]
+    sa = deck.slides[3].shapes.add_smartart("process", ["A", "B", "C"]).smartart
+    info = sa.format_node(2, bold=True, italic=True, size=28, font="Georgia", color="#0000FF")
+    assert info["ok"] is True
+    assert info["node_index"] == 2
+    assert info["text"] == "B"
+    target = sa.com.AllNodes.Item(2).TextFrame2.TextRange.Font
+    assert int(target.Bold) == -1
+    assert int(target.Italic) == -1
+    assert float(target.Size) == 28.0
+    assert str(target.Name) == "Georgia"
+    assert int(target.Fill.ForeColor.RGB) == parse_color("#0000FF")
+    # neighbors untouched (still the automatic-color sentinel)
+    assert int(sa.com.AllNodes.Item(1).TextFrame2.TextRange.Font.Fill.ForeColor.RGB) == 0x80000000
+
+
+def test_format_node_underline_maps_to_style(deck) -> None:  # type: ignore[no-untyped-def]
+    sa = deck.slides[3].shapes.add_smartart("process", ["A"]).smartart
+    sa.format_node(1, underline=True)
+    assert int(sa.com.AllNodes.Item(1).TextFrame2.TextRange.Font.UnderlineStyle) == 2
+    sa.format_node(1, underline=False)
+    assert int(sa.com.AllNodes.Item(1).TextFrame2.TextRange.Font.UnderlineStyle) == 0
+
+
+def test_format_node_out_of_range_raises(deck) -> None:  # type: ignore[no-untyped-def]
+    sa = deck.slides[3].shapes.add_smartart("process", ["A", "B"]).smartart
+    with pytest.raises(AnchorNotFoundError):
+        sa.format_node(9, bold=True)
+
+
+def test_format_node_bad_color_raises(deck) -> None:  # type: ignore[no-untyped-def]
+    sa = deck.slides[3].shapes.add_smartart("process", ["A"]).smartart
+    with pytest.raises(ValueError):
+        sa.format_node(1, color="nope")
+
+
+def test_cli_smartart_format_node(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    add = CliRunner().invoke(
+        main,
+        [
+            "shape",
+            "add",
+            "--slide",
+            "3",
+            "--kind",
+            "smartart",
+            "--smartart-kind",
+            "process",
+            "--nodes",
+            '["A","B","C"]',
+        ],
+    )
+    n = int(_json(add)["anchor_id"].split(":")[2])
+    result = CliRunner().invoke(
+        main,
+        [
+            "smartart",
+            "format-node",
+            "--slide",
+            "3",
+            "--shape",
+            str(n),
+            "--node",
+            "1",
+            "--bold",
+            "--color",
+            "#FF0000",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    info = _json(result)
+    assert info["node_index"] == 1
+    assert info["text"] == "A"
+
+
 def test_cli_smartart_recolor_text(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     add = CliRunner().invoke(
         main,

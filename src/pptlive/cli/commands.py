@@ -1661,6 +1661,34 @@ def shape_picture_fill(ctx: click.Context, deck: Presentation, anchor_id: str, p
     emit(payload, as_text=not ctx.obj["as_json"], text=f"picture-filled {sh.anchor_id}")
 
 
+@shape.command(name="set-picture")
+@click.option(
+    "--anchor-id",
+    "anchor_id",
+    required=True,
+    help="Picture to re-source (shape:S:N / shapeid:S:ID / name).",
+)
+@click.option(
+    "--path", "path", required=True, help="New image file (embedded; resolved to absolute)."
+)
+@click.option(
+    "--alt-text",
+    "alt_text",
+    default=None,
+    help="Override the carried-over alt text (defaults to keeping the old picture's).",
+)
+@_deck_command
+def shape_set_picture(
+    ctx: click.Context, deck: Presentation, anchor_id: str, path: str, alt_text: str | None
+) -> None:
+    """Re-source a picture in place (swap the image, keep box/name/alt/z-order)."""
+    sh = _resolve_shape(deck, anchor_id)
+    with deck.edit(f"CLI: set picture {anchor_id}"):
+        new = sh.set_picture(path, alt_text=alt_text)
+    payload = {"ok": True, **new.to_dict()}
+    emit(payload, as_text=not ctx.obj["as_json"], text=f"re-sourced picture -> {new.shapeid}")
+
+
 @shape.command(name="pattern-fill")
 @click.option(
     "--anchor-id", "anchor_id", required=True, help="Shape to fill (shape:S:N / shapeid:S:ID / ph)."
@@ -2333,6 +2361,175 @@ def table_delete_row(
     )
 
 
+@table.command(name="add-column")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--shape", "shape_index", type=int, required=True, help="1-based shape z-order index."
+)
+@click.option(
+    "--values", "values", default=None, help="Optional JSON array of cell values (top-to-bottom)."
+)
+@click.option(
+    "--before",
+    "before",
+    type=int,
+    default=None,
+    help="1-based column to insert before; omit to append at the right edge.",
+)
+@_deck_command
+def table_add_column(
+    ctx: click.Context,
+    deck: Presentation,
+    slide_index: int,
+    shape_index: int,
+    values: str | None,
+    before: int | None,
+) -> None:
+    """Add a column to a table — appended, or inserted with --before (one Ctrl-Z)."""
+    parsed: list[Any] | None = None
+    if values is not None:
+        try:
+            parsed = json.loads(values)
+        except json.JSONDecodeError as e:
+            raise click.UsageError(f"--values must be a JSON array: {e}") from e
+        if not isinstance(parsed, list):
+            raise click.UsageError("--values must be a JSON array")
+    t = _resolve_table(deck, slide_index, shape_index)
+    with deck.edit(f"CLI: add column to table shape:{slide_index}:{shape_index}"):
+        t.add_column(parsed, before=before)
+    emit(
+        {"ok": True, "anchor_id": t.shape.anchor_id, "columns": t.column_count},
+        as_text=not ctx.obj["as_json"],
+        text=f"added column to {t.shape.anchor_id} (now {t.column_count} columns)",
+    )
+
+
+@table.command(name="delete-column")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--shape", "shape_index", type=int, required=True, help="1-based shape z-order index."
+)
+@click.option("--column", "column", type=int, required=True, help="1-based column to delete.")
+@_deck_command
+def table_delete_column(
+    ctx: click.Context, deck: Presentation, slide_index: int, shape_index: int, column: int
+) -> None:
+    """Delete a column from a table (one Ctrl-Z)."""
+    t = _resolve_table(deck, slide_index, shape_index)
+    with deck.edit(f"CLI: delete column {column} from table shape:{slide_index}:{shape_index}"):
+        t.delete_column(column)
+    emit(
+        {"ok": True, "anchor_id": t.shape.anchor_id, "columns": t.column_count},
+        as_text=not ctx.obj["as_json"],
+        text=f"deleted column {column} from {t.shape.anchor_id} (now {t.column_count} columns)",
+    )
+
+
+def _parse_axis(value: str | None) -> int | list[int] | None:
+    """`--rows`/`--cols`: None (all) | "2" (one) | "1,3" (several) -> a selector."""
+    if value is None:
+        return None
+    try:
+        parts = [int(p) for p in str(value).split(",") if p.strip() != ""]
+    except ValueError as e:
+        raise click.UsageError(f"expected comma-separated integers, got {value!r}") from e
+    if not parts:
+        raise click.UsageError("selector resolved to no indices")
+    return parts[0] if len(parts) == 1 else parts
+
+
+@table.command(name="set-fill")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--shape", "shape_index", type=int, required=True, help="1-based shape z-order index."
+)
+@click.option(
+    "--fill", "fill", required=True, help='Color (#RRGGBB / r,g,b / name) or "none" (transparent).'
+)
+@click.option("--rows", "rows", default=None, help="Row(s): omit=all, '1', or '1,3'.")
+@click.option("--cols", "cols", default=None, help="Column(s): omit=all, '2', or '1,3'.")
+@click.option(
+    "--transparency", "transparency", type=float, default=None, help="Alpha 0.0-1.0 (0 opaque)."
+)
+@_deck_command
+def table_set_fill(
+    ctx: click.Context,
+    deck: Presentation,
+    slide_index: int,
+    shape_index: int,
+    fill: str,
+    rows: str | None,
+    cols: str | None,
+    transparency: float | None,
+) -> None:
+    """Shade a region of cells (or clear with --fill none); one Ctrl-Z."""
+    t = _resolve_table(deck, slide_index, shape_index)
+    with deck.edit(f"CLI: fill cells of table shape:{slide_index}:{shape_index}"):
+        n = t.set_fill(
+            fill, rows=_parse_axis(rows), cols=_parse_axis(cols), transparency=transparency
+        )
+    emit(
+        {"ok": True, "anchor_id": t.shape.anchor_id, "cells": n},
+        as_text=not ctx.obj["as_json"],
+        text=f"filled {n} cell(s) of {t.shape.anchor_id} with {fill}",
+    )
+
+
+@table.command(name="set-border")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--shape", "shape_index", type=int, required=True, help="1-based shape z-order index."
+)
+@click.option(
+    "--color", "color", default=None, help='Edge color (#RRGGBB / name) or "none" (hide).'
+)
+@click.option("--weight", "weight", type=float, default=None, help="Edge weight in points.")
+@click.option("--dash", "dash", default=None, help="Dash style (solid/dash/round_dot/...).")
+@click.option(
+    "--edges",
+    "edges",
+    default="all",
+    help="Edges: all | top,bottom,left,right,diagonal_down,diagonal_up (comma-separated).",
+)
+@click.option("--rows", "rows", default=None, help="Row(s): omit=all, '1', or '1,3'.")
+@click.option("--cols", "cols", default=None, help="Column(s): omit=all, '2', or '1,3'.")
+@click.option("--visible/--hidden", "visible", default=None, help="Force the edge on/off.")
+@_deck_command
+def table_set_border(
+    ctx: click.Context,
+    deck: Presentation,
+    slide_index: int,
+    shape_index: int,
+    color: str | None,
+    weight: float | None,
+    dash: str | None,
+    edges: str,
+    rows: str | None,
+    cols: str | None,
+    visible: bool | None,
+) -> None:
+    """Style cell border(s) across a region; one Ctrl-Z."""
+    edge_sel: str | list[str] = (
+        [e.strip() for e in edges.split(",") if e.strip()] if "," in edges else edges
+    )
+    t = _resolve_table(deck, slide_index, shape_index)
+    with deck.edit(f"CLI: border cells of table shape:{slide_index}:{shape_index}"):
+        n = t.set_border(
+            color=color,
+            weight=weight,
+            dash=dash,
+            edges=edge_sel,
+            rows=_parse_axis(rows),
+            cols=_parse_axis(cols),
+            visible=visible,
+        )
+    emit(
+        {"ok": True, "anchor_id": t.shape.anchor_id, "cells": n},
+        as_text=not ctx.obj["as_json"],
+        text=f"styled border on {n} cell(s) of {t.shape.anchor_id}",
+    )
+
+
 # ---------------------------------------------------------------------------
 # chart read | set-type | set-data  (a chart is a shape; data is embedded Excel)
 # ---------------------------------------------------------------------------
@@ -2536,6 +2733,61 @@ def smartart_recolor_text(
         as_text=not ctx.obj["as_json"],
         text=f"recolored {info['anchor_id']} text -> {info['color']} "
         f"({info['nodes_recolored']} nodes)",
+    )
+
+
+@smartart.command(name="format-node")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--shape", "shape_index", type=int, required=True, help="1-based shape z-order index."
+)
+@click.option(
+    "--node",
+    "node_index",
+    type=int,
+    required=True,
+    help="1-based node_index from `smartart read` (its AllNodes position).",
+)
+@click.option("--bold/--no-bold", "bold", default=None, help="Bold the node text.")
+@click.option("--italic/--no-italic", "italic", default=None, help="Italicize the node text.")
+@click.option("--underline/--no-underline", "underline", default=None, help="Underline the text.")
+@click.option("--size", "size", type=float, default=None, help="Font size in points.")
+@click.option("--font", "font", default=None, help="Font family name.")
+@click.option("--color", "color", default=None, help='Text color "#RRGGBB" / "r,g,b".')
+@_deck_command
+def smartart_format_node(
+    ctx: click.Context,
+    deck: Presentation,
+    slide_index: int,
+    shape_index: int,
+    node_index: int,
+    bold: bool | None,
+    italic: bool | None,
+    underline: bool | None,
+    size: float | None,
+    font: str | None,
+    color: str | None,
+) -> None:
+    """Format ONE SmartArt node's text — bold/italic/underline/size/font/color (one Ctrl-Z).
+
+    The per-node companion to `recolor-text`: address a single node by the
+    `node_index` that `smartart read` prints for it.
+    """
+    sa = _resolve_smartart(deck, slide_index, shape_index)
+    with deck.edit(f"CLI: format smartart node {node_index} shape:{slide_index}:{shape_index}"):
+        info = sa.format_node(
+            node_index,
+            bold=bold,
+            italic=italic,
+            underline=underline,
+            size=size,
+            font=font,
+            color=color,
+        )
+    emit(
+        info,
+        as_text=not ctx.obj["as_json"],
+        text=f"formatted node {node_index} of {info['anchor_id']} ({info['text']!r})",
     )
 
 

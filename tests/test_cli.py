@@ -379,6 +379,29 @@ def test_shape_pattern_fill_command(fake_powerpoint) -> None:  # type: ignore[no
     assert fill["pattern"] == "percent_50"
 
 
+def test_shape_set_picture_command(fake_powerpoint, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    img = tmp_path / "new.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    result = CliRunner().invoke(
+        main, ["shape", "set-picture", "--anchor-id", "shape:2:3", "--path", str(img)]
+    )
+    assert result.exit_code == 0
+    payload = _json(result)
+    assert payload["ok"] is True
+    assert payload["shapeid"].startswith("shapeid:2:")  # fresh drift-proof handle
+    assert payload["type"] == "picture"
+    assert payload["geometry"]["left"] == 400.0  # the old picture's box preserved
+
+
+def test_shape_set_picture_non_picture_errors(fake_powerpoint, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    img = tmp_path / "new.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    result = CliRunner().invoke(
+        main, ["shape", "set-picture", "--anchor-id", "shape:2:1", "--path", str(img)]
+    )
+    assert result.exit_code == 1  # library ValueError -> clean exit 1
+
+
 def test_shape_effect_command(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     result = CliRunner().invoke(
         main,
@@ -794,8 +817,8 @@ def test_table_add_row(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     # The new row's cells were filled.
     read = CliRunner().invoke(main, ["table", "read", "--slide", "3", "--shape", "3"])
     assert _json(read)["cells"][1] == [
-        {"row": 2, "col": 1, "text": "x", "anchor_id": "cell:3:3:2:1"},
-        {"row": 2, "col": 2, "text": "y", "anchor_id": "cell:3:3:2:2"},
+        {"row": 2, "col": 1, "text": "x", "fill": None, "anchor_id": "cell:3:3:2:1"},
+        {"row": 2, "col": 2, "text": "y", "fill": None, "anchor_id": "cell:3:3:2:2"},
     ]
 
 
@@ -818,6 +841,130 @@ def test_table_delete_row(fake_powerpoint) -> None:  # type: ignore[no-untyped-d
     )
     assert result.exit_code == 0
     assert _json(result)["rows"] == 2
+
+
+def test_table_add_column(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    CliRunner().invoke(
+        main, ["shape", "add", "--slide", "3", "--kind", "table", "--rows", "2", "--cols", "1"]
+    )
+    result = CliRunner().invoke(
+        main,
+        ["table", "add-column", "--slide", "3", "--shape", "3", "--values", '["x", "y"]'],
+    )
+    assert result.exit_code == 0
+    assert _json(result)["columns"] == 2
+    read = CliRunner().invoke(main, ["table", "read", "--slide", "3", "--shape", "3"])
+    assert [_json(read)["cells"][r][1]["text"] for r in (0, 1)] == ["x", "y"]
+
+
+def test_table_add_column_before(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    CliRunner().invoke(
+        main, ["shape", "add", "--slide", "3", "--kind", "table", "--rows", "1", "--cols", "2"]
+    )
+    result = CliRunner().invoke(
+        main,
+        ["table", "add-column", "--slide", "3", "--shape", "3", "--before", "1"],
+    )
+    assert result.exit_code == 0
+    assert _json(result)["columns"] == 3
+
+
+def test_table_delete_column(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    CliRunner().invoke(
+        main, ["shape", "add", "--slide", "3", "--kind", "table", "--rows", "1", "--cols", "3"]
+    )
+    result = CliRunner().invoke(
+        main, ["table", "delete-column", "--slide", "3", "--shape", "3", "--column", "2"]
+    )
+    assert result.exit_code == 0
+    assert _json(result)["columns"] == 2
+
+
+def test_table_set_fill_row(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    CliRunner().invoke(
+        main, ["shape", "add", "--slide", "3", "--kind", "table", "--rows", "2", "--cols", "3"]
+    )
+    result = CliRunner().invoke(
+        main,
+        ["table", "set-fill", "--slide", "3", "--shape", "3", "--fill", "#102030", "--rows", "1"],
+    )
+    assert result.exit_code == 0
+    assert _json(result)["cells"] == 3
+    read = CliRunner().invoke(main, ["table", "read", "--slide", "3", "--shape", "3"])
+    assert _json(read)["cells"][0][0]["fill"] == "#102030"
+    assert _json(read)["cells"][1][0]["fill"] is None
+
+
+def test_table_set_fill_list_selector(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    CliRunner().invoke(
+        main, ["shape", "add", "--slide", "3", "--kind", "table", "--rows", "3", "--cols", "3"]
+    )
+    result = CliRunner().invoke(
+        main,
+        [
+            "table",
+            "set-fill",
+            "--slide",
+            "3",
+            "--shape",
+            "3",
+            "--fill",
+            "#abcdef",
+            "--rows",
+            "1,3",
+            "--cols",
+            "1,3",
+        ],
+    )
+    assert result.exit_code == 0
+    assert _json(result)["cells"] == 4  # four corners
+
+
+def test_table_set_border(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    CliRunner().invoke(
+        main, ["shape", "add", "--slide", "3", "--kind", "table", "--rows", "2", "--cols", "2"]
+    )
+    result = CliRunner().invoke(
+        main,
+        [
+            "table",
+            "set-border",
+            "--slide",
+            "3",
+            "--shape",
+            "3",
+            "--color",
+            "#cccccc",
+            "--weight",
+            "1.5",
+            "--edges",
+            "top,bottom",
+        ],
+    )
+    assert result.exit_code == 0
+    assert _json(result)["cells"] == 4
+
+
+def test_table_set_border_bad_edge_exit_1(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    CliRunner().invoke(
+        main, ["shape", "add", "--slide", "3", "--kind", "table", "--rows", "1", "--cols", "1"]
+    )
+    result = CliRunner().invoke(
+        main,
+        [
+            "table",
+            "set-border",
+            "--slide",
+            "3",
+            "--shape",
+            "3",
+            "--weight",
+            "1",
+            "--edges",
+            "sideways",
+        ],
+    )
+    assert result.exit_code == 1  # library ValueError -> clean exit 1
 
 
 def test_table_fences_one_undo_entry(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]

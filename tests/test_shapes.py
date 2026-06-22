@@ -182,6 +182,57 @@ def test_add_picture_missing_file_raises(deck, tmp_path) -> None:  # type: ignor
         deck.slides[3].shapes.add_picture(tmp_path / "absent.png")
 
 
+# -- set_picture: re-source a picture in place (v-next) ----------------------
+
+
+def _png(tmp_path, name: str = "new.png"):  # type: ignore[no-untyped-def]
+    img = tmp_path / name
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")  # contents irrelevant to the fake
+    return img
+
+
+def test_set_picture_preserves_box_name_and_zorder(deck, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    pic = deck.slides[2].shapes[3]  # "Picture 3" at z-order 3
+    assert pic.shape_type == "picture"
+    old_id = pic.shape_id
+    old_geo = pic.geometry()
+    new = pic.set_picture(_png(tmp_path))
+    # A fresh, drift-proof handle to a new shape (the old Id is gone).
+    assert new.anchor_id.startswith("shapeid:2:")
+    assert new.shape_id != old_id
+    assert new.shape_type == "picture"
+    # Box, name, and z-order slot are preserved.
+    assert new.geometry() == old_geo
+    assert new.name == "Picture 3"
+    assert new.index == 3  # restacked back to the old slot
+    # Net shape count is unchanged (delete + re-insert).
+    assert len(deck.slides[2].shapes) == 3
+
+
+def test_set_picture_carries_alt_text(deck, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    pic = deck.slides[2].shapes[3]
+    pic.set_alt_text("company logo")
+    new = pic.set_picture(_png(tmp_path))
+    assert new.alt_text == "company logo"
+
+
+def test_set_picture_alt_text_override(deck, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    pic = deck.slides[2].shapes[3]
+    pic.set_alt_text("old alt")
+    new = pic.set_picture(_png(tmp_path), alt_text="new alt")
+    assert new.alt_text == "new alt"
+
+
+def test_set_picture_missing_file_raises(deck, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(FileNotFoundError):
+        deck.slides[2].shapes[3].set_picture(tmp_path / "absent.png")
+
+
+def test_set_picture_on_non_picture_raises(deck, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError, match="needs a picture shape"):
+        deck.slides[3].shapes[1].set_picture(_png(tmp_path))  # a textbox
+
+
 # -- delete (v0.2) ----------------------------------------------------------
 
 

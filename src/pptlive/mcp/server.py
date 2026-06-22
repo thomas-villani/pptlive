@@ -337,8 +337,12 @@ def ppt_edit(
     kind: Literal["textbox", "shape", "picture", "table", "chart", "smartart"] | None = None,
     shape_type: str = "rectangle",
     path: str | None = None,
-    rows: int | None = None,
-    cols: int | None = None,
+    rows: int | list[int] | None = None,
+    cols: int | list[int] | None = None,
+    fill: str | None = None,
+    weight: float | None = None,
+    edges: str | list[str] | None = None,
+    visible: bool | None = None,
     chart_type: str | None = None,
     categories: list[str] | None = None,
     series: dict[str, list[float]] | None = None,
@@ -351,6 +355,9 @@ def ppt_edit(
     alt_text: str | None = None,
     values: list[str] | None = None,
     row: int | None = None,
+    column: int | None = None,
+    before: int | None = None,
+    node_index: int | None = None,
     slot: str | None = None,
     which: Literal["major", "minor"] | None = None,
     name: str | None = None,
@@ -482,6 +489,12 @@ def ppt_edit(
       OR `preset` (a named ramp: "ocean"/"fire"/"rainbow"/…). `gradient_style`
       ("horizontal"/"vertical"/"diagonal_up"/…) and `variant` (1-4) set the sweep.
     - "shape_picture_fill": fill with an image at `path` (resolved to absolute).
+      For an actual *picture* shape this only sets a fill behind the unchanged
+      raster — use "shape_set_picture" to swap a picture's image.
+    - "shape_set_picture": re-source a *picture* in place — swap its image to `path`
+      (embedded), keeping position/size/rotation/name/alt text/z-order. Optional
+      `alt_text` overrides the carried-over value. Returns a fresh `shapeid` (the
+      picture gets a new Shape.Id; animations/hyperlinks/crop are NOT carried over).
     - "shape_pattern_fill": two-color pattern — `pattern` (e.g. "percent_50",
       "trellis", "dark_horizontal"), `fore` color, optional `back` color.
     - "shape_set_effect": shadow / glow / soft-edge / reflection. `shadow` and `glow`
@@ -499,6 +512,20 @@ def ppt_edit(
     Tables, charts & SmartArt (target the shape by its `anchor_id`, a shape:S:N):
     - "table_add_row": append a row, optionally filled from `values`.
     - "table_delete_row": delete 1-based `row`.
+    - "table_add_column": add a column, optionally filled from `values`
+      (top-to-bottom). Appends at the right edge, or pass 1-based `before` to
+      insert before that existing column.
+    - "table_delete_column": delete 1-based `column`.
+    - "table_set_fill": shade a region of cells. `fill` is a color or "none"
+      (transparent); `rows`/`cols` select the region — omit for the whole axis, an
+      int for one, a list for several (the intersection is filled, so `rows=1`
+      shades the header row, `cols=2` a column, both omitted the whole table).
+      Optional `fill_transparency` (0.0-1.0). Cells echo `fill` in table reads.
+    - "table_set_border": style cell border(s) across a region. `edges` is "all"
+      (the four sides) or one/several of "top"/"bottom"/"left"/"right"/
+      "diagonal_down"/"diagonal_up"; `color` (a color, or "none" to hide the edge),
+      `weight` (points), `dash`, and `visible` (force on/off) — at least one
+      required. `rows`/`cols` select the region exactly like table_set_fill.
     - "chart_set_type": change chart kind to `chart_type` (e.g. "line"/"pie"/"bar").
     - "chart_set_data": replace `categories` + `series` (a {name:[values]} map).
       Series are plotted in insertion order; note bar charts render series
@@ -514,6 +541,10 @@ def ppt_edit(
       coarse fix when inherited black node text is invisible on a custom
       background. A SmartArt diagram has no text anchor, so this is its only text
       color path.
+    - "smartart_format_node": format ONE node's text — pass the 1-based
+      `node_index` from a smartart read (its AllNodes position) plus any of
+      `bold`/`italic`/`underline`/`size`/`font`/`color`. The per-node companion to
+      smartart_recolor_text for the diagram's internal labels.
 
     To edit a table cell's text, write to its `cell:S:N:R:C` anchor with op="write".
 
@@ -618,6 +649,10 @@ def ppt_edit(
         "path": path,
         "rows": rows,
         "cols": cols,
+        "fill": fill,
+        "weight": weight,
+        "edges": edges,
+        "visible": visible,
         "chart_type": chart_type,
         "categories": categories,
         "series": series,
@@ -630,6 +665,9 @@ def ppt_edit(
         "alt_text": alt_text,
         "values": values,
         "row": row,
+        "column": column,
+        "before": before,
+        "node_index": node_index,
         "slot": slot,
         "which": which,
         "name": name,

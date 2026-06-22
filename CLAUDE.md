@@ -51,11 +51,11 @@ src/pptlive/
   _app.py            PowerPoint handle + attach() / connect()
   _presentation.py   Presentation (the wordlive Document analog) + PresentationCollection
   _slides.py         SlideCollection / Slide  (add [+placeholder geometry]/delete/duplicate/move_to/set_layout, notes, read(), geometry_report(), animations()/clear_animations())
-  _shapes.py         ShapeCollection / Shape / ShapeById  (a Shape IS an Anchor when it has a text frame; geometry + fill/line + z-order + animate() verbs)
+  _shapes.py         ShapeCollection / Shape / ShapeById  (a Shape IS an Anchor when it has a text frame; geometry + fill/line + z-order + animate() + set_picture() re-source verbs)
   _anchors.py        Anchor base + Paragraph, Cell, Notes  (set_paragraphs / reset_format + line-spacing unit knobs [v1.6])
-  _tables.py         Table / Cell  (a table is a shape; cell:S:N:R:C anchors)         [v0.5]
+  _tables.py         Table / Cell  (a table is a shape; cell:S:N:R:C anchors; cell fill + borders, row/column-wise; add/delete row+column)  [v0.5/v-next]
   _charts.py         Chart       (a chart is a shape; data via embedded Excel)         [v0.7]
-  _smartart.py       SmartArt    (a diagram is a shape; node tree read/set_nodes)      [v0.8]
+  _smartart.py       SmartArt    (a diagram is a shape; node tree read/set_nodes; recolor_text + per-node format_node)  [v0.8/v-next]
   _theme.py          Theme + Master  (deck-wide palette/fonts/text-styles/background + headers_footers)  [v0.9]
   _sections.py       SectionCollection (deck.sections; named slide spans, 1-based index)  [v0.6.0]
   _headersfooters.py HeadersFooters (shared; Slide.headers_footers override + Master.headers_footers default)  [v0.6.0]
@@ -234,6 +234,81 @@ render-cost lever. All wired CLI (`section …`, `slide`/`master` `headers-foote
 `ppt_render` `deck_snapshot` width/height) + both SKILL guides. New constants
 `MsoColorType`/`color_source_name`/`theme_color_name`. Still open: per-element
 color-source on `text_frame_status`, friendly `PpDateTimeFormat` names.
+
+**Table cell styling (v-next) — the "post-creation edit surface" round.** Motivated
+by an audit of what can be *restyled* after creation (vs. wordlive's delete-and-
+recreate habit). The headline finding **overturns a prior assumption**: a
+`scripts/cell_style_spike.py` probe proved PowerPoint's COM *does* expose cell
+fill (`Cell.Shape.Fill`) and borders (`Cell.Borders(index)`) — both round-trip — so
+table-cell shading is **not** a COM dead-end after all. Built on that:
+`Table.set_fill(fill, *, rows=None, cols=None, transparency=None)` (solid cell
+shading, or `fill="none"` to clear) and `Table.set_border(*, color=None, weight=None,
+dash=None, edges="all", rows=None, cols=None, visible=None)`, both **row/column-wise**
+— `rows`/`cols` are `None` (whole axis) | int (one) | list (several) and the
+*intersection* is styled (so `rows=1` shades the header row, `cols=2` a column, both
+`None` the whole table). `Cell.set_fill`/`Cell.set_border` are thin per-cell
+delegations. The `Borders(index)` edge order (1 top / 2 left / 3 bottom / 4 right /
+5 diagonal-down / 6 diagonal-up) was pinned **visually** via
+`scripts/cell_border_map_spike.py` (distinct colors per index → exported PNG), and
+lives as `constants.border_edges_for` (`"all"` = the four sides; diagonals opt-in by
+name). `Table.read()` cells now echo `fill` (theme-sentinel-guarded → `None`, never a
+wrong `#000000`, like shape fills) — but note the live caveat: a default table
+**style** writes a real per-cell banded RGB, so a fresh untouched cell reads back
+that style color, not `None` (no COM flag separates a direct cell fill from a
+style-cascaded one — it's OOXML-only; the read reports the effective rendered fill). Wired library + CLI (`table set-fill`/`set-border`
+with `--rows/--cols` taking `1` or `1,3`) + MCP (`ppt_edit` `table_set_fill`/
+`table_set_border`) + both SKILL guides. `set_fill` reuses the shape `apply_shape_fill`
+helper; colors/edges/indices all validate before any COM mutation. Still open on the
+table surface: cell merge state (no COM read property — OOXML-only) and per-cell
+text-direction/margins.
+
+**Re-source a picture in place (v-next) — the next post-creation edit-surface
+item.** `Shape.set_picture(path, *, alt_text=None)` swaps an existing **picture's**
+image without the wordlive delete-then-recreate dance, **preserving position / size /
+rotation / name / alt text / z-order slot**. A `scripts/set_picture_spike.py` probe
+(pixel-sampling the exported shape — PowerPoint exports a solid image as a *1-bit
+palette PNG*, which the spike's decoder handles) settled the mechanism: PowerPoint's
+COM has **no in-place image swap** for a picture shape — `Fill.UserPicture` set
+`Fill.Type=6` (msoFillPicture) but the rendered pixel stayed the old color, i.e. it
+fills *behind* the unchanged raster (so `set_picture_fill` is the wrong verb for a
+real picture; it stays for autoshape fills). So `set_picture` is a delete + re-insert
+that copies everything addressable; the spike pinned the three pitfalls the wrapper
+handles: pictures default to **locked aspect** (copy the box with `LockAspectRatio`
+off, else width/height snap to the new image's ratio), the old delete **drifts
+z-order** (re-resolve the new shape by stable `Shape.Id`, never an index), and the old
+**z-order slot** is restored by send-to-back-then-step-forward (`BringForward`=2, not
+3). Two honest caveats baked in: the picture gets a **new `Shape.Id`** (so it returns
+a fresh `ShapeById` handle — the old wrapper is spent, like after `delete()`), and
+**animations / hyperlinks / crop / picture adjustments** bound to the old picture are
+**not** carried over. Non-picture shape → `ValueError` (pointing at `set_picture_fill`);
+missing file → `FileNotFoundError` (both before any COM mutation). Wired library
+(`Shape.set_picture`, `_shapes.is_picture`/`replace_picture`) + CLI (`shape set-picture
+--path [--alt-text]`) + MCP (`ppt_edit` `shape_set_picture`, echoes the new `shapeid` +
+`geometry`) + both SKILL guides. Still open on the edit surface: shape-type swap.
+
+**Table columns + SmartArt per-node text (v-next) — two edit-surface gaps closed
+together.** A single net-zero spike (`scripts/table_col_smartart_node_spike.py`)
+pinned both mechanisms against live PowerPoint. (1) **Table columns** complete the
+row/column symmetry: `Table.add_column(values=None, *, before=None)` (over
+`Columns.Add()` to append / `Columns.Add(n)` to insert before column `n`; `values`
+fill top-to-bottom) and `Table.delete_column(index)` (over `Columns(n).Delete()`),
+both mirroring `add_row`/`delete_row` exactly — same `AnchorNotFoundError` (kind
+`"table column"`) on out-of-range, same `ValueError` refusing to delete the last
+column (PowerPoint has no zero-column table). (2) **SmartArt per-node text** —
+`SmartArt.format_node(index, *, bold/italic/underline/size/font/color)` formats one
+node's label, the per-node companion to the coarse `recolor_text`. The spike proved
+**`AllNodes` enumerates in exactly depth-first order**, so `read()` now stamps each
+node with a 1-based `node_index` (its depth-first / `AllNodes` position) that
+`format_node` takes as the address. A node's text lives on `TextFrame2`, whose
+`Font2` differs from the classic `Font` (`_anchors.apply_font`): color is on
+`Font.Fill.ForeColor.RGB` and underline is the `UnderlineStyle` enum
+(`constants.MsoTextUnderlineType`), handled by a separate `_apply_node_font` helper;
+`color` validates and `index` bounds-checks (→ `AnchorNotFoundError` kind
+`"smartart node"`) before any COM. Wired library + CLI (`table add-column`/
+`delete-column`, `smartart format-node`) + MCP (`ppt_edit` `table_add_column`/
+`table_delete_column`/`smartart_format_node`) + both SKILL guides. Still open on the
+edit surface: shape-type swap, table cell merge, SmartArt node *fill* / structural
+node add-delete.
 
 Agent skills shipped as **two** guides (`pptlive-cli` + `pptlive-python`), not
 wordlive's single one — `llm-help [--python]` dumps one, `install-skill` writes

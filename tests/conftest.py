@@ -701,12 +701,46 @@ class _FakeShape:
 # ---------------------------------------------------------------------------
 
 
+class _FakeCellBorder:
+    """One `Cell.Borders(index)` edge — Visible + Weight + DashStyle + ForeColor.RGB.
+
+    Defaults to an inherited (theme-sentinel) visible edge, matching a fresh table
+    style; setting a color/weight/dash records it for read-back, exactly like the
+    real `LineFormat`.
+    """
+
+    def __init__(self) -> None:
+        self.Visible = _MSO_TRUE
+        self.Weight = 1.0
+        self.DashStyle = 1  # msoLineSolid
+        self.ForeColor = SimpleNamespace(RGB=0x80000000)
+
+
+class _FakeCellBorders:
+    """`Cell.Borders` — a 1-based callable returning a persistent `_FakeCellBorder`.
+
+    Indices 1-6 are top/left/bottom/right + the two diagonals (spike-verified
+    order); each index keeps its own edge object so writes round-trip on read-back.
+    """
+
+    def __init__(self) -> None:
+        self._edges: dict[int, _FakeCellBorder] = {}
+
+    def __call__(self, index: int) -> _FakeCellBorder:
+        i = int(index)
+        if not (1 <= i <= 6):
+            raise IndexError(i)
+        return self._edges.setdefault(i, _FakeCellBorder())
+
+
 class _FakeCell:
     """A table cell — its text lives in `Cell.Shape.TextFrame.TextRange`, exactly
-    like real PowerPoint (a normal text frame, paragraphs split by `\\r`)."""
+    like real PowerPoint (a normal text frame, paragraphs split by `\\r`). `Borders`
+    mirror the live `Cell.Borders(index)` edge collection."""
 
     def __init__(self, text: str = "") -> None:
         self.Shape = _FakeShape(name="Table Cell", shape_id=0, shape_type=_MSO_TEXT_BOX, text=text)
+        self.Borders = _FakeCellBorders()
 
 
 class _FakeRows:
@@ -736,12 +770,35 @@ class _FakeRow:
 
 
 class _FakeColumns:
+    """`Table.Columns` — 1-based callable + `.Add([before])` + `.Count`."""
+
     def __init__(self, table: _FakeTable) -> None:
         self._table = table
 
     @property
     def Count(self) -> int:
         return self._table._ncols
+
+    def Add(self, before_column: int | None = None) -> None:
+        t = self._table
+        at = t._ncols if before_column is None else int(before_column) - 1
+        for row in t._cells:
+            row.insert(at, _FakeCell(""))
+        t._ncols += 1
+
+    def __call__(self, index: int) -> _FakeColumn:
+        return _FakeColumn(self._table, int(index))
+
+
+class _FakeColumn:
+    def __init__(self, table: _FakeTable, index: int) -> None:
+        self._table = table
+        self._index = index
+
+    def Delete(self) -> None:
+        for row in self._table._cells:
+            del row[self._index - 1]
+        self._table._ncols -= 1
 
 
 class _FakeTable:

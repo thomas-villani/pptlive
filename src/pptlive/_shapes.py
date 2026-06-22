@@ -224,6 +224,21 @@ def has_smartart(com_shape: Any) -> bool:
         return False
 
 
+def is_picture(com_shape: Any) -> bool:
+    """True iff the shape is an embedded or linked picture (`msoPicture`/`msoLinkedPicture`).
+
+    The gate for `Shape.set_picture` — `Shape.Type`, unlike the table/chart case,
+    *is* reliable for a picture (a picture is never a placeholder masquerade).
+    """
+    try:
+        return int(com_shape.Type) in (
+            int(MsoShapeType.PICTURE),
+            int(MsoShapeType.LINKED_PICTURE),
+        )
+    except Exception:
+        return False
+
+
 def _alt_text_of(com_shape: Any) -> str:
     """The shape's `AlternativeText` (accessibility text), or "" if unreadable."""
     try:
@@ -462,6 +477,75 @@ def apply_picture_fill(com_shape: Any, path: str | Path) -> None:
     if not os.path.isfile(abspath):
         raise FileNotFoundError(f"picture fill image not found: {abspath}")
     com_shape.Fill.UserPicture(abspath)
+
+
+def replace_picture(
+    slide_com: Any,
+    com_old: Any,
+    abs_path: str,
+    slide_index: int,
+    *,
+    alt_text: str | None = None,
+) -> int:
+    """Re-source a picture shape in place: add the new image at the old picture's
+    box / name / alt text / z-order, then delete the old. Returns the **new**
+    `Shape.Id`. Caller wraps this in `translate_com_errors()`.
+
+    PowerPoint's COM exposes no in-place image swap for a picture shape
+    (`Fill.UserPicture` only sets a fill *behind* the unchanged raster — confirmed
+    in `scripts/set_picture_spike.py`), so this is a delete + re-insert that
+    preserves everything addressable. The spike pinned the three pitfalls handled
+    below: pictures default to **locked aspect** (so the copied box must be applied
+    with `LockAspectRatio` off, else width/height snap to the new image's ratio);
+    the old delete **drifts z-order indices** (so the new shape is re-resolved by
+    its stable `Shape.Id`, never an index); and the old **z-order slot** is
+    restored by send-to-back-then-step-forward.
+    """
+    # Snapshot the old picture's identity + geometry before touching anything.
+    left = float(com_old.Left)
+    top = float(com_old.Top)
+    width = float(com_old.Width)
+    height = float(com_old.Height)
+    rotation = float(com_old.Rotation)
+    name = str(com_old.Name)
+    carried_alt = str(com_old.AlternativeText or "")
+    z = int(com_old.ZOrderPosition)
+
+    new_com = slide_com.Shapes.AddPicture(
+        abs_path,
+        int(MsoTriState.FALSE),  # LinkToFile: no
+        int(MsoTriState.TRUE),  # SaveWithDocument: yes (embed)
+        left,
+        top,
+        -1.0,  # native size — the old box is forced on below
+        -1.0,
+    )
+    new_id = int(new_com.Id)
+    try:
+        new_com.LockAspectRatio = int(MsoTriState.FALSE)  # let the copied box win
+    except Exception:
+        pass
+    new_com.Left = left
+    new_com.Top = top
+    new_com.Width = width
+    new_com.Height = height
+    new_com.Rotation = rotation
+    new_com.AlternativeText = carried_alt if alt_text is None else str(alt_text)
+
+    com_old.Delete()
+
+    # The delete shifted z-order indices — re-resolve the new shape by its Id.
+    found = find_shape_by_id(slide_com, new_id)
+    if found is None:  # defensive — we just added it
+        raise AnchorNotFoundError("shape", f"shapeid:{slide_index}:{new_id}")
+    new_com = found[1]
+    new_com.Name = name  # safe now the old one is gone (no name clash)
+
+    # Restore the old z-order slot: to the back, then forward to position `z`.
+    new_com.ZOrder(zorder_cmd_for("back"))
+    for _ in range(max(0, z - 1)):
+        new_com.ZOrder(zorder_cmd_for("forward"))
+    return new_id
 
 
 def apply_pattern_fill(
@@ -1230,9 +1314,60 @@ class Shape(Anchor):
         `path` is resolved to an absolute path (a relative path raises
         `ERROR_FILE_NOT_FOUND` in PowerPoint); a missing file raises `FileNotFoundError`
         (before any COM).
+
+        For an actual **picture** shape this is the wrong verb — it sets a fill
+        *behind* the unchanged picture raster (so the image doesn't visibly change);
+        use `set_picture` to re-source a picture in place.
         """
         with _com.translate_com_errors():
             apply_picture_fill(self._com_shape(), path)
+
+    def set_picture(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        alt_text: str | None = None,
+    ) -> Shape:
+        """Re-source this **picture** in place — swap its image without delete-and-recreate.
+
+        The post-creation edit for a picture: replaces the displayed image while
+        **preserving the picture's position, size, rotation, name, alt text, and
+        z-order slot**, so an agent can update a logo / screenshot / chart export
+        without re-deriving geometry (the wordlive delete-then-recreate habit). The
+        new image is **embedded** (never linked); `alt_text`, if given, overrides
+        the carried-over alt text.
+
+        Under the hood this *is* a delete + re-insert — PowerPoint's COM exposes no
+        in-place image swap for a picture shape (`Fill.UserPicture` only sets a
+        fill *behind* the unchanged raster, confirmed in
+        `scripts/set_picture_spike.py`). Two honest consequences: the picture gets
+        a **new `Shape.Id`** (so this returns a fresh handle — the old wrapper is
+        spent, like after `delete()`), and anything bound to the old picture object
+        — **animations, hyperlinks, crop, and picture adjustments**
+        (brightness / contrast / recolor) — is **not** carried over. Position, size,
+        rotation, name, alt text, and z-order are.
+
+        Raises `FileNotFoundError` if `path` is missing, or `ValueError` if this
+        shape isn't a picture (both before any COM mutation — use `set_picture_fill`
+        to put an image into a non-picture shape's fill). Returns a `shapeid:S:ID`
+        handle to the new picture. A mutation: wrap in `deck.edit(...)`.
+        """
+        fs_path = os.fspath(path)
+        if not os.path.isfile(fs_path):
+            raise FileNotFoundError(f"picture not found: {fs_path}")
+        abs_path = os.path.abspath(fs_path)
+        with _com.translate_com_errors():
+            com_old = self._com_shape()
+            if not is_picture(com_old):
+                raise ValueError(
+                    f"set_picture() needs a picture shape, got "
+                    f"{shape_type_name(com_old.Type)} ({self.anchor_id}); use "
+                    f"set_picture_fill() to put an image into a non-picture shape's fill"
+                )
+            new_id = replace_picture(
+                self._slide.com, com_old, abs_path, self._slide.index, alt_text=alt_text
+            )
+        return ShapeById(self._slide, new_id)
 
     def set_pattern_fill(
         self,
