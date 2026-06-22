@@ -204,6 +204,46 @@ class ComError(PptliveError):
         self.description = description
 
 
+def classify(exc: PptliveError) -> str:
+    """Map a `PptliveError` to its stable taxonomy `code` token.
+
+    The single source of truth for failure labelling: `_batch._error_code` returns
+    this token (the MCP `error` category), and `cli.main._exit_for` maps it to an
+    exit int. Keeping the isinstance ladder here — rather than duplicated in both
+    front-ends — stops the two from drifting. Order is subclass-first:
+    `NoTextFrameError` before the generic `AnchorNotFoundError`; `BatchOpError`
+    (invalid args) first. Unknown subclasses fall through to `"error"` (exit 1).
+    """
+    if isinstance(exc, BatchOpError):
+        return "invalid_args"
+    if isinstance(exc, NoTextFrameError):
+        return "no_text_frame"
+    if isinstance(exc, AnchorNotFoundError):  # covers SlideNotFoundError / LayoutNotFoundError
+        return "not_found"
+    if isinstance(exc, AmbiguousMatchError):
+        return "ambiguous"
+    if isinstance(exc, PowerPointBusyError):
+        return "busy"
+    if isinstance(exc, PowerPointNotRunningError):
+        return "not_running"
+    if isinstance(exc, PresentationNotFoundError):
+        return "not_found"
+    return "error"
+
+
+#: Maps each `classify()` code to its CLI exit code (spec.md §"Error taxonomy").
+#: `invalid_args` and `error` both land on exit 1 (the catch-all).
+EXIT_CODE_FOR: dict[str, int] = {
+    "invalid_args": 1,
+    "no_text_frame": 6,
+    "not_found": 2,
+    "ambiguous": 5,
+    "busy": 3,
+    "not_running": 4,
+    "error": 1,
+}
+
+
 # HRESULTs we recognise as "PowerPoint is momentarily unavailable" rather than a
 # real error. Carried over from wordlive verbatim; widened as smoke runs surface
 # new transient rejection codes.

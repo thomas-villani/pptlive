@@ -15,6 +15,15 @@ def _json(result) -> object:  # type: ignore[no-untyped-def]
     return json.loads(result.output)
 
 
+def test_version_flag_prints_version() -> None:
+    from pptlive import __version__
+
+    result = CliRunner().invoke(main, ["--version"])
+    assert result.exit_code == 0
+    assert __version__ in result.output
+    assert "pptlive" in result.output
+
+
 def test_status_lists_decks_and_viewed_slide(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     fake_powerpoint._viewed = 2
     result = CliRunner().invoke(main, ["status"])

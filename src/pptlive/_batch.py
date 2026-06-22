@@ -22,35 +22,17 @@ from ._anchors import LINE_SPACING_MULTIPLE_MAX, SOFT_BREAK
 from ._presentation import Presentation
 from ._shapes import Shape
 from .exceptions import (
-    AmbiguousMatchError,
     AnchorNotFoundError,
     BatchOpError,
-    NoTextFrameError,
-    PowerPointBusyError,
-    PowerPointNotRunningError,
     PptliveError,
-    PresentationNotFoundError,
+    classify,
 )
 
 
 def _error_code(exc: PptliveError) -> str:
-    # Order mirrors cli.main._exit_for: NoTextFrameError before the generic
-    # AnchorNotFoundError (which covers SlideNotFoundError / LayoutNotFoundError).
-    if isinstance(exc, BatchOpError):
-        return "invalid_args"
-    if isinstance(exc, NoTextFrameError):
-        return "no_text_frame"
-    if isinstance(exc, AnchorNotFoundError):
-        return "not_found"
-    if isinstance(exc, AmbiguousMatchError):
-        return "ambiguous"
-    if isinstance(exc, PowerPointBusyError):
-        return "busy"
-    if isinstance(exc, PowerPointNotRunningError):
-        return "not_running"
-    if isinstance(exc, PresentationNotFoundError):
-        return "not_found"
-    return "error"
+    # The taxonomy lives in exceptions.classify() — the single source of truth
+    # shared with cli.main._exit_for, so the two front-ends can't drift.
+    return classify(exc)
 
 
 def _require(condition: Any, message: str) -> None:

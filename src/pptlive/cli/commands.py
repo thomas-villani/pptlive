@@ -57,7 +57,7 @@ from ..constants import (
     THEME_FONT_SLOTS,
     ZORDER_CHOICES,
 )
-from ..exceptions import AnchorNotFoundError, PowerPointNotRunningError
+from ..exceptions import EXIT_CODE_FOR, AnchorNotFoundError, PowerPointNotRunningError
 from .main import EXIT_OTHER, _run, emit
 
 
@@ -3416,15 +3416,9 @@ def set_paragraphs(
 
 #: A batch op's error category -> CLI exit code (mirrors main._exit_for, keyed by
 #: the string token run_batch reports instead of an exception type).
-_BATCH_EXIT_FOR: dict[str, int] = {
-    "not_found": 2,
-    "busy": 3,
-    "not_running": 4,
-    "ambiguous": 5,
-    "no_text_frame": 6,
-    "invalid_args": 1,
-    "error": 1,
-}
+# The batch-result `error` token -> exit int mapping is the same taxonomy as
+# every other failure: reuse the single source of truth in exceptions.
+_BATCH_EXIT_FOR = EXIT_CODE_FOR
 
 
 @click.command(name="exec")

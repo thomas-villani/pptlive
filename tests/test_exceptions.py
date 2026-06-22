@@ -105,6 +105,27 @@ def test_exit_codes_match_spec() -> None:
     assert cli_main._exit_for(ComError("boom")) == 1
 
 
+def test_classify_is_single_source_for_both_front_ends() -> None:
+    # _batch._error_code and cli.main._exit_for both derive from classify(), so
+    # the MCP code token and the CLI exit int can't drift apart.
+    from pptlive._batch import _error_code
+    from pptlive.exceptions import EXIT_CODE_FOR, classify
+
+    for exc in (
+        NoTextFrameError("shape:1:1"),
+        AnchorNotFoundError("shape", "shape:9:9"),
+        SlideNotFoundError(9),
+        PresentationNotFoundError("x.pptx"),
+        AmbiguousMatchError("x", []),
+        PowerPointBusyError(),
+        PowerPointNotRunningError(),
+        ComError("boom"),
+    ):
+        code = classify(exc)
+        assert _error_code(exc) == code  # MCP token
+        assert cli_main._exit_for(exc) == EXIT_CODE_FOR[code]  # CLI exit int
+
+
 # -- retry_on_busy ----------------------------------------------------------
 
 
