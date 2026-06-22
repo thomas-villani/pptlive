@@ -757,6 +757,21 @@ class Paragraph(Anchor):
         with _com.translate_com_errors():
             self._text_range().Delete()
 
+    def set_paragraphs(self, paragraphs: list[Any]) -> list[str]:
+        """Not supported on a single paragraph — call it on the shape/cell anchor.
+
+        The base `set_paragraphs` replaces a whole text frame's paragraph list.
+        A `Paragraph`'s `_text_range()` is a single paragraph, so the inherited
+        implementation would write a multi-paragraph block into one paragraph's
+        range (corrupting it) and silently drop per-item formatting (no
+        `paragraphs` view to address). Reject it explicitly instead.
+        """
+        raise ValueError(
+            "set_paragraphs replaces a whole text frame's paragraph list and "
+            f"cannot target a single paragraph anchor ({self.anchor_id!r}); call "
+            "it on the shape or cell anchor that owns this paragraph."
+        )
+
     def to_dict(self) -> dict[str, Any]:
         with _com.translate_com_errors():
             return paragraph_to_dict(self._text_range(), self.anchor_id, self._index)

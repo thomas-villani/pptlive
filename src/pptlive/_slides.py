@@ -175,17 +175,25 @@ class Slide:
         """
         accepted = placeholder_types_for(kind)  # ValueError on unknown kind
         accepted_ints = [int(t) for t in accepted]
-        # Collect every accepted placeholder as (rank, idx, com_shape).
+        # Collect every accepted placeholder as (rank, idx, com_shape). The outer
+        # translate covers the Shapes iteration + is_placeholder reads; the inner
+        # one lets a transient PowerPointBusyError on a single Type read propagate
+        # (it must not be swallowed as "skip this placeholder") while a genuinely
+        # unreadable placeholder type is still skipped.
         matches: list[tuple[int, int, Any]] = []
-        for idx, sh in enumerate(self._slide.Shapes, start=1):
-            if not is_placeholder(sh):
-                continue
-            try:
-                ph_type = int(sh.PlaceholderFormat.Type)
-            except Exception:
-                continue
-            if ph_type in accepted_ints:
-                matches.append((accepted_ints.index(ph_type), idx, sh))
+        with _com.translate_com_errors():
+            for idx, sh in enumerate(self._slide.Shapes, start=1):
+                if not is_placeholder(sh):
+                    continue
+                try:
+                    with _com.translate_com_errors():
+                        ph_type = int(sh.PlaceholderFormat.Type)
+                except PowerPointBusyError:
+                    raise
+                except Exception:
+                    continue
+                if ph_type in accepted_ints:
+                    matches.append((accepted_ints.index(ph_type), idx, sh))
         if not matches:
             raise AnchorNotFoundError("placeholder", f"ph:{self.index}:{kind.lower()}")
         best_rank = min(rank for rank, _idx, _sh in matches)
@@ -662,9 +670,18 @@ class SlideCollection:
     def _apply_placeholder_geometry(
         self, slide_index: int, placeholders: dict[str, dict[str, float]]
     ) -> None:
-        """Move/resize the new slide's placeholders by semantic KIND (points)."""
-        for kind, geo in placeholders.items():
-            ph = self._deck.anchor_by_id(f"ph:{slide_index}:{kind}")
+        """Move/resize the new slide's placeholders by semantic KIND (points).
+
+        Resolves every requested KIND *first*, so an unknown-on-this-layout or
+        ambiguous KIND raises (`AnchorNotFoundError` / `AmbiguousMatchError`)
+        before any placeholder is moved — otherwise a typo'd KIND late in the
+        dict would leave the freshly-added slide half-positioned.
+        """
+        resolved = [
+            (self._deck.anchor_by_id(f"ph:{slide_index}:{kind}"), geo)
+            for kind, geo in placeholders.items()
+        ]
+        for ph, geo in resolved:
             left, top = geo.get("left"), geo.get("top")
             width, height = geo.get("width"), geo.get("height")
             if left is not None or top is not None:

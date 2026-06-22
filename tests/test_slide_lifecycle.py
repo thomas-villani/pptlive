@@ -83,6 +83,21 @@ def test_add_rejects_bad_placeholder_geometry(deck) -> None:  # type: ignore[no-
     assert len(deck.slides) == before  # nothing was created on a rejected call
 
 
+def test_apply_placeholder_geometry_is_atomic_on_bad_kind(deck) -> None:  # type: ignore[no-untyped-def]
+    from pptlive.exceptions import AnchorNotFoundError
+
+    # A later KIND that doesn't resolve must abort *before* any earlier
+    # placeholder is moved — slide 2 has no subtitle, so the whole call fails
+    # and the (valid) body placeholder keeps its original geometry.
+    before = deck.anchor_by_id("ph:2:body").geometry()
+    with pytest.raises(AnchorNotFoundError):
+        deck.slides._apply_placeholder_geometry(
+            2, {"body": {"left": 40, "width": 440}, "subtitle": {"left": 10}}
+        )
+    after = deck.anchor_by_id("ph:2:body").geometry()
+    assert (after["left"], after["width"]) == (before["left"], before["width"])
+
+
 # -- delete -----------------------------------------------------------------
 
 

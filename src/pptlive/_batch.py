@@ -1509,8 +1509,15 @@ def run_batch(
                     if fs is not None:
                         focus_slide = fs
                 entry.update(ok=True, result=result)
-            except PptliveError as exc:
-                entry.update(ok=False, error=_error_code(exc), message=str(exc))
+            except (PptliveError, ValueError, FileNotFoundError) as exc:
+                # Library handlers raise bare ValueError (e.g. format_paragraph
+                # line_spacing > 5, empty set_paragraphs) and FileNotFoundError
+                # (picture sourcing) without wrapping them in BatchOpError. Record
+                # those as invalid_args per-command — mirroring the single-op MCP
+                # path (_mcp_errors) — so one bad op doesn't abort the whole batch
+                # or escape the per-op contract.
+                code = _error_code(exc) if isinstance(exc, PptliveError) else "invalid_args"
+                entry.update(ok=False, error=code, message=str(exc))
                 results.append(entry)
                 if stop_on_error:
                     break

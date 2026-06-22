@@ -227,6 +227,16 @@ def test_set_paragraphs_rejects_bad_item(deck) -> None:  # type: ignore[no-untyp
         _body(deck).set_paragraphs([{"no_text": "oops"}])
 
 
+def test_set_paragraphs_on_single_paragraph_anchor_raises(deck) -> None:  # type: ignore[no-untyped-def]
+    # A `para:` anchor is a single paragraph; set_paragraphs replaces a whole
+    # frame's list and would corrupt it / silently drop formatting. Reject it,
+    # leaving the surrounding paragraphs untouched.
+    para = _body(deck).paragraph(2)
+    with pytest.raises(ValueError, match="para:2:2:2"):
+        para.set_paragraphs(["a", "b", "c"])
+    assert _body(deck).text == "Intro\rDemo\rQ&A"  # nothing was written
+
+
 # -- bullets / lists --------------------------------------------------------
 
 

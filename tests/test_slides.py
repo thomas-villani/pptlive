@@ -125,6 +125,17 @@ def test_has_notes_surfaces_busy_instead_of_false(deck) -> None:  # type: ignore
         slide.has_notes()
 
 
+def test_find_placeholder_surfaces_busy_on_type_read(deck) -> None:  # type: ignore[no-untyped-def]
+    # A placeholder whose PlaceholderFormat.Type read goes busy must surface as
+    # PowerPointBusyError, not be swallowed by the per-shape skip (which would
+    # mis-report the placeholder as absent → AnchorNotFoundError).
+    slide = deck.slides[2]
+    boom_ph = SimpleNamespace(Type=_MSO_PLACEHOLDER, PlaceholderFormat=_Boom(), Name="Boom", Id=999)
+    slide.com.Shapes = [boom_ph]
+    with pytest.raises(PowerPointBusyError):
+        slide.placeholder("title")
+
+
 def test_slide_indexing_is_one_based(deck) -> None:  # type: ignore[no-untyped-def]
     assert deck.slides[1].index == 1
     assert len(deck.slides) == 3

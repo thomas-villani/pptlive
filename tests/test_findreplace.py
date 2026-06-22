@@ -56,6 +56,24 @@ def test_find_matches_is_case_sensitive() -> None:
     ]
 
 
+def test_find_matches_at_eol_does_not_span_the_paragraph_mark() -> None:
+    # PowerPoint paragraph marks are \r (folded to \n then stripped). A match
+    # ending right before a trailing \r must NOT include that \r in its span —
+    # otherwise find_replace overwrites the paragraph mark and fuses the
+    # paragraph into the next one (the sentinel-offset regression).
+    [m] = _findreplace.find_matches("Hello\r", "Hello")
+    assert (m.start, m.end) == (0, 5)
+    assert m.text == "Hello"  # the \r is excluded
+
+
+def test_find_matches_before_soft_break_excludes_the_break() -> None:
+    # Soft line break \v folds to a space; a match ending at the word before it
+    # must stop at the word, not swallow the break character.
+    [m] = _findreplace.find_matches("Hello\vworld", "Hello")
+    assert (m.start, m.end) == (0, 5)
+    assert m.text == "Hello"
+
+
 # ---------------------------------------------------------------------------
 # deck.find — the traversal
 # ---------------------------------------------------------------------------
