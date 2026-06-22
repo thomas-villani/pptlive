@@ -640,6 +640,18 @@ def test_set_paragraphs_json(fake_powerpoint) -> None:  # type: ignore[no-untype
     assert body.Text == "Alpha\rBeta"
 
 
+def test_set_paragraphs_via_paragraphs_alias(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    # --paragraphs is the preferred spelling (the old --json alias still works,
+    # exercised by test_set_paragraphs_json above).
+    result = CliRunner().invoke(
+        main,
+        ["set-paragraphs", "--anchor-id", "ph:2:body", "--paragraphs", '["Alpha", "Beta"]'],
+    )
+    assert result.exit_code == 0
+    out = json.loads(result.output)
+    assert out["paragraphs"] == ["para:2:2:1", "para:2:2:2"]
+
+
 def test_set_paragraphs_needs_one_source(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     result = CliRunner().invoke(main, ["set-paragraphs", "--anchor-id", "ph:2:body"])
     assert result.exit_code == 2  # click UsageError

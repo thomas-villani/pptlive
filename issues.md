@@ -41,19 +41,19 @@ the rest are agent findings not yet independently reproduced.
 | P-21 | Low | `_snapshot.py:190` | Multi-slide filenames can get wrong extension when `fmt`≠`out` suffix | **done** ✅ |
 | P-22 | Low | `_batch.py:1293` | `deck_snapshot` temp dirs never cleaned up (long-lived MCP leak) | **done** ✅ |
 | P-23 | Low | `_shapes.py:524` | Swallowed `LockAspectRatio` failure silently reintroduces aspect-snap | **done** ✅ |
-| P-24 | Low | `_shapes.py:1742` | Shape name lookup returns first of duplicates, no `AmbiguousMatchError` | todo |
-| P-25 | Low | `_selection.py:91` | Selection restore keys on non-unique `Shape.Name` | todo |
+| P-24 | Low | `_shapes.py:1742` | Shape name lookup returns first of duplicates, no `AmbiguousMatchError` | **done** ✅ |
+| P-25 | Low | `_selection.py:91` | Selection restore keys on non-unique `Shape.Name` | **done** ✅ |
 | P-26 | Low | `_sections.py:99` | `add()` validates inside `translate_com_errors` (vs siblings) | **done** ✅ |
 | P-27 | Low | `_tables.py:385` | `_resolve_axis` accepts `bool` selector (inconsistent w/ other validators) | **done** ✅ |
 | P-28 | Low | `_charts.py:264,346` | `_reflects_data`/`_attempt_axis` `except` masks busy / non-COM errors | **done** ✅ |
 | P-29 | Low | `_com.py:133` | `assert last is not None` stripped under `python -O` | **done** ✅ |
-| P-30 | Low | `cli/commands.py:3362` | `set-paragraphs --json` option shadows global `--json/--text` | todo |
-| P-31 | Low | `cli/commands.py:496` | `snapshot_cmd` hand-rolls `sys.exit(1)` instead of `_run` boundary | todo |
-| P-32 | Low | `cli/commands.py:1316` | `shape add --kind chart` with no data passes `None,None` to `add_chart` | todo |
+| P-30 | Low | `cli/commands.py:3362` | `set-paragraphs --json` option shadows global `--json/--text` | **done** ✅ |
+| P-31 | Low | `cli/commands.py:496` | `snapshot_cmd` hand-rolls `sys.exit(1)` instead of `_run` boundary | **done** ✅ |
+| P-32 | Low | `cli/commands.py:1316` | `shape add --kind chart` with no data passes `None,None` to `add_chart` | **done** ✅ (already correct) |
 | P-33 | Low | `constants.py:1696` | `theme_color_for` `or`-fallback breaks if a slot were `0`; rebuilds dict | **done** ✅ |
 | P-34 | Low | `_smartart.py:315` / `_tables.py:457` | double color-parse; `set_border` skips `weight` validation | **done** ✅ |
-| P-35 | Low | `mcp/server.py:338` | `shape_type` default `"rectangle"` diverges from all-`None` convention | todo |
-| P-36 | Low | `mcp/server.py:188` | Image-return relies on `-> Any` passthrough w/o `structured_output=False` note | todo |
+| P-35 | Low | `mcp/server.py:338` | `shape_type` default `"rectangle"` diverges from all-`None` convention | **done** ✅ |
+| P-36 | Low | `mcp/server.py:188` | Image-return relies on `-> Any` passthrough w/o `structured_output=False` note | **done** ✅ |
 
 ---
 

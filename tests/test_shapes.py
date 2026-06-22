@@ -33,6 +33,21 @@ def test_shape_by_unknown_name_raises(deck) -> None:  # type: ignore[no-untyped-
         deck.slides[2].shapes["Nonexistent"]
 
 
+def test_shape_by_duplicate_name_raises_ambiguous(deck) -> None:  # type: ignore[no-untyped-def]
+    from pptlive.exceptions import AmbiguousMatchError
+
+    # PowerPoint allows duplicate shape names; a name lookup that matches more
+    # than one must surface the ambiguity (with shape:S:N candidates), not
+    # silently pick the first — consistent with placeholder resolution.
+    shapes = deck.slides[2].shapes
+    shapes[1].com.Name = "Dup"
+    shapes[2].com.Name = "Dup"
+    with pytest.raises(AmbiguousMatchError) as exc:
+        _ = shapes["Dup"]
+    assert "shape:2:1" in str(exc.value) and "shape:2:2" in str(exc.value)
+    assert "Dup" in shapes  # membership is still True (the name exists)
+
+
 def test_shape_index_out_of_range_raises(deck) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(AnchorNotFoundError):
         deck.slides[2].shapes[99]

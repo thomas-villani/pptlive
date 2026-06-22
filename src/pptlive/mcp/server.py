@@ -176,6 +176,16 @@ def _render_reply(results: list[dict[str, Any]], structured: dict[str, Any]) -> 
     if not blocks:
         return structured
     text = TextContent(type="text", text=json.dumps(structured, indent=2, default=str))
+    # LOAD-BEARING: returning a CallToolResult from an `-> Any`-typed tool relies
+    # on FastMCP's convert_result passing a CallToolResult through verbatim while
+    # validating only its structuredContent. Two things keep this working and must
+    # not regress: (1) ppt_render / ppt_batch stay annotated `-> Any` (a concrete
+    # `dict`/`list` return type would make FastMCP infer a restrictive output
+    # schema and re-serialize — double-encoding the image bytes as text); (2) the
+    # image rides in `content`, the JSON in `structuredContent` — never both, or
+    # the bytes get counted twice. This is why we do NOT use
+    # `@tool(structured_output=False)` (wordlive's approach): the passthrough is
+    # the seam. See test_mcp's image-embed tests, which pin the single-encode.
     return CallToolResult(content=[text, *blocks], structuredContent=structured)
 
 
@@ -336,7 +346,8 @@ def ppt_edit(
     index: int | None = None,
     placeholders: dict[str, dict[str, float]] | None = None,
     kind: Literal["textbox", "shape", "picture", "table", "chart", "smartart"] | None = None,
-    shape_type: str = "rectangle",
+    shape_type: str
+    | None = None,  # handler defaults to "rectangle"; None for parity w/ other params
     path: str | None = None,
     rows: int | list[int] | None = None,
     cols: int | list[int] | None = None,
@@ -699,7 +710,7 @@ def ppt_render(
     max_dim: int | None = None,
     overwrite: bool = False,
     save_format: str = "pptx",
-) -> Any:
+) -> Any:  # `-> Any` is load-bearing for the image passthrough — see _render_reply
     """Render a PowerPoint slide or shape to an image a vision model can see, or
     move the user's view to a slide/shape. `op`:
     - "slide_image": render slide `slide` (1-based) to an image and return it BOTH
@@ -800,7 +811,7 @@ def ppt_batch(
     stop_on_error: bool = True,
     embed: bool = True,
     follow_view: bool | None = None,
-) -> Any:
+) -> Any:  # `-> Any` is load-bearing for the image passthrough — see _render_reply
     """Run a list of ops against one PowerPoint connection — the way to build or
     restructure a slide without a round-trip per change. Each command is a dict:
 

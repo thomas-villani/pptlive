@@ -61,7 +61,7 @@ from .constants import (
     smartart_layout_for,
     zorder_cmd_for,
 )
-from .exceptions import AnchorNotFoundError, NoTextFrameError
+from .exceptions import AmbiguousMatchError, AnchorNotFoundError, NoTextFrameError
 
 if TYPE_CHECKING:
     from ._charts import Chart, SeriesInput
@@ -1774,10 +1774,32 @@ class ShapeCollection:
             return Shape(self._slide, key)
         if isinstance(key, str):
             with _com.translate_com_errors():
-                for idx, sh in enumerate(self._com_collection, start=1):
-                    if str(sh.Name) == key:
-                        return Shape(self._slide, idx)
-            raise AnchorNotFoundError("shape", key)
+                matches: list[dict[str, Any]] = [
+                    {
+                        "anchor_id": f"shape:{self._slide.index}:{idx}",
+                        "name": key,
+                        "id": int(sh.Id),
+                        "index": idx,
+                    }
+                    for idx, sh in enumerate(self._com_collection, start=1)
+                    if str(sh.Name) == key
+                ]
+            if not matches:
+                raise AnchorNotFoundError("shape", key)
+            if len(matches) > 1:
+                # PowerPoint allows duplicate shape names (paste/duplicate). Rather
+                # than silently pick the first, surface the ambiguity with the
+                # candidate shape:S:N anchors (same convention as _find_placeholder).
+                anchors = ", ".join(str(c["anchor_id"]) for c in matches)
+                raise AmbiguousMatchError(
+                    key,
+                    matches,
+                    message=(
+                        f"{len(matches)} shapes named {key!r} on slide "
+                        f"{self._slide.index} ({anchors}); target one by shape:S:N"
+                    ),
+                )
+            return Shape(self._slide, int(matches[0]["index"]))
         raise TypeError(f"shape key must be int or str, got {type(key).__name__}")
 
     def __contains__(self, key: object) -> bool:
@@ -1788,6 +1810,8 @@ class ShapeCollection:
             return True
         except AnchorNotFoundError:
             return False
+        except AmbiguousMatchError:
+            return True  # the name exists (more than once) — membership is still True
 
     def __iter__(self) -> Iterator[Shape]:
         count = len(self)
