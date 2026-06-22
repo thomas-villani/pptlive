@@ -1665,6 +1665,11 @@ _THEME_COLORS: dict[str, int] = {
     "folhlink": int(MsoThemeColorSchemeIndex.FOLLOWED_HYPERLINK),
 }
 
+# Same map with underscores stripped from the keys, precomputed once so a name
+# like "followed hyperlink" / "followed-hyperlink" (which normalize to
+# "followedhyperlink") resolves without rebuilding the dict on every lookup.
+_THEME_COLORS_NOSEP: dict[str, int] = {k.replace("_", ""): v for k, v in _THEME_COLORS.items()}
+
 # The canonical slot names, in palette order — used as CLI choices *and* as the
 # ordered key set when reading the whole scheme back.
 THEME_COLOR_CHOICES: tuple[str, ...] = (
@@ -1692,10 +1697,11 @@ def theme_color_for(slot: str) -> int:
     """
     key = str(slot).strip().lower().replace(" ", "").replace("-", "")
     # Match against keys with their own separators stripped, so "accent 6",
-    # "accent6", and "followed-hyperlink" all resolve.
-    idx = _THEME_COLORS.get(key) or {k.replace("_", ""): v for k, v in _THEME_COLORS.items()}.get(
-        key
-    )
+    # "accent6", and "followed-hyperlink" all resolve. Explicit `is None` (not
+    # `or`) so a hypothetical slot index of 0 wouldn't be treated as a miss.
+    idx = _THEME_COLORS.get(key)
+    if idx is None:
+        idx = _THEME_COLORS_NOSEP.get(key)
     if idx is None:
         choices = ", ".join(THEME_COLOR_CHOICES)
         raise ValueError(f"unknown theme color slot {slot!r}; expected one of: {choices}")

@@ -312,8 +312,7 @@ class SmartArt:
         mutation. Wrap in `deck.edit(...)` for view preservation + the one-Ctrl-Z
         fence. Returns `{ok, slide, shape, anchor_id, node_index, text}`.
         """
-        if color is not None:
-            parse_color(color)  # validate before any COM
+        rgb = parse_color(color) if color is not None else None  # validate before any COM
         idx = int(index)
         with _com.translate_com_errors():
             allnodes = self.com.AllNodes
@@ -331,7 +330,7 @@ class SmartArt:
                 underline=underline,
                 size=size,
                 font=font,
-                color=color,
+                color=rgb,  # already validated above; parse_color is idempotent on an int
             )
             text = str(node.TextFrame2.TextRange.Text or "")
         return {

@@ -170,7 +170,9 @@ class ReplaceVerificationError(PptliveError):
     rather than overwrite the wrong characters. Maps to exit 1 / MCP `error`.
     """
 
-    def __init__(self, find: str, expected: str, found: str, *, anchor_id: str | None = None) -> None:
+    def __init__(
+        self, find: str, expected: str, found: str, *, anchor_id: str | None = None
+    ) -> None:
         where = f" at {anchor_id}" if anchor_id else ""
         super().__init__(
             f"refusing to replace {find!r}{where}: the target span changed "

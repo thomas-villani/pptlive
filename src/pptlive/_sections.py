@@ -91,15 +91,17 @@ class SectionCollection:
         Raises `SlideNotFoundError` for an out-of-range `before_slide`. A mutation:
         wrap in `deck.edit(...)`.
         """
+        # Validate before the COM mutation block (mirrors rename/delete/move).
+        if before_slide is not None:
+            if isinstance(before_slide, bool) or not isinstance(before_slide, int):
+                raise TypeError(f"before_slide must be int, got {type(before_slide).__name__}")
+            if before_slide < 1 or before_slide > len(self._deck.slides):
+                raise SlideNotFoundError(before_slide)
         with _com.translate_com_errors():
             props = self._props
             if before_slide is None:
                 new_index = int(props.AddSection(int(props.Count) + 1, str(name)))
             else:
-                if isinstance(before_slide, bool) or not isinstance(before_slide, int):
-                    raise TypeError(f"before_slide must be int, got {type(before_slide).__name__}")
-                if before_slide < 1 or before_slide > len(self._deck.slides):
-                    raise SlideNotFoundError(before_slide)
                 new_index = int(props.AddBeforeSlide(before_slide, str(name)))
             return self._row(props, new_index)
 

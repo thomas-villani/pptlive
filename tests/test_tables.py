@@ -316,6 +316,22 @@ def test_set_fill_out_of_range_row(deck) -> None:  # type: ignore[no-untyped-def
         table.set_fill("#FF0000", rows=9)
 
 
+def test_axis_selector_rejects_bool(deck) -> None:  # type: ignore[no-untyped-def]
+    # bool is an int subclass; rows=True would silently select row 1. Reject it,
+    # consistent with parse_color / dash_style_for / border_edges_for.
+    table = _add_table(deck, 2, 2).table
+    with pytest.raises(ValueError, match="not a bool"):
+        table.set_fill("#FF0000", rows=True)
+    with pytest.raises(ValueError, match="not a bool"):
+        table.set_border(color="#FF0000", cols=False)
+
+
+def test_set_border_rejects_negative_weight(deck) -> None:  # type: ignore[no-untyped-def]
+    table = _add_table(deck, 2, 2).table
+    with pytest.raises(ValueError, match="weight must be >= 0"):
+        table.set_border(weight=-1.0)
+
+
 def test_set_border_all_edges(deck) -> None:  # type: ignore[no-untyped-def]
     from pptlive.constants import parse_color
 
