@@ -30,16 +30,72 @@ cell access is bounds-checked here for a clean `AnchorNotFoundError`.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, Any
 
 from . import _com
 from ._anchors import Anchor
+from ._shapes import _is_none_token, apply_shape_fill
+from .constants import (
+    MsoTriState,
+    border_edges_for,
+    color_hex_or_none,
+    dash_style_for,
+    parse_color,
+)
 from .exceptions import AnchorNotFoundError
 
 if TYPE_CHECKING:
     from ._shapes import Shape
     from ._slides import Slide
+
+# A cell index selector: None (the whole axis), one 1-based index, or a list of them.
+AxisSelector = int | Sequence[int] | None
+
+
+def _cell_fill_hex(com_cell: Any) -> str | None:
+    """The cell's **effective** solid-fill color as `#RRGGBB`, or `None`.
+
+    `None` means a hidden fill (`Fill.Visible == msoFalse`) or the theme sentinel
+    (`0x80000000`) — never a wrong `#000000`, matching the `color_hex_or_none` guard
+    used for shape fills. Caveat (live-verified): a default PowerPoint **table
+    style** writes a real per-cell banded RGB, so a fresh, never-touched cell reads
+    back that *style* color, not `None`. There is no COM flag distinguishing a fill
+    set on the cell from one cascaded by the table style (it's OOXML-only), so this
+    reports what is actually rendered — direct or style-inherited alike.
+    """
+    fill = com_cell.Shape.Fill
+    if int(fill.Visible) == int(MsoTriState.FALSE):
+        return None
+    return color_hex_or_none(fill.ForeColor.RGB)
+
+
+def _apply_cell_border(
+    border: Any,
+    *,
+    rgb: int | None,
+    hide: bool,
+    weight: float | None,
+    dash_int: int | None,
+    visible: bool | None,
+) -> None:
+    """Write one resolved `Borders(index)` edge — caller wraps in `translate_com_errors`.
+
+    `hide` (`color="none"`) takes the edge invisible; an explicit `rgb` turns it on
+    and colors it. `weight`/`dash_int` set the geometry; `visible` forces the on/off
+    state last (so it wins over the color-implied visibility when both are given).
+    """
+    if hide:
+        border.Visible = int(MsoTriState.FALSE)
+    elif rgb is not None:
+        border.Visible = int(MsoTriState.TRUE)
+        border.ForeColor.RGB = rgb
+    if weight is not None:
+        border.Weight = float(weight)
+    if dash_int is not None:
+        border.DashStyle = dash_int
+    if visible is not None:
+        border.Visible = int(MsoTriState.TRUE if visible else MsoTriState.FALSE)
 
 
 class Cell(Anchor):
@@ -93,12 +149,57 @@ class Cell(Anchor):
 
     def to_dict(self) -> dict[str, Any]:
         with _com.translate_com_errors():
+            com_cell = self._cell_com()
             return {
                 "row": self._row,
                 "col": self._col,
-                "text": str(self._text_range().Text or ""),
+                "text": str(com_cell.Shape.TextFrame.TextRange.Text or ""),
+                "fill": _cell_fill_hex(com_cell),
                 "anchor_id": self.anchor_id,
             }
+
+    def set_fill(
+        self,
+        fill: str | int | tuple[int, int, int],
+        *,
+        transparency: float | None = None,
+    ) -> int:
+        """Solid-fill this cell (cell shading) — or clear it with `fill="none"`.
+
+        Thin per-cell wrapper over `Table.set_fill` (which is where the row/column
+        bulk form lives). `fill` is a color (`"#RRGGBB"` / `(r, g, b)` / raw RGB int)
+        or the string `"none"` (transparent — inherits the table style's shading);
+        `transparency` is a `0.0..1.0` alpha fraction. A mutation: wrap in
+        `deck.edit(...)`. Returns the number of cells filled (always 1).
+        """
+        return self._table.set_fill(fill, rows=self._row, cols=self._col, transparency=transparency)
+
+    def set_border(
+        self,
+        *,
+        color: str | int | tuple[int, int, int] | None = None,
+        weight: float | None = None,
+        dash: str | int | None = None,
+        edges: str | int | Sequence[str | int] = "all",
+        visible: bool | None = None,
+    ) -> int:
+        """Style this cell's border(s) — color / weight / dash / visibility.
+
+        Thin per-cell wrapper over `Table.set_border`. `edges` selects which edges
+        (`"all"` = the four sides, or `"top"`/`"bottom"`/`"left"`/`"right"`/
+        `"diagonal_down"`/`"diagonal_up"`, one or a list); `color` is a color or
+        `"none"` (hide that edge). A mutation: wrap in `deck.edit(...)`. Returns the
+        number of cells touched (always 1).
+        """
+        return self._table.set_border(
+            rows=self._row,
+            cols=self._col,
+            color=color,
+            weight=weight,
+            dash=dash,
+            edges=edges,
+            visible=visible,
+        )
 
 
 class Table:
@@ -215,6 +316,166 @@ class Table:
             )
         with _com.translate_com_errors():
             self._shape.com.Table.Rows(int(index)).Delete()
+
+    def add_column(self, values: list[Any] | None = None, *, before: int | None = None) -> None:
+        """Add a column, optionally filling its cells — appended by default.
+
+        `before` (1-based) inserts the new column *before* that existing column;
+        omitting it appends at the right edge (verified live: `Columns.Add()`
+        appends, `Columns.Add(n)` inserts before column `n`). `values` are matched
+        to rows top-to-bottom; extras past the row count are ignored, short lists
+        leave trailing cells empty. Raises `AnchorNotFoundError` (kind
+        `"table column"`) for an out-of-range `before`. Wrap in `deck.edit(...)`
+        for view preservation + a one-Ctrl-Z fence.
+        """
+        if before is not None:
+            cols = self.column_count
+            if not (1 <= int(before) <= cols):
+                raise AnchorNotFoundError(
+                    "table column",
+                    f"cell:{self._shape.slide.index}:{self._shape.index}:column:{before}",
+                )
+        with _com.translate_com_errors():
+            com_table = self._shape.com.Table
+            if before is None:
+                com_table.Columns.Add()
+                target = int(com_table.Columns.Count)
+            else:
+                com_table.Columns.Add(int(before))
+                target = int(before)
+            if values:
+                rows = int(com_table.Rows.Count)
+                for r, val in enumerate(values, start=1):
+                    if r > rows:
+                        break
+                    com_table.Cell(r, target).Shape.TextFrame.TextRange.Text = str(val)
+
+    def delete_column(self, index: int) -> None:
+        """Delete the 1-based column `index`.
+
+        Raises `AnchorNotFoundError` (kind `"table column"`) if out of range, and
+        `ValueError` if it would empty the table — PowerPoint has no zero-column
+        table, and deleting the only column corrupts the shape rather than failing
+        cleanly. Delete the whole table shape (`shape:S:N`) instead.
+        """
+        cols = self.column_count
+        if not (1 <= int(index) <= cols):
+            raise AnchorNotFoundError(
+                "table column",
+                f"cell:{self._shape.slide.index}:{self._shape.index}:column:{index}",
+            )
+        if cols <= 1:
+            raise ValueError(
+                "cannot delete the last column of a table; delete the table shape "
+                f"({self._shape.anchor_id}) instead"
+            )
+        with _com.translate_com_errors():
+            self._shape.com.Table.Columns(int(index)).Delete()
+
+    def _resolve_axis(self, sel: AxisSelector, count: int, axis: str) -> list[int]:
+        """Normalize a row/column selector to a validated list of 1-based indices.
+
+        `None` selects the whole axis; an int selects one; a sequence selects each.
+        Raises `AnchorNotFoundError` (kind `"table row"`/`"table column"`) for an
+        out-of-range index — before any COM mutation.
+        """
+        if sel is None:
+            return list(range(1, count + 1))
+        raw: Sequence[int]
+        if isinstance(sel, int):  # bool is an int subclass; a bool selector is harmless here
+            raw = [int(sel)]
+        else:
+            raw = [int(x) for x in sel]
+        for i in raw:
+            if not (1 <= i <= count):
+                raise AnchorNotFoundError(
+                    f"table {axis}",
+                    f"cell:{self._shape.slide.index}:{self._shape.index}:{axis}:{i}",
+                )
+        return list(raw)
+
+    def set_fill(
+        self,
+        fill: str | int | tuple[int, int, int],
+        *,
+        rows: AxisSelector = None,
+        cols: AxisSelector = None,
+        transparency: float | None = None,
+    ) -> int:
+        """Solid-fill (cell shading) a region of cells — or clear it with `fill="none"`.
+
+        `rows`/`cols` select the region: `None` is the whole axis, an int one
+        index, a list several. Their **intersection** is filled — so `rows=1` shades
+        the header row, `cols=2` a column, `rows=1, cols=1` a single cell, and both
+        `None` the whole table. `fill` is a color (`"#RRGGBB"` / `(r, g, b)` / raw
+        RGB int) or `"none"` (transparent — falls back to the table style's shading).
+        `transparency` is a `0.0..1.0` alpha fraction. Colors / indices are validated
+        before any COM mutation. A mutation: wrap in `deck.edit(...)`. Returns the
+        number of cells filled.
+        """
+        row_idx = self._resolve_axis(rows, self.row_count, "row")
+        col_idx = self._resolve_axis(cols, self.column_count, "column")
+        with _com.translate_com_errors():
+            com_table = self._shape.com.Table
+            count = 0
+            for r in row_idx:
+                for c in col_idx:
+                    apply_shape_fill(
+                        com_table.Cell(r, c).Shape, fill=fill, fill_transparency=transparency
+                    )
+                    count += 1
+        return count
+
+    def set_border(
+        self,
+        *,
+        color: str | int | tuple[int, int, int] | None = None,
+        weight: float | None = None,
+        dash: str | int | None = None,
+        edges: str | int | Sequence[str | int] = "all",
+        rows: AxisSelector = None,
+        cols: AxisSelector = None,
+        visible: bool | None = None,
+    ) -> int:
+        """Style cell border(s) across a region — color / weight / dash / visibility.
+
+        `rows`/`cols` select the region exactly like `set_fill` (intersection;
+        `None` = whole axis). `edges` picks which edges of each cell: `"all"` (the
+        four sides) or one/several of `"top"`/`"bottom"`/`"left"`/`"right"`/
+        `"diagonal_down"`/`"diagonal_up"`. `color` is a color (turns the edge on) or
+        `"none"` (hides it); `weight` is points; `dash` a friendly `MsoLineDashStyle`
+        name; `visible` forces the edge on/off. At least one of
+        `color`/`weight`/`dash`/`visible` is required. All names / colors / indices
+        are validated before any COM mutation. A mutation: wrap in `deck.edit(...)`.
+        Returns the number of cells touched.
+        """
+        if color is None and weight is None and dash is None and visible is None:
+            raise ValueError(
+                "set_border() requires at least one of color=, weight=, dash=, visible="
+            )
+        edge_idx = border_edges_for(edges)  # ValueError before any COM
+        hide = color is not None and _is_none_token(color)
+        rgb = None if (color is None or hide) else parse_color(color)  # ValueError before COM
+        dash_int = dash_style_for(dash) if dash is not None else None
+        row_idx = self._resolve_axis(rows, self.row_count, "row")
+        col_idx = self._resolve_axis(cols, self.column_count, "column")
+        with _com.translate_com_errors():
+            com_table = self._shape.com.Table
+            count = 0
+            for r in row_idx:
+                for c in col_idx:
+                    com_cell = com_table.Cell(r, c)
+                    for idx in edge_idx:
+                        _apply_cell_border(
+                            com_cell.Borders(idx),
+                            rgb=rgb,
+                            hide=hide,
+                            weight=weight,
+                            dash_int=dash_int,
+                            visible=visible,
+                        )
+                    count += 1
+        return count
 
     def __iter__(self) -> Iterator[Cell]:
         """Iterate cells row-major."""

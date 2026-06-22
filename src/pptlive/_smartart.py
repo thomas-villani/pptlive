@@ -40,14 +40,52 @@ from . import _com
 from .constants import (
     SMARTART_TREE_KINDS,
     MsoSmartArtNodePosition,
+    MsoTextUnderlineType,
     color_hex,
     parse_color,
     smartart_layout_name,
 )
+from .exceptions import AnchorNotFoundError
 
 if TYPE_CHECKING:
     from ._shapes import Shape
     from ._slides import Slide
+
+
+def _apply_node_font(
+    f: Any,
+    *,
+    bold: bool | None = None,
+    italic: bool | None = None,
+    underline: bool | None = None,
+    size: float | None = None,
+    font: str | None = None,
+    color: str | int | tuple[int, int, int] | None = None,
+) -> None:
+    """Write font properties onto a node's `TextFrame2` `Font2` — only kwargs passed.
+
+    A SmartArt node's text lives on `TextFrame2`, whose `Font2` differs from the
+    classic `Font` that `_anchors.apply_font` writes: color is on
+    `Font.Fill.ForeColor.RGB` (not `Font.Color`) and underline is the
+    `UnderlineStyle` enum (not a `Font.Underline` tristate). `size` is points;
+    `color` is `"#RRGGBB"`, an `(r, g, b)` tuple, or a raw RGB int. Caller wraps
+    this in `translate_com_errors()` and validates `color` first.
+    """
+    if bold is not None:
+        f.Bold = -1 if bold else 0
+    if italic is not None:
+        f.Italic = -1 if italic else 0
+    if underline is not None:
+        f.UnderlineStyle = int(
+            MsoTextUnderlineType.SINGLE_LINE if underline else MsoTextUnderlineType.NONE
+        )
+    if size is not None:
+        f.Size = float(size)
+    if font is not None:
+        f.Name = str(font)
+    if color is not None:
+        f.Fill.ForeColor.RGB = parse_color(color)
+
 
 # A node spec accepted by set_nodes / add_smartart: a plain string (a leaf), or a
 # mapping with "text" and optional "children" (a recursive list of the same).
@@ -118,15 +156,17 @@ class SmartArt:
         """Friendly layout name (e.g. "process", "orgchart"); falls back to the URN."""
         return smartart_layout_name(self.layout_id)
 
-    def _dump(self, com_nodes: Any) -> list[dict[str, Any]]:
+    def _dump(self, com_nodes: Any, counter: list[int]) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         for i in range(1, int(com_nodes.Count) + 1):
             nd = com_nodes.Item(i)
+            counter[0] += 1  # depth-first == AllNodes order (spike-verified)
             out.append(
                 {
+                    "node_index": counter[0],
                     "text": str(nd.TextFrame2.TextRange.Text or ""),
                     "level": int(nd.Level),
-                    "children": self._dump(nd.Nodes) if int(nd.Nodes.Count) else [],
+                    "children": self._dump(nd.Nodes, counter) if int(nd.Nodes.Count) else [],
                 }
             )
         return out
@@ -135,12 +175,15 @@ class SmartArt:
         """Structured dump: layout kind + the nested node tree.
 
         `{slide, shape, anchor_id, layout, layout_id, node_count,
-        nodes:[{text, level, children}]}`. Side-effect-free.
+        nodes:[{node_index, text, level, children}]}`. Each node carries a
+        1-based `node_index` (its position in a depth-first walk, which equals its
+        `AllNodes` index — spike-verified) so it can be fed straight into
+        `format_node`. Side-effect-free.
         """
         with _com.translate_com_errors():
             sa = self.com
             layout_id = str(sa.Layout.Id)
-            nodes = self._dump(sa.Nodes)
+            nodes = self._dump(sa.Nodes, [0])
             total = int(sa.AllNodes.Count)
         return {
             "slide": self._shape.slide.index,
@@ -241,6 +284,63 @@ class SmartArt:
             "anchor_id": self._shape.anchor_id,
             "color": color_hex(rgb),
             "nodes_recolored": total,
+        }
+
+    def format_node(
+        self,
+        index: int,
+        *,
+        bold: bool | None = None,
+        italic: bool | None = None,
+        underline: bool | None = None,
+        size: float | None = None,
+        font: str | None = None,
+        color: str | int | tuple[int, int, int] | None = None,
+    ) -> dict[str, Any]:
+        """Format **one** node's text — the per-node companion to `recolor_text`.
+
+        `index` is the 1-based `node_index` from `read()` (its depth-first /
+        `AllNodes` position — spike-verified equal). Only the kwargs you pass are
+        written, mirroring `Anchor.format_text`: `size` is points; `color` is
+        `"#RRGGBB"` / `(r, g, b)` / a raw RGB int. The knobs land on the node's
+        `TextFrame2` `Font2` (color on `Font.Fill.ForeColor`, underline as the
+        `UnderlineStyle` enum), so this reaches the diagram's internal labels that
+        no `format_text` anchor can.
+
+        Raises `AnchorNotFoundError` (kind `"smartart node"`) for an out-of-range
+        `index` and `ValueError` for a malformed `color` — both before any COM
+        mutation. Wrap in `deck.edit(...)` for view preservation + the one-Ctrl-Z
+        fence. Returns `{ok, slide, shape, anchor_id, node_index, text}`.
+        """
+        if color is not None:
+            parse_color(color)  # validate before any COM
+        idx = int(index)
+        with _com.translate_com_errors():
+            allnodes = self.com.AllNodes
+            total = int(allnodes.Count)
+            if not (1 <= idx <= total):
+                raise AnchorNotFoundError(
+                    "smartart node",
+                    f"{self._shape.anchor_id}:node:{idx}",
+                )
+            node = allnodes.Item(idx)
+            _apply_node_font(
+                node.TextFrame2.TextRange.Font,
+                bold=bold,
+                italic=italic,
+                underline=underline,
+                size=size,
+                font=font,
+                color=color,
+            )
+            text = str(node.TextFrame2.TextRange.Text or "")
+        return {
+            "ok": True,
+            "slide": self._shape.slide.index,
+            "shape": self._shape.index,
+            "anchor_id": self._shape.anchor_id,
+            "node_index": idx,
+            "text": text,
         }
 
     def __repr__(self) -> str:

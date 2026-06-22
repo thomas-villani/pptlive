@@ -1137,6 +1137,39 @@ and a `text_frame_status`-level color-source roll-up (it lives on the per-run fo
 
 ---
 
+## v-next — post-creation edit surface — SHIPPED
+
+The "restyle after creation, don't delete-and-recreate" theme, built item by item,
+each de-risked by its own net-zero spike. (Full design notes live in `CLAUDE.md`.)
+
+- [x] **Table cell styling** (`scripts/cell_style_spike.py` + `cell_border_map_spike.py`):
+  `Table.set_fill`/`set_border` (+ `Cell.` delegations), row/column-wise. **Overturned**
+  the "no cell shading over COM" assumption — `Cell.Shape.Fill` + `Cell.Borders(index)`
+  both round-trip.
+- [x] **Re-source a picture in place** (`scripts/set_picture_spike.py`):
+  `Shape.set_picture(path, *, alt_text=None)` — preserves box/rotation/name/alt/z-order.
+  Spike proved `Fill.UserPicture` fills *behind* a real picture (no in-place swap), so
+  it's a delete + re-insert (new `Shape.Id`; animations/hyperlinks/crop dropped).
+- [x] **Table columns + SmartArt per-node text** (`scripts/table_col_smartart_node_spike.py`,
+  net-zero, **verified live 2026-06-21**):
+  - `Table.add_column(values=None, *, before=None)` / `delete_column(index)` — mirror
+    `add_row`/`delete_row` (`Columns.Add()`/`Columns.Add(n)`/`Columns(n).Delete()`;
+    same not-found + last-column `ValueError` guards).
+  - `SmartArt.format_node(index, *, bold/italic/underline/size/font/color)` — per-node
+    companion to `recolor_text`. Spike pinned **`AllNodes` == depth-first order**, so
+    `read()` stamps each node a 1-based `node_index` that addresses `format_node`. Node
+    text is on `TextFrame2` `Font2` (color on `Font.Fill.ForeColor`, underline as
+    `MsoTextUnderlineType`) — separate `_apply_node_font` helper.
+  - Wired library + CLI (`table add-column`/`delete-column`, `smartart format-node`) +
+    MCP (`table_add_column`/`table_delete_column`/`smartart_format_node`) + both SKILL
+    guides + fake-COM (`_FakeColumns.Add`/`_FakeColumn.Delete`). Suite green (867),
+    `ruff`/`mypy` clean.
+
+**Still open on the edit surface:** shape-type swap, table cell merge state (OOXML-only),
+SmartArt node *fill* + structural node add/delete.
+
+---
+
 ## Cross-cutting (any release)
 
 - [ ] **HRESULT coverage** — start from wordlive's `_BUSY_HRESULTS`; widen as

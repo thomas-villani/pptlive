@@ -123,6 +123,7 @@ class EditOp(StrEnum):
     SHAPE_RESET_LAYOUT = "shape_reset_layout"
     SHAPE_GRADIENT_FILL = "shape_gradient_fill"
     SHAPE_PICTURE_FILL = "shape_picture_fill"
+    SHAPE_SET_PICTURE = "shape_set_picture"
     SHAPE_PATTERN_FILL = "shape_pattern_fill"
     SHAPE_SET_EFFECT = "shape_set_effect"
     SHAPE_LINE_STYLE = "shape_line_style"
@@ -138,11 +139,16 @@ class EditOp(StrEnum):
     SET_ALT = "set_alt"
     TABLE_ADD_ROW = "table_add_row"
     TABLE_DELETE_ROW = "table_delete_row"
+    TABLE_ADD_COLUMN = "table_add_column"
+    TABLE_DELETE_COLUMN = "table_delete_column"
+    TABLE_SET_FILL = "table_set_fill"
+    TABLE_SET_BORDER = "table_set_border"
     CHART_SET_TYPE = "chart_set_type"
     CHART_SET_DATA = "chart_set_data"
     CHART_RECOLOR_TEXT = "chart_recolor_text"
     SMARTART_SET_NODES = "smartart_set_nodes"
     SMARTART_RECOLOR_TEXT = "smartart_recolor_text"
+    SMARTART_FORMAT_NODE = "smartart_format_node"
     COMMENT_ADD = "comment_add"
     COMMENT_REPLY = "comment_reply"
     COMMENT_DELETE = "comment_delete"
@@ -745,6 +751,19 @@ def _edit_shape_picture_fill(deck: Presentation, p: dict[str, Any]) -> dict[str,
     }
 
 
+@edit_op(EditOp.SHAPE_SET_PICTURE)
+def _edit_shape_set_picture(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    sh = _resolve_shape(deck, p.get("anchor_id"))
+    _require(p.get("path") is not None, "edit op='shape_set_picture' requires `path`")
+    new = sh.set_picture(p["path"], alt_text=p.get("alt_text"))
+    return {
+        "ok": True,
+        "anchor_id": new.anchor_id,
+        "shapeid": new.shapeid,
+        "geometry": new.geometry(),
+    }
+
+
 @edit_op(EditOp.SHAPE_PATTERN_FILL)
 def _edit_shape_pattern_fill(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
     sh = _resolve_shape(deck, p.get("anchor_id"))
@@ -927,6 +946,53 @@ def _edit_table_delete_row(deck: Presentation, p: dict[str, Any]) -> dict[str, A
     return {"ok": True, "anchor_id": table.shape.anchor_id, "rows": table.row_count}
 
 
+@edit_op(EditOp.TABLE_ADD_COLUMN)
+def _edit_table_add_column(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    table = _resolve_shape(deck, p.get("anchor_id")).table
+    table.add_column(p.get("values"), before=p.get("before"))
+    return {"ok": True, "anchor_id": table.shape.anchor_id, "columns": table.column_count}
+
+
+@edit_op(EditOp.TABLE_DELETE_COLUMN)
+def _edit_table_delete_column(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    table = _resolve_shape(deck, p.get("anchor_id")).table
+    _require(p.get("column") is not None, "edit op='table_delete_column' requires `column`")
+    table.delete_column(p["column"])
+    return {"ok": True, "anchor_id": table.shape.anchor_id, "columns": table.column_count}
+
+
+@edit_op(EditOp.TABLE_SET_FILL)
+def _edit_table_set_fill(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    table = _resolve_shape(deck, p.get("anchor_id")).table
+    _require(p.get("fill") is not None, "edit op='table_set_fill' requires `fill`")
+    n = table.set_fill(
+        p["fill"],
+        rows=p.get("rows"),
+        cols=p.get("cols"),
+        transparency=p.get("fill_transparency"),
+    )
+    return {"ok": True, "anchor_id": table.shape.anchor_id, "cells": n}
+
+
+@edit_op(EditOp.TABLE_SET_BORDER)
+def _edit_table_set_border(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    table = _resolve_shape(deck, p.get("anchor_id")).table
+    _require(
+        any(p.get(k) is not None for k in ("color", "weight", "dash", "visible")),
+        "edit op='table_set_border' requires at least one of `color`, `weight`, `dash`, `visible`",
+    )
+    n = table.set_border(
+        color=p.get("color"),
+        weight=p.get("weight"),
+        dash=p.get("dash"),
+        edges=p.get("edges") or "all",
+        rows=p.get("rows"),
+        cols=p.get("cols"),
+        visible=p.get("visible"),
+    )
+    return {"ok": True, "anchor_id": table.shape.anchor_id, "cells": n}
+
+
 @edit_op(EditOp.CHART_SET_TYPE)
 def _edit_chart_set_type(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
     chart = _resolve_shape(deck, p.get("anchor_id")).chart
@@ -966,6 +1032,23 @@ def _edit_smartart_recolor_text(deck: Presentation, p: dict[str, Any]) -> dict[s
     sa = _resolve_shape(deck, p.get("anchor_id")).smartart
     _require(p.get("color") is not None, "edit op='smartart_recolor_text' requires `color`")
     return sa.recolor_text(p["color"])
+
+
+@edit_op(EditOp.SMARTART_FORMAT_NODE)
+def _edit_smartart_format_node(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    sa = _resolve_shape(deck, p.get("anchor_id")).smartart
+    _require(
+        p.get("node_index") is not None, "edit op='smartart_format_node' requires `node_index`"
+    )
+    return sa.format_node(
+        p["node_index"],
+        bold=p.get("bold"),
+        italic=p.get("italic"),
+        underline=p.get("underline"),
+        size=p.get("size"),
+        font=p.get("font"),
+        color=p.get("color"),
+    )
 
 
 @edit_op(EditOp.COMMENT_ADD)

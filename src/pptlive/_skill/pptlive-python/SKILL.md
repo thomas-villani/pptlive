@@ -112,6 +112,8 @@ with deck.edit("Build the results slide"):
     star = shapes.add_shape("star", left=400, top=120, width=120, height=120, fill="#1E74B5")
     logo = shapes.add_picture("logo.png", left=600, top=40, alt_text="Acme logo")
     deck.slides[4].shapes["Picture 3"].move(top=140)  # by name; absolute, points
+    logo = logo.set_picture("logo-v2.png")            # re-source a PICTURE in place (keeps box/name/alt/z); returns a NEW handle
+    #   (set_picture_fill on a real picture only fills BEHIND it; animations/hyperlinks/crop are dropped on re-source)
 
     panel = shapes.add_shape("rectangle", left=60, top=60, width=840, height=400)
     panel.set_fill(fill="#102030", line="none")       # solid fill/border — NOT font color; "none" = transparent
@@ -168,8 +170,12 @@ with deck.edit("Add a metrics table"):
     table = deck.slides[4].shapes.add_table(rows=3, columns=2).table
     table.cell(1, 1).set_text("Metric")
     table.add_row(["Revenue", "$4.2M"])               # appends + fills a row
+    table.add_column(["Q4", "$5M"], before=2)         # add/delete columns too (before= inserts; omit to append)
     deck.anchor_by_id("cell:4:5:1:1").format_text(bold=True)
-grid = table.read()                                   # {slide, shape, rows, columns, cells:[...]}
+    table.set_fill("#102030", rows=1)                 # shade the header row (cell shading)
+    table.set_border(color="#cccccc", weight=1, edges="bottom")  # grid lines under every cell
+    table.cell(2, 1).set_fill("#1e1e1e")              # one cell; cols=2 shades a column, both omitted = all
+grid = table.read()                                   # {slide, shape, rows, columns, cells:[{...,fill}]}
 
 with deck.edit("Add a revenue chart"):
     chart = deck.slides[4].shapes.add_chart(
@@ -181,7 +187,7 @@ data = chart.read()                                   # {chart_type, categories,
 with deck.edit("Add a process diagram"):
     sa = deck.slides[3].shapes.add_smartart("process", ["Discover", "Design", "Build"]).smartart
     sa.set_nodes([{"text": "CEO", "children": ["VP Eng", "VP Sales"]}])   # flat list or tree
-tree = sa.read()                                      # {layout, nodes:[{text, level, children}]}
+tree = sa.read()                                      # {layout, nodes:[{node_index, text, level, children}]}
 
 # Recolor composite text — a chart/SmartArt has no text anchor, so format_text
 # can't reach it; recolor_text is the only color path. The coarse fix when the
@@ -189,6 +195,11 @@ tree = sa.read()                                      # {layout, nodes:[{text, l
 with deck.edit("Make the diagram readable on dark"):
     chart.recolor_text("#FFFFFF")   # every shown chart element: legend/axes/title/data labels
     sa.recolor_text("#FFFFFF")      # every SmartArt node label
+
+# Format ONE SmartArt node — the per-node companion to recolor_text. Address it by
+# the `node_index` read() prints (1-based depth-first == AllNodes order).
+with deck.edit("Emphasize the root node"):
+    sa.format_node(1, bold=True, size=24, font="Georgia", color="#0000FF")  # +italic/underline
 ```
 
 ## PowerPoint text-model gotchas + recovery

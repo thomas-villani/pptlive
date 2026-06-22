@@ -598,6 +598,29 @@ def test_shape_picture_fill_missing_file_errors(fake_powerpoint: Any) -> None:
         ppt_edit("shape_picture_fill", anchor_id="shape:2:1", path="nope-12345.png")
 
 
+def test_shape_set_picture(fake_powerpoint: Any, tmp_path: Any) -> None:
+    img = tmp_path / "new.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    out = ppt_edit("shape_set_picture", anchor_id="shape:2:3", path=str(img))
+    assert out["ok"] is True
+    # echoes a fresh, drift-proof handle to the re-sourced picture
+    assert out["shapeid"].startswith("shapeid:2:")
+    assert out["anchor_id"].startswith("shapeid:2:")
+    assert out["geometry"]["left"] == 400.0  # the old picture's box preserved
+
+
+def test_shape_set_picture_missing_file_errors(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError):
+        ppt_edit("shape_set_picture", anchor_id="shape:2:3", path="nope-12345.png")
+
+
+def test_shape_set_picture_on_non_picture_errors(fake_powerpoint: Any, tmp_path: Any) -> None:
+    img = tmp_path / "new.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    with pytest.raises(ToolError):  # ValueError -> invalid_args
+        ppt_edit("shape_set_picture", anchor_id="shape:2:1", path=str(img))
+
+
 def test_shape_set_effect(fake_powerpoint: Any) -> None:
     out = ppt_edit(
         "shape_set_effect",
@@ -753,6 +776,24 @@ def test_table_read_add_delete_row(fake_powerpoint: Any) -> None:
     assert after_del["rows"] == 2
 
 
+def test_table_add_delete_column(fake_powerpoint: Any) -> None:
+    added = ppt_edit("shape_add", slide=3, kind="table", rows=2, cols=2)
+    aid = added["anchor_id"]
+    after_add = ppt_edit("table_add_column", anchor_id=aid, values=["x", "y"])
+    assert after_add["columns"] == 3
+    after_ins = ppt_edit("table_add_column", anchor_id=aid, before=1)
+    assert after_ins["columns"] == 4
+    after_del = ppt_edit("table_delete_column", anchor_id=aid, column=4)
+    assert after_del["columns"] == 3
+
+
+def test_table_delete_column_requires_column(fake_powerpoint: Any) -> None:
+    added = ppt_edit("shape_add", slide=3, kind="table", rows=2, cols=2)
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("table_delete_column", anchor_id=added["anchor_id"])
+    assert "invalid_args" in str(exc.value)
+
+
 def test_table_cell_via_write_and_read(fake_powerpoint: Any) -> None:
     added = ppt_edit("shape_add", slide=3, kind="table", rows=2, cols=2)
     shape_n = int(added["anchor_id"].split(":")[2])  # shape:3:N -> N
@@ -765,6 +806,36 @@ def test_table_delete_row_requires_row(fake_powerpoint: Any) -> None:
     added = ppt_edit("shape_add", slide=3, kind="table", rows=2, cols=2)
     with pytest.raises(ToolError) as exc:
         ppt_edit("table_delete_row", anchor_id=added["anchor_id"])
+    assert "invalid_args" in str(exc.value)
+
+
+def test_table_set_fill_and_border(fake_powerpoint: Any) -> None:
+    added = ppt_edit("shape_add", slide=3, kind="table", rows=2, cols=3)
+    aid = added["anchor_id"]
+    # shade the header row
+    res = ppt_edit("table_set_fill", anchor_id=aid, fill="#102030", rows=1)
+    assert res["cells"] == 3
+    grid = ppt_read("table", anchor_id=aid)
+    assert grid["cells"][0][0]["fill"] == "#102030"
+    assert grid["cells"][1][0]["fill"] is None
+    # border on a column
+    res = ppt_edit(
+        "table_set_border", anchor_id=aid, color="#cccccc", weight=1, edges="bottom", cols=2
+    )
+    assert res["cells"] == 2
+
+
+def test_table_set_fill_requires_fill(fake_powerpoint: Any) -> None:
+    added = ppt_edit("shape_add", slide=3, kind="table", rows=2, cols=2)
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("table_set_fill", anchor_id=added["anchor_id"])
+    assert "invalid_args" in str(exc.value)
+
+
+def test_table_set_border_requires_an_arg(fake_powerpoint: Any) -> None:
+    added = ppt_edit("shape_add", slide=3, kind="table", rows=2, cols=2)
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("table_set_border", anchor_id=added["anchor_id"])
     assert "invalid_args" in str(exc.value)
 
 
@@ -907,6 +978,21 @@ def test_smartart_recolor_text_requires_color(fake_powerpoint: Any) -> None:
     assert "invalid_args" in str(exc.value)
 
 
+def test_smartart_format_node(fake_powerpoint: Any) -> None:
+    aid = _add_smartart(smartart_kind="process", nodes=["A", "B", "C"])
+    out = ppt_edit("smartart_format_node", anchor_id=aid, node_index=2, bold=True, color="#0000FF")
+    assert out["ok"] is True
+    assert out["node_index"] == 2
+    assert out["text"] == "B"
+
+
+def test_smartart_format_node_requires_node_index(fake_powerpoint: Any) -> None:
+    aid = _add_smartart(smartart_kind="process", nodes=["A"])
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("smartart_format_node", anchor_id=aid, bold=True)
+    assert "invalid_args" in str(exc.value)
+
+
 def test_read_op_enum_includes_smartart() -> None:
     srv = build_server()
     tools = {t.name: t for t in asyncio.run(srv.list_tools())}
@@ -914,6 +1000,7 @@ def test_read_op_enum_includes_smartart() -> None:
     assert "smartart_set_nodes" in _op_enum(tools["ppt_edit"])
     edit_ops = set(_op_enum(tools["ppt_edit"]))
     assert {"chart_recolor_text", "smartart_recolor_text"} <= edit_ops
+    assert {"table_add_column", "table_delete_column", "smartart_format_node"} <= edit_ops
 
 
 # ---------------------------------------------------------------------------
