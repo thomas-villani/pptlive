@@ -122,6 +122,8 @@ def retry_on_busy(
     real failures still surface fast. `operation` must be idempotent — used for
     the chart-data write, which is a clean rewrite (ClearContents + SetSourceData).
     """
+    if attempts < 1:
+        raise ValueError(f"attempts must be >= 1, got {attempts}")
     last: PowerPointBusyError | None = None
     for attempt in range(attempts):
         try:
@@ -130,7 +132,11 @@ def retry_on_busy(
             last = exc
             if attempt + 1 < attempts:
                 time.sleep(delay * (attempt + 1))
-    assert last is not None  # only reached after a busy error
+    # `last` is guaranteed set: attempts >= 1 means the loop ran, and it only
+    # exits the for-loop (without returning) after catching a busy error. Use an
+    # explicit raise rather than `assert` so it survives `python -O`.
+    if last is None:  # pragma: no cover — unreachable given the guard above
+        raise RuntimeError("retry_on_busy exhausted without capturing an error")
     raise last
 
 

@@ -160,6 +160,30 @@ class AmbiguousMatchError(PptliveError):
         return cls(anchor_id, candidates, message=message)
 
 
+class ReplaceVerificationError(PptliveError):
+    """A `find_replace` target span no longer matched the located text.
+
+    The fuzzy matcher locates a span, then `find_replace` re-reads that span just
+    before overwriting it and confirms it still equals the located text (under the
+    same fuzzy normalization). A non-empty mismatch means the frame text shifted
+    between the locate and apply passes (or an offset map drifted), so we refuse
+    rather than overwrite the wrong characters. Maps to exit 1 / MCP `error`.
+    """
+
+    def __init__(
+        self, find: str, expected: str, found: str, *, anchor_id: str | None = None
+    ) -> None:
+        where = f" at {anchor_id}" if anchor_id else ""
+        super().__init__(
+            f"refusing to replace {find!r}{where}: the target span changed "
+            f"(expected {expected!r}, found {found!r})"
+        )
+        self.find = find
+        self.expected = expected
+        self.found = found
+        self.anchor_id = anchor_id
+
+
 class BatchOpError(PptliveError):
     """A dispatch op got invalid arguments (the `invalid_args` category).
 
@@ -202,6 +226,46 @@ class ComError(PptliveError):
         super().__init__(message)
         self.hresult = hresult
         self.description = description
+
+
+def classify(exc: PptliveError) -> str:
+    """Map a `PptliveError` to its stable taxonomy `code` token.
+
+    The single source of truth for failure labelling: `_batch._error_code` returns
+    this token (the MCP `error` category), and `cli.main._exit_for` maps it to an
+    exit int. Keeping the isinstance ladder here — rather than duplicated in both
+    front-ends — stops the two from drifting. Order is subclass-first:
+    `NoTextFrameError` before the generic `AnchorNotFoundError`; `BatchOpError`
+    (invalid args) first. Unknown subclasses fall through to `"error"` (exit 1).
+    """
+    if isinstance(exc, BatchOpError):
+        return "invalid_args"
+    if isinstance(exc, NoTextFrameError):
+        return "no_text_frame"
+    if isinstance(exc, AnchorNotFoundError):  # covers SlideNotFoundError / LayoutNotFoundError
+        return "not_found"
+    if isinstance(exc, AmbiguousMatchError):
+        return "ambiguous"
+    if isinstance(exc, PowerPointBusyError):
+        return "busy"
+    if isinstance(exc, PowerPointNotRunningError):
+        return "not_running"
+    if isinstance(exc, PresentationNotFoundError):
+        return "not_found"
+    return "error"
+
+
+#: Maps each `classify()` code to its CLI exit code (spec.md §"Error taxonomy").
+#: `invalid_args` and `error` both land on exit 1 (the catch-all).
+EXIT_CODE_FOR: dict[str, int] = {
+    "invalid_args": 1,
+    "no_text_frame": 6,
+    "not_found": 2,
+    "ambiguous": 5,
+    "busy": 3,
+    "not_running": 4,
+    "error": 1,
+}
 
 
 # HRESULTs we recognise as "PowerPoint is momentarily unavailable" rather than a

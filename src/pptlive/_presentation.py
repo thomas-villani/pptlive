@@ -18,7 +18,7 @@ from . import _com, _findreplace, _snapshot
 from ._anchors import Anchor
 from ._edit import EditScope
 from ._sections import SectionCollection
-from ._selection import SelectionInfo, read_selection
+from ._selection import SelectionInfo, _dbg, read_selection
 from ._shapes import Shape, has_table, has_text_frame
 from ._show import SlideShow
 from ._slides import Slide, SlideCollection, _paragraphs
@@ -38,6 +38,7 @@ from .exceptions import (
     NoTextFrameError,
     PowerPointBusyError,
     PresentationNotFoundError,
+    ReplaceVerificationError,
     UnsavedPresentationError,
 )
 
@@ -660,7 +661,16 @@ class Presentation:
         applied: list[dict[str, Any]] = []
         with _com.translate_com_errors():
             for anchor_id, tr, start, end, text in reversed(to_apply):
-                tr.Characters(start + 1, end - start).Text = replace
+                span = tr.Characters(start + 1, end - start)
+                # Re-verify the span still holds the located text before
+                # overwriting. An empty resolved text can't be checked (the fake
+                # COM, or a genuinely empty range) — proceed; a non-empty mismatch
+                # means the frame drifted between locate and apply, so refuse
+                # rather than corrupt the wrong characters.
+                resolved = str(span.Text or "")
+                if resolved and not _findreplace.normalized_equal(resolved, text):
+                    raise ReplaceVerificationError(find, text, resolved, anchor_id=anchor_id)
+                span.Text = replace
                 applied.append(
                     {"anchor_id": anchor_id, "start": start, "length": end - start, "text": text}
                 )
@@ -720,8 +730,12 @@ class Presentation:
                     # is still retryable — surface it rather than silently
                     # leaving nothing selected.
                     raise
-                except Exception:
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    # The goto succeeded; the select is best-effort (e.g. the
+                    # shape can't be selected in the current view). Don't fail the
+                    # whole jump, but trace it so a swallowed select isn't fully
+                    # invisible under PPTLIVE_VIEW_DEBUG.
+                    _dbg(f"go_to: shape.Select() failed (goto still landed): {exc!r}")
 
     def __repr__(self) -> str:
         return f"<Presentation {self.name!r}>"
@@ -739,11 +753,13 @@ class PresentationCollection:
 
     @property
     def active(self) -> Presentation:
-        with _com.translate_com_errors():
-            try:
+        try:
+            with _com.translate_com_errors():
                 pres = self._ppt.com.ActivePresentation
-            except Exception as e:
-                raise PresentationNotFoundError("<active>") from e
+        except PowerPointBusyError:
+            raise  # a transient busy is exit 3, not "no active deck" (exit 2)
+        except Exception as e:
+            raise PresentationNotFoundError("<active>") from e
         return Presentation(self._ppt, pres)
 
     def __getitem__(self, name: str) -> Presentation:
@@ -785,7 +801,10 @@ class PresentationCollection:
         with _com.translate_com_errors():
             active_name: str | None
             try:
-                active_name = str(self._ppt.com.ActivePresentation.Name)
+                with _com.translate_com_errors():
+                    active_name = str(self._ppt.com.ActivePresentation.Name)
+            except PowerPointBusyError:
+                raise  # busy is exit 3; don't mask it as "no active deck"
             except Exception:
                 active_name = None
             for pres in self._com_collection:

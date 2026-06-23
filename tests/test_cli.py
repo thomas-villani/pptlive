@@ -15,6 +15,15 @@ def _json(result) -> object:  # type: ignore[no-untyped-def]
     return json.loads(result.output)
 
 
+def test_version_flag_prints_version() -> None:
+    from pptlive import __version__
+
+    result = CliRunner().invoke(main, ["--version"])
+    assert result.exit_code == 0
+    assert __version__ in result.output
+    assert "pptlive" in result.output
+
+
 def test_status_lists_decks_and_viewed_slide(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     fake_powerpoint._viewed = 2
     result = CliRunner().invoke(main, ["status"])
@@ -629,6 +638,18 @@ def test_set_paragraphs_json(fake_powerpoint) -> None:  # type: ignore[no-untype
     assert out["paragraphs"] == ["para:2:2:1", "para:2:2:2"]
     body = fake_powerpoint.ActivePresentation.Slides(2).Shapes(2).TextFrame.TextRange
     assert body.Text == "Alpha\rBeta"
+
+
+def test_set_paragraphs_via_paragraphs_alias(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    # --paragraphs is the preferred spelling (the old --json alias still works,
+    # exercised by test_set_paragraphs_json above).
+    result = CliRunner().invoke(
+        main,
+        ["set-paragraphs", "--anchor-id", "ph:2:body", "--paragraphs", '["Alpha", "Beta"]'],
+    )
+    assert result.exit_code == 0
+    out = json.loads(result.output)
+    assert out["paragraphs"] == ["para:2:2:1", "para:2:2:2"]
 
 
 def test_set_paragraphs_needs_one_source(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]

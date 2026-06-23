@@ -8,24 +8,16 @@ from typing import Any
 
 import click
 
+from .. import __version__
 from ..exceptions import (
-    AmbiguousMatchError,
-    AnchorNotFoundError,
-    NoTextFrameError,
-    PowerPointBusyError,
-    PowerPointNotRunningError,
+    EXIT_CODE_FOR,
     PptliveError,
-    PresentationNotFoundError,
+    classify,
 )
 
 # Exit codes per spec.md §"Error taxonomy → exit codes":
 EXIT_OK = 0
 EXIT_OTHER = 1
-EXIT_ANCHOR_NOT_FOUND = 2  # anchor / slide / shape / presentation not found; zero find matches
-EXIT_POWERPOINT_BUSY = 3  # PowerPoint busy / modal dialog (a running show does not block edits)
-EXIT_POWERPOINT_NOT_RUNNING = 4
-EXIT_AMBIGUOUS_MATCH = 5
-EXIT_NO_TEXT_FRAME = 6  # the one genuinely new code
 
 
 def emit(payload: Any, *, as_text: bool = False, text: str | None = None) -> None:
@@ -45,24 +37,13 @@ def emit(payload: Any, *, as_text: bool = False, text: str | None = None) -> Non
 
 
 def _exit_for(exc: PptliveError) -> int:
-    # NoTextFrameError before the generic fallthrough; AnchorNotFoundError covers
-    # SlideNotFoundError (subclass) and zero find matches.
-    if isinstance(exc, NoTextFrameError):
-        return EXIT_NO_TEXT_FRAME
-    if isinstance(exc, AnchorNotFoundError):
-        return EXIT_ANCHOR_NOT_FOUND
-    if isinstance(exc, AmbiguousMatchError):
-        return EXIT_AMBIGUOUS_MATCH
-    if isinstance(exc, PowerPointBusyError):
-        return EXIT_POWERPOINT_BUSY
-    if isinstance(exc, PowerPointNotRunningError):
-        return EXIT_POWERPOINT_NOT_RUNNING
-    if isinstance(exc, PresentationNotFoundError):
-        return EXIT_ANCHOR_NOT_FOUND
-    return EXIT_OTHER
+    # The taxonomy lives in exceptions.classify() (shared with _batch._error_code);
+    # here we just map its code token to the spec's exit int.
+    return EXIT_CODE_FOR.get(classify(exc), EXIT_OTHER)
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
+@click.version_option(__version__, "-V", "--version", message="pptlive %(version)s")
 @click.option("--json/--text", "as_json", default=True, help="Output format (default JSON).")
 @click.option(
     "--doc", "doc_name", default=None, help="Target presentation by name (default: active)."

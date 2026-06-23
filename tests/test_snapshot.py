@@ -169,9 +169,36 @@ def test_snapshot_jpg_format(deck, fake_powerpoint, tmp_path) -> None:  # type: 
     assert _last_export(fake_powerpoint, 1)["FilterName"] == "JPG"
 
 
+def test_snapshot_multi_extension_follows_fmt_not_out_suffix(deck, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # out says .png but fmt is jpg: generated multi-slide names must carry the
+    # real bytes' extension (.jpg), not write JPEG into .png files.
+    snaps = deck.snapshot(tmp_path / "deck.png", fmt="jpg")
+    assert [s.path.name for s in snaps] == ["deck-s1.jpg", "deck-s2.jpg", "deck-s3.jpg"]
+
+
 def test_snapshot_unknown_format_raises_before_com(deck) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(ValueError, match="unknown image format"):
         deck.snapshot(slides=1, fmt="webp")
+
+
+def test_reap_old_snapshot_dirs_removes_only_old_pptlive_dirs(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import os
+    import time
+
+    from pptlive import _batch
+
+    monkeypatch.setattr(_batch.tempfile, "gettempdir", lambda: str(tmp_path))
+    old = tmp_path / "pptlive_snap_old"
+    fresh = tmp_path / "pptlive_snap_fresh"
+    other = tmp_path / "unrelated_dir"
+    for d in (old, fresh, other):
+        d.mkdir()
+    stale = time.time() - 7200
+    os.utime(old, (stale, stale))  # age it past the 1h threshold
+    _batch._reap_old_snapshot_dirs(max_age_seconds=3600)
+    assert not old.exists()  # old snapshot dir reaped
+    assert fresh.exists()  # recent one kept (may still be read this turn)
+    assert other.exists()  # non-snapshot dirs never touched
 
 
 # -- CLI --------------------------------------------------------------------

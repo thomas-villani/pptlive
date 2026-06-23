@@ -173,21 +173,27 @@ def render(
 
 
 def build_snapshots(
-    rendered: list[tuple[int, bytes]], out: str | os.PathLike[str] | None
+    rendered: list[tuple[int, bytes]],
+    out: str | os.PathLike[str] | None,
+    *,
+    fmt: str = "png",
 ) -> list[Snapshot]:
     """Wrap `(slide, png)` pairs as `Snapshot`s, writing files when `out` is given.
 
-    A single slide writes straight to `out`. Multiple slides can't share one
-    path, so each is written next to `out` as `<stem>-s<N><suffix>` (N = slide
-    index).
+    A single slide writes straight to `out` (the caller's explicit path is
+    honored verbatim). Multiple slides can't share one path, so each is written
+    next to `out` as `<stem>-s<N>.<ext>` — and the extension is derived from
+    `fmt` (the actual bytes), *not* the caller's `out` suffix, so a
+    `snapshot(out="deck.png", fmt="jpg")` doesn't write JPEG bytes into a `.png`.
     """
     if out is None:
         return [Snapshot(slide=i, image=img, path=None) for i, img in rendered]
     out_path = Path(os.fspath(out))
     single = len(rendered) == 1
+    ext = image_filter_for(fmt)[1]  # canonical extension for the rendered bytes
     snaps: list[Snapshot] = []
     for i, img in rendered:
-        dest = out_path if single else out_path.with_name(f"{out_path.stem}-s{i}{out_path.suffix}")
+        dest = out_path if single else out_path.with_name(f"{out_path.stem}-s{i}.{ext}")
         dest.write_bytes(img)
         snaps.append(Snapshot(slide=i, image=img, path=dest))
     return snaps
@@ -205,5 +211,7 @@ def snapshot(
 ) -> list[Snapshot]:
     """Render slides to PNG and (optionally) write them — see `Presentation.snapshot`."""
     return build_snapshots(
-        render(deck, slides=slides, fmt=fmt, max_dim=max_dim, width=width, height=height), out
+        render(deck, slides=slides, fmt=fmt, max_dim=max_dim, width=width, height=height),
+        out,
+        fmt=fmt,
     )

@@ -77,6 +77,29 @@ def test_doc_selector_unknown_raises_not_found(fake_powerpoint_same_named_decks:
             _ = handle.presentations["nope.pptx"]
 
 
+def test_active_and_list_surface_busy_not_not_found() -> None:
+    # A transient busy on the ActivePresentation read is exit 3 (retryable) — it
+    # must NOT be collapsed into PresentationNotFoundError (exit 2) / a null
+    # active deck. The typed busy passes through translate_com_errors unchanged.
+    from types import SimpleNamespace
+
+    from pptlive._presentation import PresentationCollection
+    from pptlive.exceptions import PowerPointBusyError
+
+    class _BoomCom:
+        Presentations: list = []  # type: ignore[type-arg]
+
+        @property
+        def ActivePresentation(self) -> object:
+            raise PowerPointBusyError(hresult=0x80010001)
+
+    coll = PresentationCollection(SimpleNamespace(com=_BoomCom()))  # type: ignore[arg-type]
+    with pytest.raises(PowerPointBusyError):
+        _ = coll.active
+    with pytest.raises(PowerPointBusyError):
+        coll.list()
+
+
 def test_connect_no_launch_reraises(no_powerpoint: None) -> None:
     # launch_if_missing=False makes connect() behave like attach().
     with pytest.raises(PowerPointNotRunningError):

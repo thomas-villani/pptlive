@@ -12,7 +12,9 @@ maps `BatchOpError` back to a `ToolError`; `cli/commands.py exec` maps it to exi
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
+import time
 from collections.abc import Callable
 from contextlib import nullcontext
 from enum import StrEnum
@@ -22,35 +24,17 @@ from ._anchors import LINE_SPACING_MULTIPLE_MAX, SOFT_BREAK
 from ._presentation import Presentation
 from ._shapes import Shape
 from .exceptions import (
-    AmbiguousMatchError,
     AnchorNotFoundError,
     BatchOpError,
-    NoTextFrameError,
-    PowerPointBusyError,
-    PowerPointNotRunningError,
     PptliveError,
-    PresentationNotFoundError,
+    classify,
 )
 
 
 def _error_code(exc: PptliveError) -> str:
-    # Order mirrors cli.main._exit_for: NoTextFrameError before the generic
-    # AnchorNotFoundError (which covers SlideNotFoundError / LayoutNotFoundError).
-    if isinstance(exc, BatchOpError):
-        return "invalid_args"
-    if isinstance(exc, NoTextFrameError):
-        return "no_text_frame"
-    if isinstance(exc, AnchorNotFoundError):
-        return "not_found"
-    if isinstance(exc, AmbiguousMatchError):
-        return "ambiguous"
-    if isinstance(exc, PowerPointBusyError):
-        return "busy"
-    if isinstance(exc, PowerPointNotRunningError):
-        return "not_running"
-    if isinstance(exc, PresentationNotFoundError):
-        return "not_found"
-    return "error"
+    # The taxonomy lives in exceptions.classify() — the single source of truth
+    # shared with cli.main._exit_for, so the two front-ends can't drift.
+    return classify(exc)
 
 
 def _require(condition: Any, message: str) -> None:
@@ -533,12 +517,9 @@ def _format_warnings(anchor: Any, p: dict[str, Any]) -> list[str]:
 @edit_op(EditOp.SLIDE_ADD)
 def _edit_slide_add(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
     placeholders = p.get("placeholders")
-    try:
-        new = deck.slides.add(
-            layout=p.get("layout"), index=p.get("index"), placeholders=placeholders
-        )
-    except ValueError as exc:
-        raise BatchOpError(f"invalid_args: {exc}") from exc
+    # A bad layout/index/placeholders ValueError is mapped to invalid_args
+    # centrally (run_batch + the MCP _mcp_errors wrapper), so no per-handler wrap.
+    new = deck.slides.add(layout=p.get("layout"), index=p.get("index"), placeholders=placeholders)
     result: dict[str, Any] = {
         "ok": True,
         "index": new.index,
@@ -1285,12 +1266,42 @@ def _render_slide_image(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "slide": p["slide"], "path": str(path), "format": fmt}
 
 
+_SNAPSHOT_TMP_PREFIX = "pptlive_snap_"
+
+
+def _reap_old_snapshot_dirs(max_age_seconds: float = 3600.0) -> None:
+    """Best-effort cleanup of leftover snapshot temp dirs from prior calls.
+
+    `deck_snapshot` must keep its temp dir alive until the MCP reply has read the
+    PNG bytes back, so it can't delete its own dir inline. Instead each call sweeps
+    away earlier `pptlive_snap_*` dirs older than `max_age_seconds`, bounding the
+    leak in a long-lived server without risking a dir still being read this turn
+    (or one a concurrent process just created).
+    """
+    root = tempfile.gettempdir()
+    now = time.time()
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return
+    for name in names:
+        if not name.startswith(_SNAPSHOT_TMP_PREFIX):
+            continue
+        path = os.path.join(root, name)
+        try:
+            if os.path.isdir(path) and (now - os.path.getmtime(path)) > max_age_seconds:
+                shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            pass
+
+
 @render_op(RenderOp.DECK_SNAPSHOT)
 def _render_deck_snapshot(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
     deck = _pick_deck(ppt, p.get("doc"))
     fmt = p.get("fmt") or "png"
     selector = _parse_slide_selector(p.get("slides"))
-    out_dir = tempfile.mkdtemp(prefix="pptlive_snap_")
+    _reap_old_snapshot_dirs()  # bound the temp-dir leak from earlier calls
+    out_dir = tempfile.mkdtemp(prefix=_SNAPSHOT_TMP_PREFIX)
     base = os.path.join(out_dir, f"snap.{fmt}")
     snaps = deck.snapshot(
         base,
@@ -1340,10 +1351,9 @@ def _render_save_as(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
     deck = _pick_deck(ppt, p.get("doc"))
     _require(p.get("out") is not None, "render op='save_as' requires `out` (the .pptx path)")
     fmt = str(p.get("save_format", "pptx"))
-    try:
-        written = deck.save_as(p["out"], fmt=fmt, overwrite=bool(p.get("overwrite", False)))
-    except (FileExistsError, ValueError) as exc:
-        raise BatchOpError(f"invalid_args: {exc}") from exc
+    # FileExistsError (clobber) / ValueError (bad format) map to invalid_args
+    # centrally (run_batch + _mcp_errors), so no per-handler wrap.
+    written = deck.save_as(p["out"], fmt=fmt, overwrite=bool(p.get("overwrite", False)))
     return {"ok": True, "path": written, "format": fmt}
 
 
@@ -1509,8 +1519,16 @@ def run_batch(
                     if fs is not None:
                         focus_slide = fs
                 entry.update(ok=True, result=result)
-            except PptliveError as exc:
-                entry.update(ok=False, error=_error_code(exc), message=str(exc))
+            except (PptliveError, ValueError, FileNotFoundError, FileExistsError) as exc:
+                # Library handlers raise bare ValueError (e.g. format_paragraph
+                # line_spacing > 5, empty set_paragraphs), FileNotFoundError
+                # (picture sourcing), and FileExistsError (save_as clobber)
+                # without wrapping them in BatchOpError. Record those as
+                # invalid_args per-command — mirroring the single-op MCP path
+                # (_mcp_errors) — so one bad op doesn't abort the whole batch or
+                # escape the per-op contract.
+                code = _error_code(exc) if isinstance(exc, PptliveError) else "invalid_args"
+                entry.update(ok=False, error=code, message=str(exc))
                 results.append(entry)
                 if stop_on_error:
                     break

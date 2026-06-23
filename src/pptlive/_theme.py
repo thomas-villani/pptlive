@@ -44,7 +44,6 @@ from ._shapes import background_to_dict
 from .constants import (
     THEME_COLOR_CHOICES,
     alignment_for,
-    color_hex,
     color_hex_or_none,
     is_true,
     parse_color,
@@ -93,7 +92,7 @@ class Theme:
             theme = self.com
             scheme = theme.ThemeColorScheme
             colors = {
-                slot: _safe(lambda i=idx: color_hex(scheme.Colors(i).RGB), None)
+                slot: _safe(lambda i=idx: color_hex_or_none(scheme.Colors(i).RGB), None)
                 for idx, slot in enumerate(THEME_COLOR_CHOICES, start=1)
             }
             fonts_com = theme.ThemeFontScheme

@@ -21,6 +21,14 @@ scope — PowerPoint groups a block's edits into a single Ctrl-Z (fenced with
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
+
+try:
+    __version__ = _pkg_version("pptlive")
+except PackageNotFoundError:  # not installed (e.g. running from a source tree)
+    __version__ = "0.0.0+unknown"
+
 from . import constants, units
 from ._anchors import Anchor, Notes, Paragraph, ParagraphCollection
 from ._app import PowerPoint, attach, connect
@@ -48,6 +56,7 @@ from .exceptions import (
     PowerPointNotRunningError,
     PptliveError,
     PresentationNotFoundError,
+    ReplaceVerificationError,
     SlideNotFoundError,
     SlideShowNotRunningError,
     UnsavedPresentationError,
@@ -78,6 +87,7 @@ __all__ = [
     "PresentationCollection",
     "PresentationNotFoundError",
     "PptliveError",
+    "ReplaceVerificationError",
     "SectionCollection",
     "SelectionInfo",
     "SelectionSnapshot",
@@ -95,6 +105,7 @@ __all__ = [
     "TextFrameStatus",
     "Theme",
     "UnsavedPresentationError",
+    "__version__",
     "attach",
     "connect",
     "constants",

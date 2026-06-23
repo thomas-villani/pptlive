@@ -58,7 +58,15 @@ class SelectionSnapshot:
     selection_type: int = int(PpSelectionType.NONE)
     """The `PpSelectionType` at snapshot time."""
     shape_names: tuple[str, ...] = ()
-    """Names of the selected shapes, when `selection_type` is SHAPES."""
+    """Names of the selected shapes, when `selection_type` is SHAPES.
+
+    Caveat: PowerPoint allows duplicate shape names, and `Shapes.Range` (used by
+    `restore`) resolves by name, not the stable `Shape.Id`. If two selected
+    shapes share a name, restore may re-select the wrong shape (or fall back to
+    clearing the selection). The stable `Id` can't be passed to `Range`, so this
+    is a known COM limitation of the politeness restore, not a correctness bug in
+    an edit — the user's selection is cosmetic state, restored best-effort.
+    """
 
 
 def _active_window(ppt: PowerPoint) -> Any | None:

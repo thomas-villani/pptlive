@@ -1522,6 +1522,54 @@ def test_batch_empty_list_is_tool_error(fake_powerpoint: Any) -> None:
     assert "invalid_args" in str(exc.value)
 
 
+def test_batch_records_bare_valueerror_as_invalid_args(fake_powerpoint: Any) -> None:
+    # format_paragraph raises a bare ValueError (not a PptliveError) for a
+    # line_spacing multiple > 5 without force. It must be recorded as a per-op
+    # invalid_args failure, not escape the batch and abort the surrounding ops.
+    out = ppt_batch(
+        [
+            {"op": "write", "anchor_id": "ph:2:title", "text": "ok"},
+            {"op": "format", "anchor_id": "ph:2:title", "line_spacing": 10},
+            {"op": "write", "anchor_id": "ph:2:body", "text": "still runs"},
+        ],
+        stop_on_error=False,
+    )
+    assert out["ok"] is False
+    assert out["count"] == 3
+    assert [r["ok"] for r in out["results"]] == [True, False, True]
+    assert out["results"][1]["error"] == "invalid_args"
+    assert ppt_read("anchor", anchor_id="ph:2:body")["text"] == "still runs"
+
+
+def test_batch_bare_valueerror_can_stop_the_run(fake_powerpoint: Any) -> None:
+    # With stop_on_error (the default), a bare ValueError is recorded as a
+    # per-op failure and halts the batch cleanly — not raised as a whole-batch
+    # ToolError that discards the earlier results.
+    out = ppt_batch(
+        [
+            {"op": "write", "anchor_id": "ph:2:title", "text": "ok"},
+            {"op": "format", "anchor_id": "ph:2:title", "line_spacing": 10},
+            {"op": "write", "anchor_id": "ph:2:body", "text": "never runs"},
+        ]
+    )
+    assert out["ok"] is False
+    assert out["count"] == 2
+    assert out["results"][1]["error"] == "invalid_args"
+
+
+def test_batch_save_as_clobber_is_invalid_args(fake_powerpoint: Any, tmp_path: Any) -> None:
+    # save_as raises FileExistsError (not a PptliveError) when it would clobber.
+    # It is mapped to invalid_args centrally now that the per-handler wrap is gone.
+    target = tmp_path / "deck.pptx"
+    target.write_text("existing")
+    out = ppt_batch(
+        [{"tool": "render", "op": "save_as", "out": str(target)}],
+        stop_on_error=False,
+    )
+    assert out["results"][0]["ok"] is False
+    assert out["results"][0]["error"] == "invalid_args"
+
+
 # ---------------------------------------------------------------------------
 # Tool discoverability (PPTLIVE-002): a search for the product name must surface
 # every tool, so each tool's description carries the word "PowerPoint".

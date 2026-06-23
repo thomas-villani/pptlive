@@ -117,6 +117,16 @@ def test_format_text_whole_shape_applies_to_all_paragraphs(deck) -> None:  # typ
     assert all(int(com.Paragraphs(p, 1).Font.Italic) == -1 for p in (1, 2, 3))
 
 
+def test_format_text_bad_color_does_not_half_format(deck) -> None:  # type: ignore[no-untyped-def]
+    # color is validated before any font property is written, so a bad color
+    # raises ValueError without leaving bold applied (no partial mutation).
+    para = _body(deck).paragraphs[1]
+    before = int(_body_com(deck).Paragraphs(1, 1).Font.Bold)
+    with pytest.raises(ValueError):
+        para.format_text(bold=True, color="not-a-color")
+    assert int(_body_com(deck).Paragraphs(1, 1).Font.Bold) == before
+
+
 # -- paragraph formatting ---------------------------------------------------
 
 
@@ -225,6 +235,16 @@ def test_set_paragraphs_guardrail_propagates(deck) -> None:  # type: ignore[no-u
 def test_set_paragraphs_rejects_bad_item(deck) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(ValueError):
         _body(deck).set_paragraphs([{"no_text": "oops"}])
+
+
+def test_set_paragraphs_on_single_paragraph_anchor_raises(deck) -> None:  # type: ignore[no-untyped-def]
+    # A `para:` anchor is a single paragraph; set_paragraphs replaces a whole
+    # frame's list and would corrupt it / silently drop formatting. Reject it,
+    # leaving the surrounding paragraphs untouched.
+    para = _body(deck).paragraph(2)
+    with pytest.raises(ValueError, match="para:2:2:2"):
+        para.set_paragraphs(["a", "b", "c"])
+    assert _body(deck).text == "Intro\rDemo\rQ&A"  # nothing was written
 
 
 # -- bullets / lists --------------------------------------------------------

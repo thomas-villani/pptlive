@@ -105,6 +105,27 @@ def test_exit_codes_match_spec() -> None:
     assert cli_main._exit_for(ComError("boom")) == 1
 
 
+def test_classify_is_single_source_for_both_front_ends() -> None:
+    # _batch._error_code and cli.main._exit_for both derive from classify(), so
+    # the MCP code token and the CLI exit int can't drift apart.
+    from pptlive._batch import _error_code
+    from pptlive.exceptions import EXIT_CODE_FOR, classify
+
+    for exc in (
+        NoTextFrameError("shape:1:1"),
+        AnchorNotFoundError("shape", "shape:9:9"),
+        SlideNotFoundError(9),
+        PresentationNotFoundError("x.pptx"),
+        AmbiguousMatchError("x", []),
+        PowerPointBusyError(),
+        PowerPointNotRunningError(),
+        ComError("boom"),
+    ):
+        code = classify(exc)
+        assert _error_code(exc) == code  # MCP token
+        assert cli_main._exit_for(exc) == EXIT_CODE_FOR[code]  # CLI exit int
+
+
 # -- retry_on_busy ----------------------------------------------------------
 
 
@@ -133,6 +154,14 @@ def test_retry_on_busy_reraises_after_exhausting(monkeypatch) -> None:  # type: 
     with pytest.raises(PowerPointBusyError):
         _com.retry_on_busy(always_busy, attempts=3, delay=0)
     assert calls["n"] == 3  # tried exactly `attempts` times
+
+
+def test_retry_on_busy_rejects_nonpositive_attempts() -> None:
+    # attempts < 1 is a programming error; raise a clean ValueError rather than
+    # relying on an `assert` (stripped under python -O, which would then raise a
+    # confusing `raise None` TypeError).
+    with pytest.raises(ValueError, match="attempts must be >= 1"):
+        _com.retry_on_busy(lambda: "x", attempts=0)
 
 
 def test_retry_on_busy_passes_through_non_busy() -> None:

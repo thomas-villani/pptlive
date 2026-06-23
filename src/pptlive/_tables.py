@@ -381,8 +381,13 @@ class Table:
         """
         if sel is None:
             return list(range(1, count + 1))
+        # bool is an int subclass; reject it explicitly (True->1 would silently
+        # select row/col 1) for consistency with parse_color / dash_style_for /
+        # border_edges_for, which all guard the same footgun.
+        if isinstance(sel, bool):
+            raise ValueError(f"{axis} selector must be an int or list of ints, not a bool")
         raw: Sequence[int]
-        if isinstance(sel, int):  # bool is an int subclass; a bool selector is harmless here
+        if isinstance(sel, int):
             raw = [int(sel)]
         else:
             raw = [int(x) for x in sel]
@@ -415,6 +420,8 @@ class Table:
         """
         row_idx = self._resolve_axis(rows, self.row_count, "row")
         col_idx = self._resolve_axis(cols, self.column_count, "column")
+        if not _is_none_token(fill):
+            parse_color(fill)  # validate the color once, before any COM (like set_border)
         with _com.translate_com_errors():
             com_table = self._shape.com.Table
             count = 0
@@ -453,6 +460,8 @@ class Table:
             raise ValueError(
                 "set_border() requires at least one of color=, weight=, dash=, visible="
             )
+        if weight is not None and weight < 0:  # validate before any COM
+            raise ValueError(f"weight must be >= 0 points, got {weight}")
         edge_idx = border_edges_for(edges)  # ValueError before any COM
         hide = color is not None and _is_none_token(color)
         rgb = None if (color is None or hide) else parse_color(color)  # ValueError before COM

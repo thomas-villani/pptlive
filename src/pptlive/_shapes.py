@@ -61,7 +61,7 @@ from .constants import (
     smartart_layout_for,
     zorder_cmd_for,
 )
-from .exceptions import AnchorNotFoundError, NoTextFrameError
+from .exceptions import AmbiguousMatchError, AnchorNotFoundError, NoTextFrameError
 
 if TYPE_CHECKING:
     from ._charts import Chart, SeriesInput
@@ -521,14 +521,27 @@ def replace_picture(
         -1.0,
     )
     new_id = int(new_com.Id)
-    try:
-        new_com.LockAspectRatio = int(MsoTriState.FALSE)  # let the copied box win
-    except Exception:
-        pass
-    new_com.Left = left
-    new_com.Top = top
-    new_com.Width = width
-    new_com.Height = height
+
+    def _force_box() -> None:
+        # Clearing LockAspectRatio lets the copied box win; if the assignment is
+        # rejected (some builds/shape states), setting Width snaps Height to the
+        # new image's ratio (and vice versa) — the exact drift this re-source
+        # guards against. Best-effort clear, then set the box.
+        try:
+            new_com.LockAspectRatio = int(MsoTriState.FALSE)
+        except Exception:  # noqa: BLE001 — best-effort; verified/retried below
+            pass
+        new_com.Left = left
+        new_com.Top = top
+        new_com.Width = width
+        new_com.Height = height
+
+    _force_box()
+    # Verify the box stuck; if a wedged aspect-lock snapped it, retry once. A
+    # genuinely stuck lock can't be cleared in software, but the retry recovers
+    # the common transient case instead of silently shipping a wrong-sized picture.
+    if abs(float(new_com.Width) - width) > 0.5 or abs(float(new_com.Height) - height) > 0.5:
+        _force_box()
     new_com.Rotation = rotation
     new_com.AlternativeText = carried_alt if alt_text is None else str(alt_text)
 
@@ -841,16 +854,21 @@ def effect_to_dict(eff: Any, slide_index: int) -> dict[str, Any]:
     `EffectType`/`TriggerType` ints to friendly names. `exit` is True for an exit
     (animate-out) effect. `duration` is the animation length in seconds and `delay`
     the `after`/`with` start delay — both read off `Effect.Timing`.
+
+    Every field is read defensively (`_safe`): one unreadable property on a single
+    effect (an exotic `Timing`, a motion-path `EffectType`) degrades to `None`
+    rather than failing the whole `slide.animations()` listing — matching the
+    rest of the read-to-dict helpers. A genuine busy still propagates.
     """
-    timing = eff.Timing
+    shape_id = _safe(lambda: int(eff.Shape.Id), None)
     return {
-        "shapeid": f"shapeid:{slide_index}:{int(eff.Shape.Id)}",
-        "shape": str(eff.Shape.Name),
-        "effect": anim_effect_name(int(eff.EffectType)),
-        "exit": is_true(eff.Exit),
-        "trigger": anim_trigger_name(int(timing.TriggerType)),
-        "duration": float(timing.Duration),
-        "delay": float(timing.TriggerDelayTime),
+        "shapeid": None if shape_id is None else f"shapeid:{slide_index}:{shape_id}",
+        "shape": _safe(lambda: str(eff.Shape.Name), None),
+        "effect": _safe(lambda: anim_effect_name(int(eff.EffectType)), None),
+        "exit": _safe(lambda: is_true(eff.Exit), None),
+        "trigger": _safe(lambda: anim_trigger_name(int(eff.Timing.TriggerType)), None),
+        "duration": _safe(lambda: float(eff.Timing.Duration), None),
+        "delay": _safe(lambda: float(eff.Timing.TriggerDelayTime), None),
     }
 
 
@@ -1433,8 +1451,13 @@ class Shape(Anchor):
         cmd = zorder_cmd_for(to)  # ValueError before any COM
         with _com.translate_com_errors():
             sh = self._com_shape()  # raw ref tracks the shape across the restack
+            shape_id = int(sh.Id)
             sh.ZOrder(cmd)
-            return int(sh.ZOrderPosition)
+            # Report the Shapes-collection index (the basis shape:S:N resolves by),
+            # not ZOrderPosition — they coincide on a flat slide but can diverge,
+            # and the returned position should be usable as shape:S:N.
+            found = find_shape_by_id(self._slide.com, shape_id)
+            return found[0] if found is not None else int(sh.ZOrderPosition)
 
     def animate(
         self,
@@ -1516,7 +1539,8 @@ class Shape(Anchor):
             assert slide is not None  # narrowed by the exactly-one check above
             sub_address = self._slide_jump_subaddress(int(slide))  # ValueError if out of range
         with _com.translate_com_errors():
-            acts = self._com_shape().ActionSettings(int(PpMouseActivation.MOUSE_CLICK))
+            sh = self._com_shape()  # resolve once; reuse for mutation + readback
+            acts = sh.ActionSettings(int(PpMouseActivation.MOUSE_CLICK))
             link = acts.Hyperlink
             if url is not None:
                 link.Address = url
@@ -1526,7 +1550,7 @@ class Shape(Anchor):
                 link.SubAddress = sub_address
             if screen_tip is not None:
                 link.ScreenTip = str(screen_tip)
-            return _hyperlink_to_dict(self._com_shape()) or {}
+            return _hyperlink_to_dict(sh) or {}
 
     def _slide_jump_subaddress(self, slide_index: int) -> str:
         """Build the `"<SlideID>,<index>,<title>"` SubAddress for an in-deck jump.
@@ -1686,23 +1710,34 @@ class ShapeById(Shape):
     def anchor_id(self) -> str:
         return f"shapeid:{self._slide.index}:{self._shape_id}"
 
-    def _com_shape(self) -> Any:
-        """Resolve the COM `Shape` live by stable `.Id`. Never cached."""
+    def _resolve(self) -> tuple[int, Any]:
+        """Resolve to `(1-based Shapes-collection index, COM Shape)` live by `.Id`.
+
+        Uses the collection index from `find_shape_by_id`, *not* `ZOrderPosition`:
+        `shape:S:N` resolves via `Shapes(N)`, so the emitted `shape:S:N` anchor
+        must use the same basis or it could point at a different shape than the
+        `shapeid` it was read from (the two coincide on a flat slide but can
+        diverge with grouped/placeholder orderings).
+        """
         found = find_shape_by_id(self._slide.com, self._shape_id)
         if found is None:
             raise AnchorNotFoundError("shape", self.anchor_id)
-        return found[1]
+        return found
+
+    def _com_shape(self) -> Any:
+        """Resolve the COM `Shape` live by stable `.Id`. Never cached."""
+        return self._resolve()[1]
 
     @property
     def index(self) -> int:
-        """Current 1-based z-order index of the resolved shape."""
+        """Current 1-based `Shapes`-collection index of the resolved shape."""
         with _com.translate_com_errors():
-            return int(self._com_shape().ZOrderPosition)
+            return self._resolve()[0]
 
     def to_dict(self) -> dict[str, Any]:
         with _com.translate_com_errors():
-            sh = self._com_shape()
-            return shape_to_dict(sh, self._slide.index, int(sh.ZOrderPosition))
+            idx, sh = self._resolve()
+            return shape_to_dict(sh, self._slide.index, idx)
 
 
 # ---------------------------------------------------------------------------
@@ -1739,10 +1774,32 @@ class ShapeCollection:
             return Shape(self._slide, key)
         if isinstance(key, str):
             with _com.translate_com_errors():
-                for idx, sh in enumerate(self._com_collection, start=1):
-                    if str(sh.Name) == key:
-                        return Shape(self._slide, idx)
-            raise AnchorNotFoundError("shape", key)
+                matches: list[dict[str, Any]] = [
+                    {
+                        "anchor_id": f"shape:{self._slide.index}:{idx}",
+                        "name": key,
+                        "id": int(sh.Id),
+                        "index": idx,
+                    }
+                    for idx, sh in enumerate(self._com_collection, start=1)
+                    if str(sh.Name) == key
+                ]
+            if not matches:
+                raise AnchorNotFoundError("shape", key)
+            if len(matches) > 1:
+                # PowerPoint allows duplicate shape names (paste/duplicate). Rather
+                # than silently pick the first, surface the ambiguity with the
+                # candidate shape:S:N anchors (same convention as _find_placeholder).
+                anchors = ", ".join(str(c["anchor_id"]) for c in matches)
+                raise AmbiguousMatchError(
+                    key,
+                    matches,
+                    message=(
+                        f"{len(matches)} shapes named {key!r} on slide "
+                        f"{self._slide.index} ({anchors}); target one by shape:S:N"
+                    ),
+                )
+            return Shape(self._slide, int(matches[0]["index"]))
         raise TypeError(f"shape key must be int or str, got {type(key).__name__}")
 
     def __contains__(self, key: object) -> bool:
@@ -1753,6 +1810,8 @@ class ShapeCollection:
             return True
         except AnchorNotFoundError:
             return False
+        except AmbiguousMatchError:
+            return True  # the name exists (more than once) — membership is still True
 
     def __iter__(self) -> Iterator[Shape]:
         count = len(self)

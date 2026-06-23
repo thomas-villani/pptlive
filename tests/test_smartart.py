@@ -65,6 +65,22 @@ def test_add_smartart_default_nodes(deck) -> None:  # type: ignore[no-untyped-de
     assert all(n["level"] == 1 for n in info["nodes"])
 
 
+def test_read_warns_when_walk_count_diverges_from_allnodes(deck, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from types import SimpleNamespace
+
+    sh = deck.slides[3].shapes.add_smartart("process")  # 3 flat nodes
+    fake = sh.com.SmartArt  # the _FakeSmartArt instance
+    # Inflate AllNodes.Count beyond the recursive walk (3) so the depth-first
+    # assumption fails — read() must warn that node_index may not address nodes.
+    monkeypatch.setattr(
+        type(fake),
+        "AllNodes",
+        property(lambda self: SimpleNamespace(Count=99, Item=lambda i: self._nodes.Item(i))),
+    )
+    with pytest.warns(UserWarning, match="node_index"):
+        sh.smartart.read()
+
+
 def test_add_smartart_with_flat_nodes(deck) -> None:  # type: ignore[no-untyped-def]
     sa = deck.slides[3].shapes.add_smartart("process", ["Discover", "Design", "Build", "Ship"])
     info = sa.smartart.read()

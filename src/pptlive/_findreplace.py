@@ -131,10 +131,27 @@ def _normalize(s: str, *, collapse_whitespace: bool = True) -> _Normalized:
         out_chars.pop()
         out_offsets.pop()
 
-    # Sentinel: one-past-the-last so callers can use offsets[end] as a half-open
-    # right boundary even when the match runs to the end of the string.
-    out_offsets.append(len(s))
+    # Sentinel: one-past-the-last retained source char so callers can use
+    # offsets[end] as a half-open right boundary even when the match runs to the
+    # end of the normalized string. It must NOT be len(s): the folds map the
+    # paragraph mark \r -> \n and the soft break \v -> space, and trailing
+    # whitespace is then stripped, so len(s) can point past those dropped chars.
+    # A match ending at the last retained char would then span across the
+    # stripped \r and fuse the paragraph into the next one on replace. Anchor the
+    # sentinel to the last retained char's source offset + 1 instead.
+    out_offsets.append(out_offsets[-1] + 1 if out_offsets else len(s))
     return _Normalized(text="".join(out_chars), offsets=out_offsets)
+
+
+def normalized_equal(a: str, b: str) -> bool:
+    """Whether `a` and `b` are equal under find/replace normalization.
+
+    Used by `find_replace` to verify a resolved text-frame span still matches the
+    located text before overwriting it — the fuzzy folds (smart-quote/dash/NBSP,
+    whitespace collapse) mean a smart-quote vs straight round-trip still counts as
+    equal, so the guard doesn't false-trip on cosmetically-different-but-equal text.
+    """
+    return _normalize(a).text == _normalize(b).text
 
 
 @dataclass(frozen=True)

@@ -57,7 +57,7 @@ from ..constants import (
     THEME_FONT_SLOTS,
     ZORDER_CHOICES,
 )
-from ..exceptions import AnchorNotFoundError, PowerPointNotRunningError
+from ..exceptions import EXIT_CODE_FOR, AnchorNotFoundError, PowerPointNotRunningError
 from .main import EXIT_OTHER, _run, emit
 
 
@@ -493,18 +493,13 @@ def snapshot_cmd(
     path, multiple → `<stem>-s<N><suffix>`) and the JSON reports each `path`;
     without it, base64 PNG data is returned inline.
     """
-    try:
-        selector = _parse_slides_range(slide, slides_range)
-    except ValueError as exc:
-        click.echo(f"error: {exc}", err=True)
-        sys.exit(1)
-    try:
-        snaps = deck.snapshot(
-            out, slides=selector, fmt=fmt, max_dim=max_dim, width=width, height=height
-        )
-    except ValueError as exc:
-        click.echo(f"error: {exc}", err=True)
-        sys.exit(1)
+    # A bad --slides range or snapshot arg raises ValueError; the shared _run
+    # boundary classifies it to a clean exit 1 (like every other deck command),
+    # so no hand-rolled try/except here.
+    selector = _parse_slides_range(slide, slides_range)
+    snaps = deck.snapshot(
+        out, slides=selector, fmt=fmt, max_dim=max_dim, width=width, height=height
+    )
     images = [
         {
             "slide": s.slide,
@@ -3360,7 +3355,8 @@ def write(ctx: click.Context, anchor_id: str, text: str) -> None:
     "--anchor-id", "anchor_id", required=True, help="Text anchor to rewrite (ph:/shape:/notes:)."
 )
 @click.option(
-    "--json",
+    "--paragraphs",
+    "--json",  # back-compat alias; --paragraphs is preferred (avoids shadowing the global --json)
     "paragraphs_json",
     default=None,
     help='Paragraphs as a JSON array: strings or {"text", "list_type", ...} objects.',
@@ -3370,7 +3366,7 @@ def write(ctx: click.Context, anchor_id: str, text: str) -> None:
     "json_file",
     type=click.Path(exists=True, dir_okay=False),
     default=None,
-    help="Read the JSON paragraphs array from a file instead of --json.",
+    help="Read the JSON paragraphs array from a file instead of --paragraphs.",
 )
 @_deck_command
 def set_paragraphs(
@@ -3416,15 +3412,9 @@ def set_paragraphs(
 
 #: A batch op's error category -> CLI exit code (mirrors main._exit_for, keyed by
 #: the string token run_batch reports instead of an exception type).
-_BATCH_EXIT_FOR: dict[str, int] = {
-    "not_found": 2,
-    "busy": 3,
-    "not_running": 4,
-    "ambiguous": 5,
-    "no_text_frame": 6,
-    "invalid_args": 1,
-    "error": 1,
-}
+# The batch-result `error` token -> exit int mapping is the same taxonomy as
+# every other failure: reuse the single source of truth in exceptions.
+_BATCH_EXIT_FOR = EXIT_CODE_FOR
 
 
 @click.command(name="exec")

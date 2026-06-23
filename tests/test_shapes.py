@@ -33,6 +33,21 @@ def test_shape_by_unknown_name_raises(deck) -> None:  # type: ignore[no-untyped-
         deck.slides[2].shapes["Nonexistent"]
 
 
+def test_shape_by_duplicate_name_raises_ambiguous(deck) -> None:  # type: ignore[no-untyped-def]
+    from pptlive.exceptions import AmbiguousMatchError
+
+    # PowerPoint allows duplicate shape names; a name lookup that matches more
+    # than one must surface the ambiguity (with shape:S:N candidates), not
+    # silently pick the first — consistent with placeholder resolution.
+    shapes = deck.slides[2].shapes
+    shapes[1].com.Name = "Dup"
+    shapes[2].com.Name = "Dup"
+    with pytest.raises(AmbiguousMatchError) as exc:
+        _ = shapes["Dup"]
+    assert "shape:2:1" in str(exc.value) and "shape:2:2" in str(exc.value)
+    assert "Dup" in shapes  # membership is still True (the name exists)
+
+
 def test_shape_index_out_of_range_raises(deck) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(AnchorNotFoundError):
         deck.slides[2].shapes[99]
@@ -231,6 +246,34 @@ def test_set_picture_missing_file_raises(deck, tmp_path) -> None:  # type: ignor
 def test_set_picture_on_non_picture_raises(deck, tmp_path) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(ValueError, match="needs a picture shape"):
         deck.slides[3].shapes[1].set_picture(_png(tmp_path))  # a textbox
+
+
+def test_shapeid_index_follows_collection_not_zorderposition() -> None:
+    # On a flat slide ZOrderPosition == Shapes-collection index, but with
+    # grouped/placeholder orderings they diverge. ShapeById must report the
+    # collection index (the basis shape:S:N resolves by), not ZOrderPosition —
+    # else the emitted shape:S:N would point at a different shape.
+    from types import SimpleNamespace
+
+    from pptlive._shapes import ShapeById
+    from pptlive._slides import Slide
+
+    class _Coll:
+        def __init__(self, shapes: list) -> None:  # type: ignore[type-arg]
+            self._shapes = shapes
+
+        @property
+        def Count(self) -> int:
+            return len(self._shapes)
+
+        def __call__(self, idx: int) -> object:
+            return self._shapes[idx - 1]
+
+    # One shape at collection index 1 whose ZOrderPosition lies (reports 9).
+    sh = SimpleNamespace(Id=42, ZOrderPosition=9)
+    slide_com = SimpleNamespace(Shapes=_Coll([sh]), SlideIndex=3)
+    handle = ShapeById(Slide(None, slide_com), 42)  # type: ignore[arg-type]
+    assert handle.index == 1  # collection index, not ZOrderPosition (9)
 
 
 # -- delete (v0.2) ----------------------------------------------------------
