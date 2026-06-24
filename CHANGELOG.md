@@ -7,6 +7,139 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-06-23
+
+### Added
+
+A **post-creation edit-surface** round — an audit of what can be *restyled* after
+creation (vs. wordlive's delete-and-recreate habit), each item pinned against live
+PowerPoint by a net-zero spike before hardening, and shipped across library + CLI +
+MCP + both SKILL guides.
+
+- **Table cell styling.** `Table.set_fill(fill, *, rows=None, cols=None,
+  transparency=None)` (solid cell shading, or `fill="none"` to clear) and
+  `Table.set_border(*, color=None, weight=None, dash=None, edges="all", rows=None,
+  cols=None, visible=None)`, both **row/column-wise** — `rows`/`cols` are `None`
+  (whole axis) / an int (one) / a list (several) and the *intersection* is styled
+  (so `rows=1` shades the header row, `cols=2` a column, both `None` the whole
+  table). `Cell.set_fill` / `Cell.set_border` are thin per-cell delegations. The
+  round **overturns a prior assumption**: a `scripts/cell_style_spike.py` probe
+  proved PowerPoint's COM *does* expose cell fill (`Cell.Shape.Fill`) and borders
+  (`Cell.Borders(index)`) — both round-trip — so cell shading is not a COM dead-end
+  after all. The `Borders(index)` edge order (1 top / 2 left / 3 bottom / 4 right /
+  5 diag-down / 6 diag-up) was pinned **visually** (`scripts/cell_border_map_spike.py`)
+  and lives as `constants.border_edges_for` (`"all"` = the four sides; diagonals
+  opt-in by name). `Table.read()` cells now echo `fill` (theme-sentinel-guarded →
+  `null`, never a wrong `#000000`) — with the honest caveat that a default table
+  *style* writes a real per-cell banded RGB, so a fresh untouched cell reads back
+  that style color, not `null` (no COM flag separates a direct cell fill from a
+  style-cascaded one — it's OOXML-only; the read reports the effective rendered
+  fill). CLI `table set-fill` / `set-border` (`--rows`/`--cols` take `1` or `1,3`);
+  MCP `ppt_edit` ops `table_set_fill` / `table_set_border`.
+- **Re-source a picture in place.** `Shape.set_picture(path, *, alt_text=None)`
+  swaps an existing **picture's** image, **preserving position / size / rotation /
+  name / alt text / z-order slot** — no wordlive delete-then-recreate dance. A
+  `scripts/set_picture_spike.py` probe settled the mechanism: PowerPoint's COM has
+  **no in-place image swap** for a picture shape (`Fill.UserPicture` fills *behind*
+  the unchanged raster), so `set_picture` is a delete + re-insert that copies
+  everything addressable, handling the three pitfalls the spike pinned — pictures
+  default to **locked aspect** (copy the box with `LockAspectRatio` off, else
+  width/height snap to the new image's ratio), the delete **drifts z-order**
+  (re-resolve by stable `Shape.Id`, never an index), and the old **z-order slot** is
+  restored by send-to-back-then-step-forward. Two honest caveats: the picture gets a
+  **new `Shape.Id`** (so a fresh `ShapeById` handle is returned — the old wrapper is
+  spent, like after `delete()`), and **animations / hyperlinks / crop / picture
+  adjustments** bound to the old picture are **not** carried over. A non-picture
+  shape → `ValueError` (pointing at `set_picture_fill`); a missing file →
+  `FileNotFoundError` (both before any COM mutation). CLI `shape set-picture --path
+  [--alt-text]`; MCP `ppt_edit` op `shape_set_picture` (echoes the new `shapeid` +
+  `geometry`).
+- **Table columns.** `Table.add_column(values=None, *, before=None)` (over
+  `Columns.Add()` to append / `Columns.Add(n)` to insert before column `n`; `values`
+  fill top-to-bottom) and `Table.delete_column(index)` (over `Columns(n).Delete()`),
+  completing the row/column symmetry — both mirror `add_row` / `delete_row` exactly
+  (same `AnchorNotFoundError` kind `"table column"` out-of-range, same `ValueError`
+  refusing to delete the last column). CLI `table add-column` / `delete-column`; MCP
+  `ppt_edit` ops `table_add_column` / `table_delete_column`.
+- **SmartArt per-node text.** `SmartArt.format_node(index, *, bold/italic/underline/
+  size/font/color)` formats one node's label — the per-node companion to the coarse
+  `recolor_text`. The spike proved **`AllNodes` enumerates in exactly depth-first
+  order**, so `read()` now stamps each node with a 1-based `node_index` (its
+  depth-first / `AllNodes` position) that `format_node` takes as the address. A
+  node's text lives on `TextFrame2`, whose `Font2` differs from the classic `Font`
+  (color on `Font.Fill.ForeColor.RGB`, underline the `UnderlineStyle` enum), handled
+  by a dedicated `_apply_node_font` helper. CLI `smartart format-node`; MCP
+  `ppt_edit` op `smartart_format_node`.
+
+Plus the long-missing CLI version surface (wordlive parity):
+
+- **`pptlive --version`** (`-V`) prints the package version, and `__version__` is
+  exported from the package (`importlib.metadata.version`, no manual sync).
+
+### Fixed
+
+The **2026-06-22 fan-out code review** (7 agents, full-source sweep) surfaced 36
+findings — no Critical, 5 High, 9 Medium, 22 Low — all resolved on
+`fix/code-review-batch-2026-06`. Two were verified already-correct (`save_as("pdf")`
+redirect, `shape add --kind chart` default data); the rest are real fixes with
+regression tests. The user-visible ones:
+
+- **`find_replace` no longer fuses two paragraphs** (P-01). A right-boundary
+  sentinel that ran to `len(s)` could include the trailing paragraph mark in a
+  match span, so the overwrite clobbered the `\r` and merged the paragraph into the
+  next one. Ported wordlive's sentinel; `find_replace` also now re-verifies the
+  located range still normalizes-equal to the captured text before overwriting
+  (P-17).
+- **A bare `ValueError` / `FileNotFoundError` inside `exec` / `ppt_batch` is now
+  reported in place** (P-02 / P-06), not escaped as a whole-batch failure that
+  unwinds already-applied ops and defeats `stop_on_error=False`. The two are mapped
+  to `invalid_args` centrally in the dispatchers, so the taxonomy is uniform across
+  every op handler.
+- **`set_paragraphs` on a `Paragraph` anchor now raises** instead of silently
+  corrupting the paragraph and dropping per-item formatting (P-03). It is a
+  whole-shape verb.
+- **`slide_add` placeholder geometry is atomic** (P-04). Every requested KIND is
+  resolved (and disambiguated) up front, so a typo'd / ambiguous KIND fails *before*
+  the slide is mutated rather than leaving a half-positioned new slide.
+- **Busy PowerPoint is no longer misclassified on several read paths.** A transient
+  `PowerPointBusyError` (retryable exit 3) used to be swallowed or remapped to
+  not-found (exit 2) in `_find_placeholder` (P-05), `deck.active` / `deck.list()`
+  (P-09), and the chart axis/data probes (P-28); it now propagates. Relatedly,
+  `slide.animations()` no longer fails wholesale when one effect property is
+  unreadable — `effect_to_dict` reads are guarded and degrade (P-07).
+- **`shapeid` / `reorder` emit the correct `shape:S:N`** (P-08). They keyed on
+  `ZOrderPosition`, which isn't guaranteed equal to the `Shapes(idx)` collection
+  index (groups, certain placeholder orderings); they now use the true collection
+  index, so a `shapeid`-derived `shape:S:N` can't resolve to a different shape.
+- **A non-numeric chart value gives a clean, series-named error** (P-10) instead of
+  a bare `could not convert string to float`.
+- **Theme palette reads route through the `color_hex_or_none` sentinel guard**
+  (P-20), so an automatic/inherited palette slot reads back as `null`, not a wrong
+  `#000000` — matching every other color read.
+- **`snapshot` filenames honor `fmt`** (P-21): `out="deck.png"` with `fmt="jpg"` no
+  longer writes JPEG bytes into a `.png` file. And the MCP `deck_snapshot` temp
+  directories are now reaped, fixing a slow disk leak in a long-lived server (P-22).
+- Plus a batch of robustness / consistency hardening with no behavior change in the
+  happy path: TOCTOU double-resolves collapsed (`set_hyperlink` P-12), swallowed
+  `LockAspectRatio` failure narrowed (P-23), `bool` rejected as a table axis
+  selector (P-27), `retry_on_busy` made `-O`-safe (P-29), duplicate-`Shape.Name`
+  caveats documented for name lookup and selection restore (P-24 / P-25), and a
+  single shared `exceptions.classify()` / `EXIT_CODE_FOR` now backs both the CLI and
+  batch exit-code ladders (P-15).
+
+### Changed
+
+- **`set-paragraphs` prefers `--paragraphs` over `--json`** (P-30). The value-taking
+  `--json` option shadowed the global `--json` / `--text` format flag; `--paragraphs`
+  is now the documented spelling, with `--json` kept as a back-compat alias.
+- **MCP `shape_add` `shape_type` now defaults to `None`** (P-35), matching the
+  all-`None` convention of every other shape/geometry param (the handler already
+  coalesced to `"rectangle"` for `kind="shape"`, so behavior is unchanged).
+
+### CI
+
+- The test gate now runs on **every PR and push**, not only on a release.
+
 ## [0.6.0] — 2026-06-18
 
 ### Added
@@ -591,7 +724,8 @@ error taxonomy, `EditScope` shape, CLI contract, `_com` seam, and test approach.
 - **Release automation** — `bump-my-version` syncs the root and MCPB bundle
   versions; a `v*` tag publishes to PyPI via trusted publishing.
 
-[Unreleased]: https://github.com/thomas-villani/pptlive/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/thomas-villani/pptlive/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/thomas-villani/pptlive/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/thomas-villani/pptlive/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/thomas-villani/pptlive/compare/v0.3.0...v0.5.0
 [0.3.0]: https://github.com/thomas-villani/pptlive/compare/v0.2.0...v0.3.0
