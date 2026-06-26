@@ -35,6 +35,7 @@ _PH_OBJECT = 7  # generic content placeholder (what `body` also matches)
 _MSO_CHART = 3
 _MSO_AUTO_SHAPE = 1
 _MSO_LINE = 9
+_MSO_GROUP = 6
 _MSO_PICTURE = 13
 _MSO_PLACEHOLDER = 14
 _MSO_MEDIA = 16
@@ -228,11 +229,44 @@ class _FakeTextRange:
             return _FakeTextRange(self._frame, s, self._length)
         return _FakeTextRange(self._frame, s + start - 1, length)
 
-    def Runs(self, start: int = -1, length: int = -1) -> _FakeTextRange:
-        # The fake models formatting at paragraph granularity (one Font per
-        # paragraph), so it exposes one run per spanned paragraph — enough to
-        # exercise the run-walk; true sub-paragraph mixed runs live in smoke.
-        return self.Paragraphs(start, length)
+    def _run_segments(self) -> list[tuple[str, int, int]]:
+        """Split this range's text into runs at text-run hyperlink boundaries.
+
+        Returns `(run_text, abs_start, abs_len)` segments (abs_* in whole-frame
+        char coords) tiling the range exactly, so `links_in_range`'s offset
+        accumulation stays consistent with `set_link`'s offsets. PowerPoint splits
+        a run at a link boundary (spike finding); the fake reproduces that from the
+        frame's link store rather than from per-character formatting.
+        """
+        text = self.Text
+        base = self._char_start()
+        # links fully inside this range's window, as range-relative spans
+        spans = sorted(
+            (lk["start"] - base, lk["length"])
+            for lk in self._frame._links
+            if base <= lk["start"] and lk["start"] + lk["length"] <= base + len(text)
+        )
+        segments: list[tuple[str, int, int]] = []
+        pos = 0
+        for rs, rl in spans:
+            if rs > pos:
+                segments.append((text[pos:rs], base + pos, rs - pos))
+            segments.append((text[rs : rs + rl], base + rs, rl))
+            pos = rs + rl
+        if pos < len(text) or not segments:
+            segments.append((text[pos:], base + pos, len(text) - pos))
+        return segments
+
+    def Runs(self, start: int = -1, length: int = -1) -> Any:
+        # The fake models font at paragraph granularity but splits runs at text-run
+        # hyperlink boundaries (the link store), so the run-walk in `links_in_range`
+        # sees each linked span as its own run — matching live PowerPoint. Font reads
+        # fall back to this range's (paragraph) font, enough for `_run_sizes`.
+        segs = self._run_segments()
+        if start == -1:
+            return _FakeRunList(self, segs)
+        text, abs_start, abs_len = segs[int(start) - 1]
+        return _FakeRun(self, text, abs_start, abs_len)
 
     @property
     def IndentLevel(self) -> int:
@@ -317,10 +351,118 @@ class _FakeCharRange:
         s, e = self._bounds()
         return e - s
 
+    def _abs_span(self) -> tuple[int, int]:
+        """This char-range's (abs_start, abs_len) in whole-frame char coords."""
+        s, e = self._bounds()
+        base = self._parent._char_start()
+        return base + s, e - s
+
+    def ActionSettings(self, activation: int) -> _FakeSpanActionSetting:
+        """`Characters(...).ActionSettings(ppMouseClick)` — a text-run hyperlink on
+        this span, written to / read from the frame's link store."""
+        abs_start, abs_len = self._abs_span()
+        return _FakeSpanActionSetting(self._parent._frame, abs_start, abs_len)
+
+
+class _FakeSpanHyperlink:
+    """A text-run `Hyperlink` bound to a frame span; reads/writes the link store."""
+
+    def __init__(self, frame: _FakeTextFrame, start: int, length: int) -> None:
+        self._frame = frame
+        self._start = int(start)
+        self._length = int(length)
+
+    def _row(self) -> dict[str, Any] | None:
+        return self._frame._link_at(self._start, self._length)
+
+    @property
+    def Address(self) -> str:
+        row = self._row()
+        return str(row["address"]) if row else ""
+
+    @Address.setter
+    def Address(self, value: str) -> None:
+        self._frame._set_link(self._start, self._length, address=str(value or ""))
+
+    @property
+    def SubAddress(self) -> str:
+        row = self._row()
+        return str(row["sub_address"]) if row else ""
+
+    @SubAddress.setter
+    def SubAddress(self, value: str) -> None:
+        self._frame._set_link(self._start, self._length, sub_address=str(value or ""))
+
+    @property
+    def ScreenTip(self) -> str:
+        row = self._row()
+        return str(row["screen_tip"]) if row else ""
+
+    @ScreenTip.setter
+    def ScreenTip(self, value: str) -> None:
+        self._frame._set_link(self._start, self._length, screen_tip=str(value or ""))
+
+    def Delete(self) -> None:
+        self._frame._remove_link(self._start, self._length)
+
+
+class _FakeSpanActionSetting:
+    """`Characters(...).ActionSettings(ppMouseClick)` — `.Action` + `.Hyperlink`,
+    both derived from the frame's link store for this span."""
+
+    def __init__(self, frame: _FakeTextFrame, start: int, length: int) -> None:
+        self._frame = frame
+        self._start = int(start)
+        self._length = int(length)
+        self.Hyperlink = _FakeSpanHyperlink(frame, start, length)
+
+    @property
+    def Action(self) -> int:
+        return 7 if self._frame._link_at(self._start, self._length) else 0
+
+
+class _FakeRunList:
+    """`TextRange.Runs()` (no args) — exposes `.Count` for the run-walk."""
+
+    def __init__(self, parent: _FakeTextRange, segments: list[tuple[str, int, int]]) -> None:
+        self._parent = parent
+        self._segments = segments
+
+    @property
+    def Count(self) -> int:
+        return len(self._segments)
+
+
+class _FakeRun:
+    """One run from `TextRange.Runs(i, 1)` — `.Text`, `.Font`, `.ActionSettings`."""
+
+    def __init__(self, parent: _FakeTextRange, text: str, abs_start: int, abs_len: int) -> None:
+        self._parent = parent
+        self._text = text
+        self._abs_start = int(abs_start)
+        self._abs_len = int(abs_len)
+
+    @property
+    def Text(self) -> str:
+        return self._text
+
+    @property
+    def Font(self) -> _SpanAttrProxy:
+        # Font is modelled at paragraph granularity; a run borrows its range's font.
+        return self._parent.Font
+
+    def ActionSettings(self, activation: int) -> _FakeSpanActionSetting:
+        return _FakeSpanActionSetting(self._parent._frame, self._abs_start, self._abs_len)
+
 
 class _FakeTextFrame:
     def __init__(self, text: str = "") -> None:
         self._paras = [_FakePara(p) for p in str(text).split("\r")]
+        # Text-run hyperlink store (v-next): spans keyed by whole-frame char coords.
+        # `set_link` writes here via Characters(...).ActionSettings; the run-walk in
+        # `links_in_range` reconstructs links from it (the fake's runs are paragraph-
+        # font granular but split at these span boundaries).
+        self._links: list[dict[str, Any]] = []
         # Autofit container props (text_frame_status). Classic AutoSize reads mixed
         # on real builds (-2); the wrapper prefers TextFrame2.AutoSize. Margins in
         # points mirror PowerPoint's defaults.
@@ -337,6 +479,48 @@ class _FakeTextFrame:
 
     def _set_full_text(self, full: str) -> None:
         self._paras = [_FakePara(p) for p in str(full).split("\r")]
+        self._links = []  # replacing the text drops its run-level links
+
+    # -- text-run hyperlink store (whole-frame char coords) --------------------
+
+    def _link_at(self, start: int, length: int) -> dict[str, Any] | None:
+        for lk in self._links:
+            if lk["start"] == int(start) and lk["length"] == int(length):
+                return lk
+        return None
+
+    def _set_link(
+        self,
+        start: int,
+        length: int,
+        *,
+        address: str | None = None,
+        sub_address: str | None = None,
+        screen_tip: str | None = None,
+    ) -> None:
+        row = self._link_at(start, length)
+        if row is None:
+            row = {
+                "start": int(start),
+                "length": int(length),
+                "address": "",
+                "sub_address": "",
+                "screen_tip": "",
+            }
+            self._links.append(row)
+        if address is not None:
+            row["address"] = address
+        if sub_address is not None:
+            row["sub_address"] = sub_address
+        if screen_tip is not None:
+            row["screen_tip"] = screen_tip
+        if not row["address"] and not row["sub_address"]:
+            self._links.remove(row)  # a link with no destination isn't a link
+
+    def _remove_link(self, start: int, length: int) -> None:
+        row = self._link_at(start, length)
+        if row is not None:
+            self._links.remove(row)
 
 
 class _FakeGradientStop:
@@ -576,6 +760,45 @@ class _FakeShape:
         self.last_export: dict[str, Any] | None = None
         self._collection: _FakeShapes | None = None  # set when adopted by _FakeShapes
         self._action_settings: dict[int, _FakeActionSetting] = {}
+        # Arrangement (v-next): connection sites (4 like a rectangle), connector
+        # state, and group membership.
+        self.ConnectionSiteCount = 4
+        self._connector = False
+        self._connector_format: _FakeConnectorFormat | None = None
+        self._group_items: list[_FakeShape] = []
+
+    @property
+    def Connector(self) -> int:
+        return _MSO_TRUE if self._connector else _MSO_FALSE
+
+    @property
+    def ConnectorFormat(self) -> _FakeConnectorFormat:
+        if self._connector_format is None:
+            raise AttributeError("shape is not a connector")
+        return self._connector_format
+
+    def RerouteConnections(self) -> None:
+        # Re-pick the shortest connection sites (spike: reroute reassigns them).
+        if self._connector_format is not None:
+            self._connector_format._reroute()
+
+    @property
+    def GroupItems(self) -> _FakeShapeRange:
+        assert self._collection is not None
+        return _FakeShapeRange(self._collection._app, list(self._group_items))
+
+    def Ungroup(self) -> _FakeShapeRange:
+        """Dissolve this group; the freed members keep their ids (spike finding)."""
+        assert self._collection is not None
+        coll = self._collection
+        idx = coll._shapes.index(self)
+        coll._shapes.remove(self)
+        for j, child in enumerate(self._group_items):
+            child._collection = coll
+            coll._shapes.insert(idx + j, child)
+        freed = list(self._group_items)
+        self._group_items = []
+        return _FakeShapeRange(coll._app, freed)
 
     def ActionSettings(self, activation: int) -> _FakeActionSetting:
         """`Shape.ActionSettings(ppMouseClick=1)` — created on first access."""
@@ -1196,6 +1419,59 @@ class _FakeSmartArt:
         return SimpleNamespace(Count=len(flat), Item=lambda i: flat[int(i) - 1])
 
 
+class _FakeConnectorFormat:
+    """`Shape.ConnectorFormat` — glue endpoints to shapes + reroute (spike model)."""
+
+    def __init__(self, connector_type: int) -> None:
+        self.Type = int(connector_type)
+        self._begin: _FakeShape | None = None
+        self._end: _FakeShape | None = None
+        self._begin_site = 0
+        self._end_site = 0
+
+    def BeginConnect(self, shape: _FakeShape, site: int) -> None:
+        self._begin = shape
+        self._begin_site = int(site)
+
+    def EndConnect(self, shape: _FakeShape, site: int) -> None:
+        self._end = shape
+        self._end_site = int(site)
+
+    def _reroute(self) -> None:
+        # Mirror the spike: reroute re-chooses sites (the requested ones are
+        # advisory). The fake just bumps them to a deterministic "rerouted" value.
+        if self._begin is not None:
+            self._begin_site = 1
+        if self._end is not None:
+            self._end_site = 1
+
+    @property
+    def BeginConnected(self) -> int:
+        return _MSO_TRUE if self._begin is not None else _MSO_FALSE
+
+    @property
+    def EndConnected(self) -> int:
+        return _MSO_TRUE if self._end is not None else _MSO_FALSE
+
+    @property
+    def BeginConnectedShape(self) -> _FakeShape:
+        assert self._begin is not None
+        return self._begin
+
+    @property
+    def EndConnectedShape(self) -> _FakeShape:
+        assert self._end is not None
+        return self._end
+
+    @property
+    def BeginConnectionSite(self) -> int:
+        return self._begin_site
+
+    @property
+    def EndConnectionSite(self) -> int:
+        return self._end_site
+
+
 class _FakeShapeRange:
     def __init__(self, app: _FakeApplication, shapes: list[_FakeShape]) -> None:
         self._app = app
@@ -1217,12 +1493,50 @@ class _FakeShapeRange:
         self._app._selection_type = _SEL_SHAPES
         self._app._selected_names = tuple(sh.Name for sh in self._shapes)
 
+    def Group(self) -> _FakeShape:
+        """Combine these shapes into a new group (new id; members keep theirs)."""
+        coll = self._shapes[0]._collection
+        assert coll is not None
+        new_id = coll._next_id()
+        group = _FakeShape(name=f"Group {new_id}", shape_id=new_id, shape_type=_MSO_GROUP)
+        group._group_items = list(self._shapes)
+        idx = min(coll._shapes.index(s) for s in self._shapes)
+        for s in self._shapes:
+            coll._shapes.remove(s)
+        coll._shapes.insert(idx, group)
+        group._collection = coll
+        return group
+
+    def Align(self, cmd: int, relative_to: int) -> None:
+        coll = self._shapes[0]._collection
+        assert coll is not None
+        coll._align_calls.append((int(cmd), int(relative_to)))
+        if not self._shapes:
+            return
+        # A simple, assertable mutation: snap all shapes' edge to the first shape's
+        # (horizontal cmds 1/2/3 -> Left; vertical 4/5/6 -> Top).
+        if int(cmd) in (1, 2, 3):
+            target = self._shapes[0].Left
+            for s in self._shapes:
+                s.Left = target
+        else:
+            target = self._shapes[0].Top
+            for s in self._shapes:
+                s.Top = target
+
+    def Distribute(self, cmd: int, relative_to: int) -> None:
+        coll = self._shapes[0]._collection
+        assert coll is not None
+        coll._distribute_calls.append((int(cmd), int(relative_to)))
+
 
 class _FakeShapes:
     def __init__(self, shapes: list[_FakeShape]) -> None:
         self._shapes = shapes
         self._app: _FakeApplication | None = None
         self._id_counter = max((s.Id for s in shapes), default=1)
+        self._align_calls: list[tuple[int, int]] = []
+        self._distribute_calls: list[tuple[int, int]] = []
         for sh in shapes:
             sh._collection = self
 
@@ -1419,11 +1733,37 @@ class _FakeShapes:
                 return s
         raise AttributeError("slide has no title")
 
-    def Range(self, names: Any) -> _FakeShapeRange:
-        wanted = list(names) if isinstance(names, (list, tuple)) else [names]
-        selected = [s for s in self._shapes if s.Name in wanted]
+    def Range(self, key: Any) -> _FakeShapeRange:
+        """`Shapes.Range(...)` — accepts a name, a 1-based z-order int, or a list
+        of either (the arrangement verbs pass int indices)."""
+        wanted = list(key) if isinstance(key, (list, tuple)) else [key]
+        selected: list[_FakeShape] = []
+        for w in wanted:
+            if isinstance(w, bool):
+                continue
+            if isinstance(w, int):
+                selected.append(self._shapes[w - 1])
+            else:
+                selected.extend(s for s in self._shapes if s.Name == w)
         assert self._app is not None
         return _FakeShapeRange(self._app, selected)
+
+    def AddConnector(
+        self, connector_type: int, x1: float, y1: float, x2: float, y2: float
+    ) -> _FakeShape:
+        sid = self._next_id()
+        sh = _FakeShape(
+            name=f"Connector {sid}",
+            shape_id=sid,
+            shape_type=_MSO_LINE,
+            left=min(x1, x2),
+            top=min(y1, y2),
+            width=abs(x2 - x1),
+            height=abs(y2 - y1),
+        )
+        sh._connector = True
+        sh._connector_format = _FakeConnectorFormat(int(connector_type))
+        return self._adopt(sh)
 
 
 # ---------------------------------------------------------------------------

@@ -27,10 +27,10 @@ record the finding, then harden library + CLI + MCP + tests together.
 
 | Tier | Theme | Status | Why it remains |
 | ---- | ----- | ------ | -------------- |
-| **v1.4-rest** | Navigation & structure: sections, headers/footers | `[x]` main cut · `[ ]` run-level hyperlinks | Sections + headers/footers shipped (v0.6); only text-run-level hyperlinks remain. |
+| **v1.4-rest** | Navigation & structure: sections, headers/footers, run-level hyperlinks | `[x]` | Sections + headers/footers shipped (v0.6); **text-run-level hyperlinks shipped 2026-06-25** — tier complete. |
 | **v1.5-rest** | Animations | `[x]` main cut · `[ ]` long tail | Whole-shape entrance/exit shipped (v0.10); per-paragraph levels / motion paths / reordering remain. |
 | **v1.7** | Media + narrated-video export | `[x]` | SHIPPED 2026-06-25 — insert audio/video narration, self-time slides, export MP4 (async `CreateVideo`). Only the media long tail (trimming, bookmarks, recorded narration) remains. |
-| **Opportunistic** | Tables/charts/SmartArt/arrangement/tags/metadata/OLE | mixed | Pull on demand when a workflow needs it. |
+| **Opportunistic** | Tables/charts/SmartArt/arrangement/tags/metadata/OLE | mixed | **Arrangement (group/align/distribute/connectors) shipped 2026-06-25.** Pull the rest on demand. |
 | **Deferred** | Async/events, full layout authoring, deep theme/master follow-ups | `[ ]` | Real but lower leverage or larger architectural lift. |
 
 ---
@@ -67,10 +67,15 @@ Shape-level hyperlinks/actions are shipped. The remaining v1.4 work is structura
   - **Spike:** exact inheritance behaviour and whether applying to all slides uses a
     master setting, per-slide loop, or both.
 
-- [ ] **Text-run-level hyperlinks (deferred from the hyperlink cut).**
-  - Shape-level click actions are done. If a workflow needs linked words inside a
-    textbox, spike `TextRange.ActionSettings` / run-level hyperlink behaviour and
-    add a scoped verb over `para:` ranges.
+- [x] **Text-run-level hyperlinks.** SHIPPED 2026-06-25 — `Anchor.set_link`/
+  `remove_link`/`links` on the `Anchor` base (so `Shape`/`Paragraph`/`Cell`/`Notes`
+  all carry them) over `TextRange.Characters(...).ActionSettings(ppMouseClick)
+  .Hyperlink`. Address a span by substring `text=` or explicit `start`/`length`;
+  destination is a `url=` or in-deck `slide=` jump. Library + CLI (`link
+  set`/`remove`/`list`) + MCP (`ppt_edit` `link_set`/`link_remove`, `ppt_read`
+  `links`) + both SKILL guides + tests. Spike `scripts/run_link_spike.py`
+  (net-zero) confirmed the COM round-trips and that linking splits the runs. See
+  IMPLEMENTATION.md §v-next.
 
 ---
 
@@ -224,12 +229,17 @@ visual controls, not blockers.
   - Layout availability differences across Office versions and expanding beyond the
     current core layouts.
 
-- [ ] **Shape arrangement beyond z-order.**
-  - Group / ungroup (`ShapeRange.Group`, `.Ungroup`).
-  - Align / distribute.
-  - Connectors (`Shapes.AddConnector`, `ConnectorFormat.BeginConnect(shape, site)`).
-  - Note: grouping changes shape indices; prefer `shapeid:S:ID` and document any
-    identity churn from group/ungroup.
+- [x] **Shape arrangement beyond z-order.** SHIPPED 2026-06-25 —
+  `ShapeCollection.group`/`align`/`distribute`/`add_connector` + `Shape.ungroup`,
+  library + CLI (`shape group`/`ungroup`/`align`/`distribute`/`connect`) + MCP +
+  both SKILL guides + tests. Connectors ship in the **full shape-attached** form
+  (`begin=`/`end=` glue via `BeginConnect`/`EndConnect` + `RerouteConnections`) with
+  a geometry fallback. Spike `scripts/arrangement_spike.py` (net-zero) pinned the
+  model: group gets a **new** `Shape.Id` (members keep theirs); **ungroup keeps the
+  members' original ids** (no identity churn); `RerouteConnections` reassigns the
+  connection sites (requested sites are advisory). See IMPLEMENTATION.md §v-next.
+  - Still open (long tail): merged-region group reads, connection-site selection
+    UX, and align/distribute relative-to-margins.
 
 - [ ] **Durable file-persisted shape tags.**
   - **COM surface:** `Shape.Tags.Add(name, value)`, `.Item(name)`, delete/read.

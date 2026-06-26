@@ -60,6 +60,24 @@ def _resolve_shape(deck: Presentation, anchor_id: str | None) -> Shape:
     return anchor
 
 
+def _resolve_shapes(deck: Presentation, anchors: Any) -> list[Shape]:
+    """Resolve a list (or comma-string) of shape anchors to `Shape` handles."""
+    if isinstance(anchors, str):
+        anchors = [a.strip() for a in anchors.split(",") if a.strip()]
+    _require(
+        isinstance(anchors, (list, tuple)) and len(anchors) > 0,
+        "this op requires `anchors` (a non-empty list of shape anchor ids)",
+    )
+    return [_resolve_shape(deck, a) for a in anchors]
+
+
+def _resolve_anchor(deck: Presentation, anchor_id: str | None) -> Any:
+    """Resolve any text anchor (shape / paragraph / cell / notes) for a link op."""
+    _require(anchor_id is not None, "this op requires `anchor_id`")
+    assert anchor_id is not None
+    return deck.anchor_by_id(anchor_id)
+
+
 # ===========================================================================
 
 
@@ -74,6 +92,7 @@ class ReadOp(StrEnum):
     HEADERS_FOOTERS = "headers_footers"
     ANCHOR = "anchor"
     TEXT_FRAME_STATUS = "text_frame_status"
+    LINKS = "links"
     SELECTION = "selection"
     FIND = "find"
     TABLE = "table"
@@ -114,6 +133,13 @@ class EditOp(StrEnum):
     SHAPE_LINE_STYLE = "shape_line_style"
     SHAPE_SET_HYPERLINK = "shape_set_hyperlink"
     SHAPE_REMOVE_HYPERLINK = "shape_remove_hyperlink"
+    SHAPE_GROUP = "shape_group"
+    SHAPE_UNGROUP = "shape_ungroup"
+    SHAPE_ALIGN = "shape_align"
+    SHAPE_DISTRIBUTE = "shape_distribute"
+    SHAPE_ADD_CONNECTOR = "shape_add_connector"
+    LINK_SET = "link_set"
+    LINK_REMOVE = "link_remove"
     SLIDE_SET_TRANSITION = "slide_set_transition"
     SLIDE_SET_BACKGROUND = "slide_set_background"
     SECTION_ADD = "section_add"
@@ -309,6 +335,13 @@ def _read_anchor(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
     if paragraphs is not None:
         payload["paragraphs"] = paragraphs.list()
     return payload
+
+
+@read_op(ReadOp.LINKS)
+def _read_links(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
+    _require(p.get("anchor_id") is not None, "read op='links' requires `anchor_id`")
+    anchor = _pick_deck(ppt, p.get("doc")).anchor_by_id(p["anchor_id"])
+    return {"anchor_id": anchor.anchor_id, "links": anchor.links()}
 
 
 @read_op(ReadOp.TEXT_FRAME_STATUS)
@@ -848,6 +881,97 @@ def _edit_shape_remove_hyperlink(deck: Presentation, p: dict[str, Any]) -> dict[
     sh = _resolve_shape(deck, p.get("anchor_id"))
     sh.remove_hyperlink()
     return {"ok": True, "anchor_id": sh.anchor_id, "shapeid": sh.shapeid, "hyperlink": None}
+
+
+@edit_op(EditOp.SHAPE_GROUP)
+def _edit_shape_group(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    members = _resolve_shapes(deck, p.get("anchors"))
+    group = members[0].slide.shapes.group(members)
+    return {
+        "ok": True,
+        "anchor_id": group.anchor_id,
+        "shapeid": group.shapeid,
+        "group_item_ids": group.to_dict().get("group_item_ids", []),
+    }
+
+
+@edit_op(EditOp.SHAPE_UNGROUP)
+def _edit_shape_ungroup(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    sh = _resolve_shape(deck, p.get("anchor_id"))
+    children = sh.ungroup()
+    return {"ok": True, "ungrouped": [c.shapeid for c in children]}
+
+
+@edit_op(EditOp.SHAPE_ALIGN)
+def _edit_shape_align(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    _require(p.get("how") is not None, "edit op='shape_align' requires `how`")
+    members = _resolve_shapes(deck, p.get("anchors"))
+    members[0].slide.shapes.align(members, p["how"], relative_to=p.get("relative_to", "slide"))
+    return {"ok": True, "how": p["how"], "shapeids": [m.shapeid for m in members]}
+
+
+@edit_op(EditOp.SHAPE_DISTRIBUTE)
+def _edit_shape_distribute(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    _require(p.get("how") is not None, "edit op='shape_distribute' requires `how`")
+    members = _resolve_shapes(deck, p.get("anchors"))
+    members[0].slide.shapes.distribute(members, p["how"], relative_to=p.get("relative_to", "slide"))
+    return {"ok": True, "how": p["how"], "shapeids": [m.shapeid for m in members]}
+
+
+@edit_op(EditOp.SHAPE_ADD_CONNECTOR)
+def _edit_shape_add_connector(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    begin = _resolve_shape(deck, p["begin"]) if p.get("begin") is not None else None
+    end = _resolve_shape(deck, p["end"]) if p.get("end") is not None else None
+    if begin is not None:
+        coll = begin.slide.shapes
+    elif p.get("slide") is not None:
+        coll = deck.slides[p["slide"]].shapes
+    else:
+        _require(False, "edit op='shape_add_connector' requires `begin`/`end` shapes or a `slide`")
+        raise AssertionError  # unreachable; _require raised
+    conn = coll.add_connector(
+        p.get("type") or "straight",
+        begin=begin,
+        end=end,
+        begin_site=int(p.get("begin_site", 1)),
+        end_site=int(p.get("end_site", 1)),
+        left=p.get("left"),
+        top=p.get("top"),
+        width=p.get("width"),
+        height=p.get("height"),
+    )
+    return {
+        "ok": True,
+        "anchor_id": conn.anchor_id,
+        "shapeid": conn.shapeid,
+        "connector": conn.to_dict().get("connector"),
+        "geometry": conn.geometry(),
+    }
+
+
+@edit_op(EditOp.LINK_SET)
+def _edit_link_set(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    anchor = _resolve_anchor(deck, p.get("anchor_id"))
+    _require(
+        (p.get("url") is None) != (p.get("slide") is None),
+        "edit op='link_set' requires exactly one of `url` or `slide`",
+    )
+    link = anchor.set_link(
+        text=p.get("text"),
+        start=p.get("start"),
+        length=p.get("length"),
+        url=p.get("url"),
+        slide=p.get("slide"),
+        screen_tip=p.get("screen_tip"),
+    )
+    return {"ok": True, "anchor_id": anchor.anchor_id, "link": link}
+
+
+@edit_op(EditOp.LINK_REMOVE)
+def _edit_link_remove(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    anchor = _resolve_anchor(deck, p.get("anchor_id"))
+    removed = anchor.remove_link(text=p.get("text"), start=p.get("start"), length=p.get("length"))
+    return {"ok": True, "anchor_id": anchor.anchor_id, "removed": removed}
 
 
 @edit_op(EditOp.SLIDE_SET_TRANSITION)
