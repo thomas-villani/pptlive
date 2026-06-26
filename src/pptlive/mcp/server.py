@@ -345,7 +345,8 @@ def ppt_edit(
     layout: str | None = None,
     index: int | None = None,
     placeholders: dict[str, dict[str, float]] | None = None,
-    kind: Literal["textbox", "shape", "picture", "table", "chart", "smartart"] | None = None,
+    kind: Literal["textbox", "shape", "picture", "table", "chart", "smartart", "audio", "video"]
+    | None = None,
     shape_type: str
     | None = None,  # handler defaults to "rectangle"; None for parity w/ other params
     path: str | None = None,
@@ -365,6 +366,10 @@ def ppt_edit(
     width: float | None = None,
     height: float | None = None,
     alt_text: str | None = None,
+    link: bool = False,
+    autoplay: bool = True,
+    hide_icon: bool = True,
+    pace_slide: bool = True,
     values: list[str] | None = None,
     row: int | None = None,
     column: int | None = None,
@@ -468,6 +473,12 @@ def ppt_edit(
       `categories`+`series`), or "smartart" (`smartart_kind` e.g. "process"/
       "cycle"/"orgchart", optional `nodes`). Optional `left`/`top`/`width`/`height`;
       textbox/shape also take `fill_color`/`line_color` (hex or "none") + `line_width`.
+    - "media_add": insert audio/video narration on `slide` from `path` (embedded;
+      `link=true` keeps it on disk). `kind`="audio"|"video". Defaults: `autoplay`
+      plays on entry, `hide_icon` hides the audio icon while idle, `pace_slide`
+      auto-advances the slide to the clip length (so "export_video" paces itself to
+      the narration). Optional `left`/`top`/`width`/`height`/`alt_text`. The "build
+      a deck, narrate it, export a video" path pairs this with render "export_video".
     - "shape_move": move to absolute `left`/`top`. "shape_resize": set `width`/`height`.
     - "shape_order": restack by `order`="front"/"back"/"forward"/"backward" (e.g.
       send a new background panel to the back, behind existing content).
@@ -675,6 +686,10 @@ def ppt_edit(
         "width": width,
         "height": height,
         "alt_text": alt_text,
+        "link": link,
+        "autoplay": autoplay,
+        "hide_icon": hide_icon,
+        "pace_slide": pace_slide,
         "values": values,
         "row": row,
         "column": column,
@@ -710,6 +725,13 @@ def ppt_render(
     max_dim: int | None = None,
     overwrite: bool = False,
     save_format: str = "pptx",
+    resolution: int = 720,
+    fps: int = 30,
+    quality: int = 85,
+    default_slide_duration: float = 5.0,
+    use_timings: bool = True,
+    wait: bool = True,
+    timeout: float = 600.0,
 ) -> Any:  # `-> Any` is load-bearing for the image passthrough — see _render_reply
     """Render a PowerPoint slide or shape to an image a vision model can see, or
     move the user's view to a slide/shape. `op`:
@@ -746,6 +768,15 @@ def ppt_render(
       working file to it (the open deck becomes that file). `save_format` is the
       target format (default "pptx"). Refuses to clobber an existing file unless
       `overwrite=True`. For PDF use "deck_pdf" (a read).
+    - "export_video": export the deck to an MP4 at `out` (required) — the narrated-
+      video deliverable. A read (doesn't rebind the working file). `use_timings`
+      honors per-slide timings + narration; `default_slide_duration` paces untimed
+      slides; `resolution` (vertical px), `fps`, `quality` (0-100) tune the encode.
+      Async: blocks until done by default (`wait`, up to `timeout` s); with
+      `wait=False` returns the in-flight status — poll "video_status" until `done`.
+      Returns `{ok, path, status, status_code}`.
+    - "video_status": poll the async video export (none/queued/in_progress/done/
+      failed); `ok` once done. Use with "export_video" `wait=False`.
     - "navigate": move the user's view to `anchor_id`'s slide — a deliberate,
       opt-in view move (every other tool leaves the view alone). With `select=True`
       (default), also selects the target shape. Use only when asked to be taken
@@ -775,6 +806,13 @@ def ppt_render(
         "max_dim": max_dim,
         "overwrite": overwrite,
         "save_format": save_format,
+        "resolution": resolution,
+        "fps": fps,
+        "quality": quality,
+        "default_slide_duration": default_slide_duration,
+        "use_timings": use_timings,
+        "wait": wait,
+        "timeout": timeout,
     }
     with _mcp_errors(), attach() as ppt:
         result = _render_core(ppt, op, params)

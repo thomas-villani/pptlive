@@ -617,6 +617,202 @@ def export_pdf_cmd(ctx: click.Context, deck: Presentation, path: Path) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# media add | export-video PATH | video-status
+#   Insert audio/video narration (embed by default; autoplay + pace the slide),
+#   then export the deck to MP4. export-video wraps the async CreateVideo: it
+#   blocks by default (poll to Done) and `video-status` polls a --no-wait export.
+# ---------------------------------------------------------------------------
+
+
+@click.group(name="media")
+def media() -> None:
+    """Insert audio/video clips (embed by default; autoplay + pace the slide)."""
+
+
+@media.command(name="add")
+@click.option("--slide", "slide_index", type=int, required=True, help="1-based slide index.")
+@click.option(
+    "--kind", type=click.Choice(["audio", "video"]), required=True, help="Media kind to insert."
+)
+@click.option(
+    "--path",
+    "path",
+    type=click.Path(exists=True, dir_okay=False),
+    required=True,
+    help="Audio/video file to embed (or link with --link).",
+)
+@click.option("--left", type=float, default=None, help="Left edge (points).")
+@click.option("--top", type=float, default=None, help="Top edge (points).")
+@click.option("--width", type=float, default=None, help="Width (points).")
+@click.option("--height", type=float, default=None, help="Height (points).")
+@click.option(
+    "--link/--no-link",
+    "link",
+    default=False,
+    show_default=True,
+    help="Link the file on disk instead of embedding it (shrinks the deck).",
+)
+@click.option(
+    "--autoplay/--no-autoplay",
+    "autoplay",
+    default=True,
+    show_default=True,
+    help="Play the clip automatically on slide entry.",
+)
+@click.option(
+    "--hide-icon/--no-hide-icon",
+    "hide_icon",
+    default=True,
+    show_default=True,
+    help="Hide the speaker icon while not playing (audio only).",
+)
+@click.option(
+    "--pace-slide/--no-pace-slide",
+    "pace_slide",
+    default=True,
+    show_default=True,
+    help="Auto-advance the slide to the clip's length (paces an exported video).",
+)
+@click.option(
+    "--alt-text",
+    "alt_text",
+    default=None,
+    help="Alternative text (a drift-proof re-identification handle).",
+)
+@_deck_command
+def media_add(
+    ctx: click.Context,
+    deck: Presentation,
+    slide_index: int,
+    kind: str,
+    path: str,
+    left: float | None,
+    top: float | None,
+    width: float | None,
+    height: float | None,
+    link: bool,
+    autoplay: bool,
+    hide_icon: bool,
+    pace_slide: bool,
+    alt_text: str | None,
+) -> None:
+    """Insert audio/video on a slide; print its anchor_id, name, type, and media info."""
+    slide = deck.slides[slide_index]  # exit 2 if slide out of range
+    with deck.edit(f"CLI: add {kind} on slide {slide_index}"):
+        if kind == "audio":
+            new = slide.add_audio(
+                path,
+                left=left,
+                top=top,
+                width=width,
+                height=height,
+                link=link,
+                autoplay=autoplay,
+                hide_icon=hide_icon,
+                pace_slide=pace_slide,
+                alt_text=alt_text,
+            )
+        else:  # video
+            new = slide.add_video(
+                path,
+                left=left,
+                top=top,
+                width=width,
+                height=height,
+                link=link,
+                autoplay=autoplay,
+                pace_slide=pace_slide,
+                alt_text=alt_text,
+            )
+    payload = {"ok": True, **new.to_dict()}
+    emit(
+        payload,
+        as_text=not ctx.obj["as_json"],
+        text=f"added {kind} {payload['name']!r} at {payload['anchor_id']}",
+    )
+
+
+@click.command(name="export-video")
+@click.argument("path", type=click.Path(dir_okay=False, path_type=Path))
+@click.option(
+    "--resolution", type=int, default=720, show_default=True, help="Vertical pixel height."
+)
+@click.option("--fps", type=int, default=30, show_default=True, help="Frames per second.")
+@click.option("--quality", type=int, default=85, show_default=True, help="Encode quality 0-100.")
+@click.option(
+    "--default-slide-duration",
+    "default_slide_duration",
+    type=float,
+    default=5.0,
+    show_default=True,
+    help="Seconds per slide that has no timing.",
+)
+@click.option(
+    "--use-timings/--no-use-timings",
+    "use_timings",
+    default=True,
+    show_default=True,
+    help="Honor per-slide timings + narration.",
+)
+@click.option(
+    "--wait/--no-wait",
+    "wait",
+    default=True,
+    show_default=True,
+    help="Block until the encode finishes (--no-wait returns immediately; poll video-status).",
+)
+@click.option(
+    "--timeout", type=float, default=600.0, show_default=True, help="Max seconds to wait."
+)
+@_deck_command
+def export_video_cmd(
+    ctx: click.Context,
+    deck: Presentation,
+    path: Path,
+    resolution: int,
+    fps: int,
+    quality: int,
+    default_slide_duration: float,
+    use_timings: bool,
+    wait: bool,
+    timeout: float,
+) -> None:
+    """Export the deck to an MP4 at PATH (the narrated-video deliverable).
+
+    Wraps PowerPoint's async CreateVideo: blocks until the encode finishes by
+    default. A read — it doesn't rebind your `.pptx`. With --no-wait it returns the
+    in-flight status immediately; poll `video-status` until it reports `done`.
+    """
+    result = deck.export_video(
+        path,
+        use_timings=use_timings,
+        default_slide_duration=default_slide_duration,
+        resolution=resolution,
+        fps=fps,
+        quality=quality,
+        wait=wait,
+        timeout=timeout,
+    )
+    emit(
+        result.to_dict(),
+        as_text=not ctx.obj["as_json"],
+        text=f"video {result.status}: {result.path}",
+    )
+
+
+@click.command(name="video-status")
+@_deck_command
+def video_status_cmd(ctx: click.Context, deck: Presentation) -> None:
+    """Poll the async video-export status (none/queued/in_progress/done/failed)."""
+    result = deck.video_status()
+    emit(
+        result.to_dict(),
+        as_text=not ctx.obj["as_json"],
+        text=f"video status: {result.status}",
+    )
+
+
 def register(group: click.Group) -> None:
     group.add_command(status)
     group.add_command(slides_cmd)
@@ -626,6 +822,9 @@ def register(group: click.Group) -> None:
     group.add_command(save_cmd)
     group.add_command(save_as_cmd)
     group.add_command(export_pdf_cmd)
+    group.add_command(media)
+    group.add_command(export_video_cmd)
+    group.add_command(video_status_cmd)
     group.add_command(shapes_cmd)
     group.add_command(shape)
     group.add_command(read)

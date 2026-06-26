@@ -196,6 +196,36 @@ with pl.attach() as ppt:
     deck.export_pdf("C:/out/deck.pdf")    # a read — working file untouched
 ```
 
+## Media & narrated-video export
+
+The "build a deck, narrate it, export a video" path.
+[`slide.add_audio(path)`](#pptlive.Slide) / [`slide.add_video(path)`](#pptlive.Slide)
+insert an audio/video clip (embedded by default; `link=True` keeps the file on disk).
+`autoplay` plays the clip on slide entry, `hide_icon` hides the audio icon while idle
+(audio only), and `pace_slide` auto-advances the slide to the clip's length — so an
+exported video paces itself to the narration. Each shape read carries a `media` dict
+(`{type, length_s, muted, volume, autoplay}`) and `has_media`.
+
+[`deck.export_video(path)`](#pptlive.Presentation) exports the deck to an MP4 via
+PowerPoint's async `CreateVideo`. Like `export_pdf` it is a **read** (no rebind, dirty
+flag preserved). It **blocks by default**, polling to completion and returning a
+[`VideoExportResult`](#pptlive.VideoExportResult); pass `wait=False` to return the
+in-flight status immediately and poll [`deck.video_status()`](#pptlive.Presentation)
+until it reports `done`. A failed or timed-out encode raises
+[`VideoExportError`](#pptlive.VideoExportError).
+
+```python
+with pl.attach() as ppt:
+    deck = ppt.presentations.active
+    with deck.edit("Narrate the deck"):
+        deck.slides[1].add_audio("intro.mp3")     # autoplay + pace the slide (defaults)
+        deck.slides[2].add_video("demo.mp4")      # stays visible; same knobs
+    result = deck.export_video("C:/out/deck.mp4", resolution=1080)
+    assert result.ok and result.status == "done"  # result.path is the written MP4
+```
+
+::: pptlive.VideoExportResult
+
 ## Slide show
 
 [`deck.show`](#pptlive.SlideShow) drives a running slide show like a presenter's
@@ -250,6 +280,8 @@ that map names to the right int the way an LLM would phrase them.
 ::: pptlive.NoTextFrameError
 
 ::: pptlive.UnsavedPresentationError
+
+::: pptlive.VideoExportError
 
 ::: pptlive.SlideShowNotRunningError
 

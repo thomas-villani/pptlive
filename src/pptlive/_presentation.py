@@ -9,8 +9,10 @@ document-wide character stream, so anchor ids are hierarchical and slide-first
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -26,9 +28,11 @@ from ._snapshot import Snapshot
 from ._theme import Master, Theme
 from .constants import (
     DEFAULT_LAYOUT_ALIAS,
+    PpMediaTaskStatus,
     PpSaveAsFileType,
     image_filter_for,
     match_layout_name,
+    media_task_status_name,
     save_format_for,
 )
 from .exceptions import (
@@ -40,6 +44,7 @@ from .exceptions import (
     PresentationNotFoundError,
     ReplaceVerificationError,
     UnsavedPresentationError,
+    VideoExportError,
 )
 
 #: Chars of context shown on each side of a `find` match in its `context` snippet.
@@ -62,6 +67,35 @@ def _match_context(text: str, start: int, end: int) -> str:
 
 if TYPE_CHECKING:
     from ._app import PowerPoint
+
+#: Seconds between `CreateVideoStatus` polls while `export_video(wait=True)` blocks.
+_VIDEO_POLL_INTERVAL = 1.0
+#: After status flips to Done, the encoder finishes flushing the file a beat later;
+#: poll its existence this many times (×_VIDEO_POLL_INTERVAL) before giving up.
+_VIDEO_FILE_WAIT_TICKS = 20
+
+
+@dataclass(frozen=True)
+class VideoExportResult:
+    """The outcome of a `deck.export_video(...)` request or a `video_status()` poll.
+
+    `status` is the friendly `CreateVideoStatus` token (`queued`/`in_progress`/
+    `done`/`failed`/`none`); `ok` is True only on a finished, non-empty file.
+    `path` is the absolute MP4 path for an export, or `""` for a bare status poll.
+    """
+
+    path: str
+    status: str
+    status_code: int
+    ok: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ok": self.ok,
+            "path": self.path,
+            "status": self.status,
+            "status_code": self.status_code,
+        }
 
 
 class Presentation:
@@ -163,6 +197,107 @@ class Presentation:
         with _com.translate_com_errors():
             self._pres.SaveAs(abspath, int(PpSaveAsFileType.PDF))
         return abspath
+
+    def _video_status_code(self) -> int:
+        with _com.translate_com_errors():
+            return int(self._pres.CreateVideoStatus)
+
+    def export_video(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        use_timings: bool = True,
+        default_slide_duration: float = 5.0,
+        resolution: int = 720,
+        fps: int = 30,
+        quality: int = 85,
+        wait: bool = True,
+        timeout: float = 600.0,
+    ) -> VideoExportResult:
+        """Export the deck to an MP4 at `path` (`Presentation.CreateVideo`).
+
+        The narrated-video deliverable — renders the deck's current (unsaved) state
+        to video. A **read**: like [`export_pdf`][pptlive.Presentation.export_pdf]
+        it neither rebinds the working file nor clears its dirty flag, so no `edit()`
+        fence is needed. Overwrites an existing file.
+
+        `use_timings` honors per-slide auto-advance timings + narration (set
+        `pace_slide=True` on `add_audio`/`add_video`); `default_slide_duration` (s)
+        paces any slide *without* a timing. `resolution` is the vertical pixel
+        height (e.g. 720, 1080), `fps` frames/second, `quality` 0–100.
+
+        `CreateVideo` is **async**. By default (`wait=True`) this blocks, polling
+        `CreateVideoStatus` until the encode finishes (or `timeout` seconds elapse,
+        raising [`VideoExportError`][pptlive.VideoExportError]), and returns a
+        `VideoExportResult` with `ok=True` and the written `path`. With `wait=False`
+        it returns immediately with the in-flight status (`ok=False`); poll
+        [`video_status`][pptlive.Presentation.video_status] until it reports `done`.
+        A failed encode raises `VideoExportError`.
+        """
+        abspath = str(Path(os.fspath(path)).expanduser().resolve())
+        with _com.translate_com_errors():
+            self._pres.CreateVideo(
+                abspath,
+                bool(use_timings),
+                int(default_slide_duration),
+                int(resolution),
+                int(fps),
+                int(quality),
+            )
+        if not wait:
+            code = self._video_status_code()
+            return VideoExportResult(
+                path=abspath,
+                status=media_task_status_name(code),
+                status_code=code,
+                ok=False,
+            )
+        deadline = time.monotonic() + float(timeout)
+        while True:
+            code = self._video_status_code()
+            if code == int(PpMediaTaskStatus.FAILED):
+                raise VideoExportError(
+                    f"video export failed for {abspath!r}",
+                    status=media_task_status_name(code),
+                )
+            if code == int(PpMediaTaskStatus.DONE):
+                # The encoder flushes the file a beat after status flips to Done.
+                for _ in range(_VIDEO_FILE_WAIT_TICKS):
+                    if os.path.exists(abspath) and os.path.getsize(abspath) > 0:
+                        break
+                    time.sleep(_VIDEO_POLL_INTERVAL)
+                ok = os.path.exists(abspath) and os.path.getsize(abspath) > 0
+                return VideoExportResult(
+                    path=abspath,
+                    status=media_task_status_name(code),
+                    status_code=code,
+                    ok=ok,
+                )
+            if time.monotonic() >= deadline:
+                raise VideoExportError(
+                    f"video export timed out after {timeout:g}s "
+                    f"(last status: {media_task_status_name(code)}); "
+                    "the encode may still be running — poll video_status()",
+                    status=media_task_status_name(code),
+                )
+            time.sleep(_VIDEO_POLL_INTERVAL)
+
+    def video_status(self) -> VideoExportResult:
+        """Poll the async video-export status (`Presentation.CreateVideoStatus`).
+
+        The non-blocking companion to `export_video(wait=False)`: returns a
+        `VideoExportResult` whose `status` is `none`/`queued`/`in_progress`/`done`/
+        `failed` and `ok` is True once the encode is `done`. `path` is `""` here (a
+        bare status poll doesn't know the target). `none` means no export has been
+        requested in this session.
+        """
+        code = self._video_status_code()
+        return VideoExportResult(
+            path="",
+            status=media_task_status_name(code),
+            status_code=code,
+            ok=code == int(PpMediaTaskStatus.DONE),
+        )
 
     @property
     def slides(self) -> SlideCollection:

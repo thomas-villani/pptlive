@@ -36,7 +36,7 @@ from ._charts import Chart
 from ._comments import Comment, CommentCollection
 from ._edit import EditScope
 from ._headersfooters import HeadersFooters
-from ._presentation import Presentation, PresentationCollection
+from ._presentation import Presentation, PresentationCollection, VideoExportResult
 from ._sections import SectionCollection
 from ._selection import SelectionInfo, SelectionSnapshot
 from ._shapes import PlaceholderShape, Shape, ShapeById, ShapeCollection, TextFrameStatus
@@ -60,6 +60,7 @@ from .exceptions import (
     SlideNotFoundError,
     SlideShowNotRunningError,
     UnsavedPresentationError,
+    VideoExportError,
 )
 
 __all__ = [
@@ -105,6 +106,8 @@ __all__ = [
     "TextFrameStatus",
     "Theme",
     "UnsavedPresentationError",
+    "VideoExportError",
+    "VideoExportResult",
     "__version__",
     "attach",
     "connect",

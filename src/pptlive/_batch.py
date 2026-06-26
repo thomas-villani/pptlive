@@ -97,6 +97,7 @@ class EditOp(StrEnum):
     SLIDE_MOVE = "slide_move"
     SET_LAYOUT = "set_layout"
     SHAPE_ADD = "shape_add"
+    MEDIA_ADD = "media_add"
     SHAPE_MOVE = "shape_move"
     SHAPE_RESIZE = "shape_resize"
     SHAPE_DELETE = "shape_delete"
@@ -150,6 +151,8 @@ class RenderOp(StrEnum):
     DECK_PDF = "deck_pdf"
     SAVE = "save"
     SAVE_AS = "save_as"
+    EXPORT_VIDEO = "export_video"
+    VIDEO_STATUS = "video_status"
     NAVIGATE = "navigate"
 
 
@@ -603,6 +606,29 @@ def _edit_shape_add(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
         created = shapes.add_picture(p["path"], alt_text=p.get("alt_text"), **geom)
     else:
         raise BatchOpError(f"invalid_args: unknown shape kind {kind!r}")
+    return {"ok": True, **created.to_dict()}
+
+
+@edit_op(EditOp.MEDIA_ADD)
+def _edit_media_add(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    _require(p.get("slide") is not None, "edit op='media_add' requires `slide`")
+    _require(p.get("path") is not None, "edit op='media_add' requires `path`")
+    kind = p.get("kind")
+    _require(kind in ("audio", "video"), "edit op='media_add' requires kind='audio' or 'video'")
+    geom = {k: p.get(k) for k in ("left", "top", "width", "height")}
+    slide = deck.slides[p["slide"]]
+    common: dict[str, Any] = {
+        "link": bool(p.get("link", False)),
+        "autoplay": bool(p.get("autoplay", True)),
+        "pace_slide": bool(p.get("pace_slide", True)),
+        "alt_text": p.get("alt_text"),
+    }
+    if kind == "audio":
+        created = slide.add_audio(
+            p["path"], hide_icon=bool(p.get("hide_icon", True)), **common, **geom
+        )
+    else:  # video
+        created = slide.add_video(p["path"], **common, **geom)
     return {"ok": True, **created.to_dict()}
 
 
@@ -1355,6 +1381,30 @@ def _render_save_as(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
     # centrally (run_batch + _mcp_errors), so no per-handler wrap.
     written = deck.save_as(p["out"], fmt=fmt, overwrite=bool(p.get("overwrite", False)))
     return {"ok": True, "path": written, "format": fmt}
+
+
+@render_op(RenderOp.EXPORT_VIDEO)
+def _render_export_video(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
+    deck = _pick_deck(ppt, p.get("doc"))
+    _require(p.get("out") is not None, "render op='export_video' requires `out` (the MP4 path)")
+    result = deck.export_video(
+        p["out"],
+        use_timings=bool(p.get("use_timings", True)),
+        default_slide_duration=float(p.get("default_slide_duration", 5.0)),
+        resolution=int(p.get("resolution", 720)),
+        fps=int(p.get("fps", 30)),
+        quality=int(p.get("quality", 85)),
+        wait=bool(p.get("wait", True)),
+        timeout=float(p.get("timeout", 600.0)),
+    )
+    # `format: "mp4"` keeps _render_reply from mis-embedding the file as an image.
+    return {**result.to_dict(), "format": "mp4"}
+
+
+@render_op(RenderOp.VIDEO_STATUS)
+def _render_video_status(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
+    deck = _pick_deck(ppt, p.get("doc"))
+    return {**deck.video_status().to_dict(), "format": "mp4"}
 
 
 @render_op(RenderOp.NAVIGATE)

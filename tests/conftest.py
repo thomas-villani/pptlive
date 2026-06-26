@@ -16,6 +16,7 @@ same object, the way the real COM property does.
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -36,6 +37,7 @@ _MSO_AUTO_SHAPE = 1
 _MSO_LINE = 9
 _MSO_PICTURE = 13
 _MSO_PLACEHOLDER = 14
+_MSO_MEDIA = 16
 _MSO_TEXT_BOX = 17
 _MSO_TABLE = 19
 _MSO_SMARTART = 24
@@ -555,6 +557,12 @@ class _FakeShape:
         self._table = table
         self._chart: _FakeChart | None = None
         self._smartart: _FakeSmartArt | None = None
+        # Media (v1.7): set by AddMediaObject2. `_media` holds {type, length_ms};
+        # PlaySettings carries the auto-play flags the wrapper writes.
+        self._media: dict[str, Any] | None = None
+        self._play_settings = SimpleNamespace(
+            PlayOnEntry=_MSO_FALSE, HideWhileNotPlaying=_MSO_FALSE
+        )
         self._text_frame = _FakeTextFrame(text) if text is not None else None
         # Modern TextFrame2 — the wrapper reads AutoSize off this (the classic
         # TextFrame.AutoSize is the mixed sentinel on real builds). 1 =
@@ -650,6 +658,22 @@ class _FakeShape:
         if self._smartart is None:
             raise AttributeError("shape has no smartart")
         return self._smartart
+
+    @property
+    def MediaType(self) -> int:
+        if self._media is None:
+            raise AttributeError("shape is not media")
+        return int(self._media["type"])
+
+    @property
+    def MediaFormat(self) -> Any:
+        if self._media is None:
+            raise AttributeError("shape is not media")
+        return SimpleNamespace(Length=float(self._media["length_ms"]), Muted=_MSO_FALSE, Volume=0.5)
+
+    @property
+    def AnimationSettings(self) -> Any:
+        return SimpleNamespace(PlaySettings=self._play_settings)
 
     @property
     def PlaceholderFormat(self) -> Any:
@@ -1272,6 +1296,33 @@ class _FakeShapes:
                 height=h,
             )
         )
+
+    def AddMediaObject2(
+        self,
+        filename: str,
+        link_to_file: int,
+        save_with_document: int,
+        left: float,
+        top: float,
+        width: float,
+        height: float,
+    ) -> _FakeShape:
+        sid = self._next_id()
+        ext = os.path.splitext(filename)[1].lower()
+        is_video = ext in (".mp4", ".mov", ".avi", ".wmv", ".mkv", ".m4v")
+        sh = _FakeShape(
+            name=f"Media {sid}",
+            shape_id=sid,
+            shape_type=_MSO_MEDIA,
+            text=None,
+            left=left,
+            top=top,
+            width=width,
+            height=height,
+        )
+        # type: 3=movie, 2=sound (PpMediaType); a 1.2 s nominal clip.
+        sh._media = {"type": 3 if is_video else 2, "length_ms": 1200.0}
+        return self._adopt(sh)
 
     def AddTable(
         self,
@@ -2148,6 +2199,7 @@ class _FakePresentation:
         self.SectionProperties = _FakeSectionProperties(self)
         self._show_settings = _FakeSlideShowSettings(self)
         self._show_window: _FakeSlideShowWindow | None = None
+        self._video_path: str | None = None  # set by CreateVideo
 
     @property
     def Path(self) -> str:
@@ -2191,6 +2243,35 @@ class _FakePresentation:
             fh.write(b"PK\x03\x04fake pptlive pptx")
         self.FullName = str(FileName)
         self.Saved = -1
+
+    def CreateVideo(  # noqa: N803 (COM arg names)
+        self,
+        FileName: str,
+        UseTimingsAndNarrations: bool = True,
+        DefaultSlideDuration: int = 5,
+        VertResolution: int = 720,
+        FramesPerSecond: int = 30,
+        Quality: int = 85,
+    ) -> None:
+        """Begin the async MP4 export — just records the target path here."""
+        self._video_path = str(FileName)
+
+    @property
+    def CreateVideoStatus(self) -> int:
+        """PpMediaTaskStatus: 0=None (no export), 3=Done, 4=Failed.
+
+        The fake "finishes" the encode by the first poll and writes a stub MP4, so
+        a blocking `export_video(wait=True)` returns on its first status read (no
+        real sleep). A path containing "fail" reports Failed (for the error path).
+        """
+        if self._video_path is None:
+            return 0  # none — no export requested this session
+        if "fail" in os.path.basename(self._video_path).lower():
+            return 4  # Failed
+        if not os.path.exists(self._video_path):
+            with open(self._video_path, "wb") as fh:
+                fh.write(b"\x00\x00\x00\x18ftypmp42fake pptlive mp4")
+        return 3  # Done
 
     @property
     def SlideShowSettings(self) -> _FakeSlideShowSettings:

@@ -129,6 +129,23 @@ class Slide:
     def shapes(self) -> ShapeCollection:
         return ShapeCollection(self)
 
+    def add_audio(self, path: str | os.PathLike[str], **kwargs: Any) -> Shape:
+        """Insert an audio clip on this slide — `self.shapes.add_audio(...)`.
+
+        The "narrate this slide" convenience; see
+        [`ShapeCollection.add_audio`][pptlive._shapes.ShapeCollection.add_audio]
+        for the keyword options (`autoplay`/`hide_icon`/`pace_slide`/`link`/…).
+        """
+        return self.shapes.add_audio(path, **kwargs)
+
+    def add_video(self, path: str | os.PathLike[str], **kwargs: Any) -> Shape:
+        """Insert a video clip on this slide — `self.shapes.add_video(...)`.
+
+        See [`ShapeCollection.add_video`][pptlive._shapes.ShapeCollection.add_video]
+        for the keyword options.
+        """
+        return self.shapes.add_video(path, **kwargs)
+
     @property
     def notes(self) -> Notes:
         """The speaker-notes anchor (`notes:S`)."""

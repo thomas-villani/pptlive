@@ -29,7 +29,7 @@ record the finding, then harden library + CLI + MCP + tests together.
 | ---- | ----- | ------ | -------------- |
 | **v1.4-rest** | Navigation & structure: sections, headers/footers | `[x]` main cut · `[ ]` run-level hyperlinks | Sections + headers/footers shipped (v0.6); only text-run-level hyperlinks remain. |
 | **v1.5-rest** | Animations | `[x]` main cut · `[ ]` long tail | Whole-shape entrance/exit shipped (v0.10); per-paragraph levels / motion paths / reordering remain. |
-| **v1.7** | Media + narrated-video export | `[~]` | Spike proved the high-ceiling workflow: insert narration, self-time slides, export MP4. **The largest single remaining tier.** |
+| **v1.7** | Media + narrated-video export | `[x]` | SHIPPED 2026-06-25 — insert audio/video narration, self-time slides, export MP4 (async `CreateVideo`). Only the media long tail (trimming, bookmarks, recorded narration) remains. |
 | **Opportunistic** | Tables/charts/SmartArt/arrangement/tags/metadata/OLE | mixed | Pull on demand when a workflow needs it. |
 | **Deferred** | Async/events, full layout authoring, deep theme/master follow-ups | `[ ]` | Real but lower leverage or larger architectural lift. |
 
@@ -111,13 +111,21 @@ de-risked; only the build remains.
 
 ---
 
-## v1.7 — media + narrated-video export
+## v1.7 — media + narrated-video export — SHIPPED 2026-06-25
 
-This is the highest-ceiling remaining tier: an agent can build a deck, add
-per-slide narration, and export a finished video. The 2026-06-11 spike proved the
-chain works end-to-end with no new dependency; implementation is still absent.
+**SHIPPED** (library + CLI + MCP + both SKILL guides + tests; re-verified live,
+net-zero). `Slide.add_audio` / `add_video` (over `Shapes.AddMediaObject2`, with
+`autoplay` / `hide_icon` / `pace_slide` reusing `Slide.set_transition`),
+`Shape.has_media` / `Shape.media` reads, and `deck.export_video(...)` /
+`deck.video_status()` (over the async `Presentation.CreateVideo` /
+`CreateVideoStatus` — blocking by default, `wait=False` + poll for non-blocking).
+New `PpMediaType` / `PpMediaTaskStatus` constants + `VideoExportError`. CLI `media`
+group + `export-video` / `video-status`; MCP `ppt_edit` `media_add`, `ppt_render`
+`export_video` / `video_status`. See CHANGELOG `[Unreleased]`. The original
+2026-06-11 spike (`scripts/media_video_spike.py`) proved the chain end-to-end with
+no new dependency; what remains below is the deferred long tail.
 
-- [~] **Insert media: `slide.add_audio(path)` / `slide.add_video(path)`.**
+- [x] **Insert media: `slide.add_audio(path)` / `slide.add_video(path)`.**
   - **Spike status:** confirmed via `Shapes.AddMediaObject2`.
   - **COM surface:** `Shapes.AddMediaObject2(FileName, LinkToFile=False,
     SaveWithDocument=True, Left, Top, Width, Height)`; read `Shape.MediaType`,
@@ -127,14 +135,14 @@ chain works end-to-end with no new dependency; implementation is still absent.
   - **Notes:** resolve paths to absolute paths; document embed-vs-link file-size
     tradeoff.
 
-- [~] **Auto-play + per-slide pacing.**
+- [x] **Auto-play + per-slide pacing.**
   - **COM surface:** `Shape.AnimationSettings.PlaySettings.PlayOnEntry`,
     `HideWhileNotPlaying`; reuse `SlideShowTransition.AdvanceOnTime` /
     `.AdvanceTime` for pacing.
   - **Wrapper shape:** `pace_slide=True` reads `MediaFormat.Length` and sets slide
     auto-advance to the clip duration.
 
-- [~] **Export video: `deck.export_video(path)`.**
+- [x] **Export video: `deck.export_video(path)`.**
   - **Spike status:** `Presentation.CreateVideo(...)` marshals and produced a real
     MP4; it is async.
   - **COM surface:** `Presentation.CreateVideo(FileName, UseTimingsAndNarrations,
@@ -148,7 +156,15 @@ chain works end-to-end with no new dependency; implementation is still absent.
     `media_add` and `ppt_render` `export_video` / `video_status`.
   - **Build questions:** map failed encodes cleanly to errors; decide polling shape
     for MCP non-wait calls; document native recorded narration as a separate path not
-    used by this tier.
+    used by this tier. *(Resolved: failed/timeout → `VideoExportError`; `export_video`
+    blocks by default with `wait=False` + `video_status()` for non-blocking polling.)*
+
+- [ ] **Media long tail (deferred from the v1.7 cut).**
+  - Trimming (`MediaFormat.StartPoint` / `EndPoint`), bookmarks, poster frames,
+    volume/mute setters, video styling.
+  - Native recorded narration (`Slide.NotesPage` / `RecordNarration`) — a separate
+    capture path, not the file-insertion path shipped here.
+  - WMV export (`SaveAs` 37) — MP4 via `CreateVideo` is the one path shipped.
 
 ---
 

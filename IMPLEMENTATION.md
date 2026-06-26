@@ -1170,6 +1170,42 @@ SmartArt node *fill* + structural node add/delete.
 
 ---
 
+## v1.7 — media + narrated-video export — SHIPPED (2026-06-25)
+
+The highest-ceiling tier: build a deck → narrate it → export an MP4, end to end.
+Pre-proven live by `scripts/media_video_spike.py` (the 2026-06-11 spike), then
+shipped library + CLI + MCP + both SKILL guides + tests, and **re-verified live**
+(net-zero: temp slide + audio added, paced, a real ~270 KB MP4 exported, slide
+removed).
+
+- [x] **Insert media** (`_shapes.py`): `ShapeCollection.add_audio`/`add_video` over
+  `Shapes.AddMediaObject2` (shared `_add_media`), with `Slide.add_audio`/`add_video`
+  delegations. `link` (embed vs. link), `autoplay` (`PlaySettings.PlayOnEntry`),
+  `hide_icon` (`HideWhileNotPlaying`, audio only), and `pace_slide` — which reads
+  `MediaFormat.Length` and **reuses `Slide.set_transition(advance_after=…)`** rather
+  than re-implementing the advance knobs. `FileNotFoundError` before any COM.
+- [x] **Media reads**: `is_media` gate (`Shape.Type == msoMedia`) + `Shape.has_media`
+  / `Shape.media`; `shape_to_dict` emits `has_media` + a `media` sub-dict
+  (`{type, length_s, muted, volume, autoplay}`), each field `_safe`-read.
+- [x] **Export video** (`_presentation.py`): `deck.export_video(path, *, use_timings,
+  default_slide_duration, resolution, fps, quality, wait=True, timeout=600)` over
+  `Presentation.CreateVideo` — pptlive's **first async COM op**. A *read* (no `edit()`
+  fence). Blocks by default, polling `CreateVideoStatus` to `done`/`failed`
+  (`VideoExportError` on fail/timeout); `wait=False` + `deck.video_status()` for the
+  non-blocking path. Returns a `VideoExportResult` `{ok, path, status, status_code}`.
+- [x] **Constants/exceptions**: `PpMediaType` + `media_type_name`,
+  `PpMediaTaskStatus` + `media_task_status_name`; `VideoExportError` (exit 1).
+- [x] **Front-ends**: CLI `media` group (`media add --kind audio|video`) +
+  `export-video` / `video-status`; MCP `ppt_edit` `media_add`, `ppt_render`
+  `export_video` / `video_status` (mp4 never mis-embedded as an image). Fake-COM grew
+  `AddMediaObject2` / `MediaFormat` / `PlaySettings` + `CreateVideo` /
+  `CreateVideoStatus`. Suite green (911), `ruff`/`mypy` clean.
+
+**Deferred (media long tail):** trimming (`StartPoint`/`EndPoint`), bookmarks, poster
+frames, volume/mute setters, video styling; native recorded narration; WMV export.
+
+---
+
 ## Cross-cutting (any release)
 
 - [ ] **HRESULT coverage** — start from wordlive's `_BUSY_HRESULTS`; widen as

@@ -1329,6 +1329,50 @@ def test_save_as_unknown_format_is_invalid_args(fake_powerpoint: Any, tmp_path: 
         ppt_render("save_as", out=str(tmp_path / "x.odp"), save_format="odp")
 
 
+# -- media (v1.7) -----------------------------------------------------------
+
+
+def test_media_add_audio(fake_powerpoint: Any, tmp_path: Any) -> None:
+    wav = tmp_path / "narration.wav"
+    wav.write_bytes(b"RIFFfake")
+    out = ppt_edit("media_add", slide=1, kind="audio", path=str(wav))
+    assert out["ok"] is True
+    assert out["has_media"] is True
+    assert out["media"]["type"] == "sound"
+
+
+def test_media_add_video(fake_powerpoint: Any, tmp_path: Any) -> None:
+    mp4 = tmp_path / "clip.mp4"
+    mp4.write_bytes(b"\x00\x00\x00\x18ftyp")
+    out = ppt_edit("media_add", slide=1, kind="video", path=str(mp4))
+    assert out["media"]["type"] == "movie"
+
+
+def test_media_add_requires_path(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError, match="requires `path`"):
+        ppt_edit("media_add", slide=1, kind="audio")
+
+
+def test_export_video_blocks_and_never_embeds(fake_powerpoint: Any, tmp_path: Any) -> None:
+    out = tmp_path / "deck.mp4"
+    res = ppt_render("export_video", out=str(out), resolution=480)
+    assert not isinstance(res, CallToolResult)  # mp4 is not an image block
+    assert res["ok"] is True
+    assert res["status"] == "done"
+    assert out.read_bytes().startswith(b"\x00\x00\x00\x18ftyp")
+
+
+def test_export_video_requires_out(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError, match="requires `out`"):
+        ppt_render("export_video")
+
+
+def test_video_status_none_before_export(fake_powerpoint: Any) -> None:
+    res = ppt_render("video_status")
+    assert res["status"] == "none"
+    assert res["ok"] is False
+
+
 def test_deck_pdf_in_batch_does_not_break_image_embedding(
     fake_powerpoint: Any, tmp_path: Any
 ) -> None:

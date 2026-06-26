@@ -123,6 +123,21 @@ class UnsavedPresentationError(PptliveError):
         self.name = name
 
 
+class VideoExportError(PptliveError):
+    """`deck.export_video()` failed or timed out.
+
+    A failed encode (`CreateVideoStatus == ppMediaTaskStatusFailed`) or a blocking
+    `wait=True` that exceeded its `timeout` before PowerPoint reported `Done`. Not a
+    missing anchor or a transient busy state, so it maps to the general exit code
+    (1) / MCP `error`. Carries the last-seen `status` token for diagnosis; on
+    timeout the encode may still be running — poll `deck.video_status()` to check.
+    """
+
+    def __init__(self, message: str, *, status: str | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+
+
 class AmbiguousMatchError(PptliveError):
     """A query matched more than one candidate without a disambiguator.
 

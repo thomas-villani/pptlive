@@ -298,6 +298,15 @@ if not deck.saved:                                    # deck.saved / deck.path a
 deck.save_as("C:/out/v2.pptx", overwrite=False)       # write .pptx + rebind; refuses to clobber unless overwrite
 deck.export_pdf("C:/out/deck.pdf")                    # pixel-faithful PDF; working .pptx untouched
 
+# Media + narrated-video export — build a deck, narrate it, export an MP4.
+with deck.edit("Add narration"):
+    deck.slides[4].add_audio("speech.mp3")            # embed; autoplay + pace the slide to the clip (defaults)
+    deck.slides[4].add_video("demo.mp4", left=72, top=120)   # stays visible; same autoplay/pace knobs
+deck.slides[4].shapes["Media 7"].media                # {type: 'sound'|'movie', length_s, muted, volume, autoplay}
+result = deck.export_video("C:/out/deck.mp4", resolution=1080)   # blocks until done (a READ; no rebind)
+assert result.ok and result.status == "done"          # result.path is the written MP4
+# Non-blocking: deck.export_video(path, wait=False) then poll deck.video_status() until .status == "done".
+
 sel = deck.selection()                                # {type, slide, anchor_id, shapes, ...}
 if sel.anchor_id:
     with deck.edit("Bold the selected text"):

@@ -123,6 +123,13 @@ PowerPoint's text model has sharp edges that leak through. The big ones:
 - `pptlive save-as PATH [--format pptx] [--overwrite]` — write a `.pptx` and **rebind** the working file to it (the open deck becomes PATH, like Save-As). Refuses to clobber unless `--overwrite`. For PDF use `export-pdf`.
 - `pptlive export-pdf PATH` — export a pixel-faithful PDF of the current (unsaved) state. A **read**: no rebind, dirty flag preserved, your `.pptx` untouched. The "hand back a deliverable" path. Overwrites an existing PDF.
 
+## Media & narrated-video export
+The "build a deck, narrate it, export a video" path.
+- `pptlive media add --slide 4 --kind audio --path narration.mp3` — insert audio (embedded; `--link` keeps it on disk). Defaults: `--autoplay` plays on slide entry, `--hide-icon` hides the speaker icon while idle, `--pace-slide` auto-advances the slide to the clip's length (so the exported video paces itself to the narration). Turn any off with `--no-autoplay`/`--no-hide-icon`/`--no-pace-slide`. Optional `--left/--top/--width/--height` (points), `--alt-text`.
+- `pptlive media add --slide 4 --kind video --path demo.mp4` — same, but the clip stays visible (no `--hide-icon`). Reads carry a `media` field (`{type, length_s, muted, volume, autoplay}`); `type` is `sound`/`movie`.
+- `pptlive export-video PATH [--resolution 720] [--fps 30] [--quality 85] [--default-slide-duration 5] [--no-use-timings]` — export the deck to MP4. A **read** (no rebind). Wraps PowerPoint's async CreateVideo: **blocks until done by default** (raises after `--timeout` s, default 600). Returns `{ok, path, status, status_code}`. `--use-timings` (default on) honors per-slide timings + narration.
+- `pptlive export-video PATH --no-wait` returns the in-flight status immediately; poll `pptlive video-status` until `status` is `done` (then the file is ready). A failed encode exits 1.
+
 ## Shapes
 - `pptlive shape add --slide 4 --kind textbox --text "Revenue up 12%" --left 72 --top 72` (points throughout; 1 in = 72 pt).
 - `pptlive shape add --slide 4 --kind shape --shape-type star --left 400 --top 120 --width 120 --height 120 --fill "#1E74B5" --line none` (textbox/shape take `--fill`/`--line` = `#RRGGBB` or `none`, `--line-width` pts).
