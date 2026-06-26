@@ -12,6 +12,20 @@ authors = [
 # is being bumped to the same floor in lockstep, so the parity holds — 3.11+
 # syntax (StrEnum, assert_never, …) is now fair game.
 requires-python = ">=3.11"
+keywords = [
+    "powerpoint",
+    "pptx",
+    "com",
+    "pywin32",
+    "office-automation",
+    "automation",
+    "mcp",
+    "model-context-protocol",
+    "llm",
+    "llm-agents",
+    "claude",
+    "cli",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Win32 (MS Windows)",
@@ -29,6 +43,13 @@ dependencies = [
     "click>=8.1",
     "pywin32>=306 ; sys_platform == 'win32'",
 ]
+
+[project.urls]
+Homepage = "https://thomas-villani.github.io/pptlive/"
+Documentation = "https://thomas-villani.github.io/pptlive/"
+Repository = "https://github.com/thomas-villani/pptlive"
+Issues = "https://github.com/thomas-villani/pptlive/issues"
+Changelog = "https://github.com/thomas-villani/pptlive/releases"
 
 # The MCP server is optional: `pip install pptlive[mcp]` (or `uv add pptlive[mcp]`)
 # pulls in the official Model Context Protocol SDK and exposes the `pptlive-mcp`
