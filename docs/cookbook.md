@@ -610,3 +610,41 @@ pptlive slide set-footer --slide 1 --hide
 Starting a section in front of a later slide auto-creates a leading "Default
 Section" for the slides ahead of it; `section delete` keeps the slides unless you
 pass `--delete-slides`.
+
+## 22. Narrate a deck and export a video
+
+The headline workflow: add per-slide narration, let each slide auto-pace to its
+clip, then export a finished MP4. `add_audio` / `add_video` embed the clip;
+`pace_slide` (on by default) sets the slide to auto-advance to the clip length, so
+the exported video tracks the narration. `export_video` wraps PowerPoint's async
+`CreateVideo` and **blocks until done** by default.
+
+```python
+import pptlive as pl
+
+with pl.attach() as ppt:
+    deck = ppt.presentations.active
+
+    with deck.edit("Narrate the deck"):
+        for i, clip in enumerate(["intro.mp3", "results.mp3", "closing.mp3"], start=1):
+            deck.slides[i].add_audio(clip)          # autoplay + pace the slide (defaults)
+        # deck.slides[2].add_video("demo.mp4")      # a video clip stays visible
+
+    result = deck.export_video("pitch.mp4", resolution=1080)   # blocks to completion
+    assert result.ok and result.status == "done"               # result.path is the MP4
+
+    # Non-blocking variant (long encodes): kick off, then poll.
+    # deck.export_video("pitch.mp4", wait=False)
+    # while deck.video_status().status != "done": ...
+```
+
+```bash
+pptlive media add --slide 1 --kind audio --path intro.mp3
+pptlive media add --slide 2 --kind video --path demo.mp4
+pptlive export-video pitch.mp4 --resolution 1080      # blocks until done
+# or: pptlive export-video pitch.mp4 --no-wait ; pptlive video-status
+```
+
+Each shape read carries a `media` field (`{type, length_s, muted, volume,
+autoplay}`); `export_video` is a **read** — it renders the current state without
+rebinding your working `.pptx`.

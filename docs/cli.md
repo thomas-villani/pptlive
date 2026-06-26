@@ -38,7 +38,12 @@ See [Errors & exit codes](errors.md) for the full mapping.
 
 ---
 
-## `status`
+## Reading the deck
+
+Side-effect-free reads — they never move the user's view. Start here to learn
+what's open and addressable before you touch anything.
+
+### `status`
 
 List open presentations, which one is active, and the slide currently in view.
 
@@ -58,7 +63,7 @@ pptlive status
 Exits `4` (and emits `{"decks": [], "viewed_slide": null}`) if PowerPoint isn't
 running.
 
-## `slides`
+### `slides`
 
 One row per slide: index, id, layout, title, shape count, has-notes.
 
@@ -73,7 +78,7 @@ pptlive slides
 ]
 ```
 
-## `outline`
+### `outline`
 
 Title + body bullets per slide — the Outline-view analog.
 
@@ -88,7 +93,7 @@ pptlive outline
 ]
 ```
 
-## `slide read S`
+### `slide read S`
 
 Every shape on slide `S`: `anchor_id`, name, id, type, placeholder kind,
 geometry, alt text, and text.
@@ -111,7 +116,7 @@ pptlive slide read 2
 }
 ```
 
-## `shapes --slide S`
+### `shapes --slide S`
 
 Just the shape listing for slide `S` (the `shapes` array from `slide read`).
 
@@ -121,7 +126,12 @@ pptlive shapes --slide 2
 
 ---
 
-## Reading text — `read`
+## Reading & writing text
+
+Read any text anchor, search the deck, and write or replace text. Writes are
+each one Ctrl-Z and preserve the user's view.
+
+### Reading text — `read`
 
 `read anchor` reads any text anchor; `read notes` is sugar for `notes:S`.
 
@@ -152,7 +162,7 @@ is active). All reads; the view never moves.
  "margins": {"left": 7.2, "right": 7.2, "top": 3.6, "bottom": 3.6}, "overflow_risk": "possible"}
 ```
 
-## `find --text "…"`
+### `find --text "…"`
 
 Fuzzy, deck-wide search. PowerPoint has no document-wide character stream, so
 this **traverses** every text frame — shapes, table cells, and speaker notes —
@@ -175,7 +185,7 @@ pptlive find --text "Metric" --in shape:4:5      # one shape / table / notes anc
 
 Never raises on a miss — zero matches is an **empty array** and exit `0`.
 
-## `write --anchor-id ID --text "…"`
+### `write --anchor-id ID --text "…"`
 
 Set the entire text of a text anchor. Preserves the viewed slide; one Ctrl-Z.
 Embed `\n` (or `\r`) to start a new paragraph — each line becomes its own
@@ -191,7 +201,7 @@ pptlive write --anchor-id cell:4:5:1:1 --text "Metric"   # a cell is a text anch
 {"ok": true, "anchor_id": "ph:2:title", "kind": "placeholder"}
 ```
 
-## `replace` — whole anchor *or* fuzzy span
+### `replace` — whole anchor *or* fuzzy span
 
 Two modes, mutually exclusive:
 
@@ -353,7 +363,13 @@ false` means "hidden", not "empty".
 
 ---
 
-## `snapshot` — see the whole deck cheaply
+## Output — render, save & export
+
+Turn the deck into deliverables: a token-cheap snapshot a vision model can see,
+explicit save / PDF verbs (pptlive never auto-saves), and the
+media-insertion → MP4 narrated-video path.
+
+### `snapshot` — see the whole deck cheaply
 
 Render slides to PNG so a vision model can *see* the whole deck at a predictable
 token cost. `--max-dim N` caps each slide's **long edge** in pixels (only ever
@@ -385,9 +401,7 @@ pptlive snapshot --slide 1 --width 1280 --height 720   # exact pixels (overrides
  "max_dim": 1000, "images": [{"slide": 1, "bytes": 24, "base64": "iVBORw0KG…"}, …]}
 ```
 
----
-
-## Save & export — `save` · `save-as` · `export-pdf`
+### Save & export — `save` · `save-as` · `export-pdf`
 
 Explicit file output — pptlive **never auto-saves**. `status` shows each deck's
 `saved` flag (and flags `(unsaved)` in `--text`), so you can tell there's unsaved
@@ -415,6 +429,39 @@ pptlive export-pdf C:\out\deck.pdf          # a read — working file untouched
 
 ```json
 {"ok": true, "path": "C:\\out\\deck.pdf"}
+```
+
+### Media & narrated-video export — `media` · `export-video` · `video-status`
+
+The "build a deck, narrate it, export a video" path.
+
+- **`media add --slide N --kind audio|video --path FILE`** — insert an audio/video
+  clip (embedded; `--link` keeps the file on disk). Defaults: `--autoplay` plays on
+  slide entry, `--hide-icon` hides the speaker icon while idle (audio only), and
+  `--pace-slide` auto-advances the slide to the clip's length so an exported video
+  paces itself to the narration. Turn any off with `--no-autoplay` /
+  `--no-hide-icon` / `--no-pace-slide`. Optional `--left/--top/--width/--height`
+  (points), `--alt-text`. Reads carry a `media` field (`{type, length_s, muted,
+  volume, autoplay}`); `type` is `sound`/`movie`.
+- **`export-video PATH [--resolution 720] [--fps 30] [--quality 85]
+  [--default-slide-duration 5] [--no-use-timings]`** — export the deck to an MP4. A
+  **read** (no rebind). Wraps PowerPoint's async `CreateVideo`: **blocks until done
+  by default** (raises after `--timeout` seconds, default 600). `--use-timings`
+  (default on) honors per-slide timings + narration.
+- **`export-video PATH --no-wait`** returns the in-flight status immediately; poll
+  **`video-status`** until `status` is `done` (then the file is ready). A failed
+  encode exits 1.
+
+```bash
+pptlive media add --slide 1 --kind audio --path intro.mp3   # narrate slide 1
+pptlive media add --slide 2 --kind video --path demo.mp4    # a video clip
+pptlive export-video C:\out\deck.mp4 --resolution 1080      # blocks until done
+pptlive export-video C:\out\deck.mp4 --no-wait              # kick off, then poll
+pptlive video-status                                        # {status: "done", ...}
+```
+
+```json
+{"ok": true, "path": "C:\\out\\deck.mp4", "status": "done", "status_code": 3}
 ```
 
 ---

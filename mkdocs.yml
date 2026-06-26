@@ -51,7 +51,10 @@ plugins:
             merge_init_into_class: true
             members_order: source
             filters: ["!^_"]
-            heading_level: 2
+            # H3 so each rendered symbol nests under the page's H2 section
+            # headers (Presentations, Slides, …) instead of sitting flat beside
+            # them — gives the Python API page a real two-level TOC.
+            heading_level: 3
 
 markdown_extensions:
   - admonition
@@ -75,6 +78,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Getting started: getting-started.md
+  - Tutorial: tutorial.md
   - Concepts: concepts.md
   - Python API: python-api.md
   - CLI: cli.md

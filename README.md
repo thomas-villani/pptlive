@@ -148,6 +148,13 @@ with pl.attach() as ppt:
     deck.save_as("v2.pptx", overwrite=True)              # write + rebind the working file
     deck.export_pdf("deck.pdf")                          # a read: no rebind, dirty flag kept
 
+    # Media + narrated-video export — build a deck, narrate it, export an MP4.
+    with deck.edit("Narrate the deck"):
+        deck.slides[1].add_audio("intro.mp3")            # embed; autoplay + pace the slide
+        deck.slides[2].add_video("demo.mp4")             # a video clip (stays visible)
+    result = deck.export_video("deck.mp4", resolution=1080)   # async CreateVideo; blocks to done
+    assert result.ok and result.status == "done"             # result.path is the MP4
+
     # Render — let a vision model *see* the slide it just built (export → read → iterate).
     png = deck.slides[4].export_image(width=1280)    # temp PNG (or pass a path); polite
     #   ...hand `png` to your image tool, look, then revise.
@@ -288,6 +295,10 @@ pptlive snapshot [--slides 2-4] [--max-dim 1000] [--width 1280 --height 720]  # 
 pptlive save                                     # persist to the existing file (explicit)
 pptlive save-as v2.pptx [--overwrite]            # write + rebind the working file
 pptlive export-pdf deck.pdf                      # a read: PDF without rebinding the working file
+
+pptlive media add --slide 1 --kind audio --path intro.mp3   # narrate (autoplay + pace the slide)
+pptlive media add --slide 2 --kind video --path demo.mp4    # insert a video clip
+pptlive export-video deck.mp4 --resolution 1080  # deck → MP4 (async CreateVideo; blocks until done)
 ```
 
 Exit codes: `0` ok · `1` other · `2` anchor/slide/shape/presentation not found ·
@@ -341,8 +352,8 @@ one-Ctrl-Z `edit` fencing carry over and reads never move the view:
 | tool | `op`s |
 | ---- | ----- |
 | `ppt_read` | `status` · `slides` · `outline` · `slide` · `anchor` · `geometry` (slide size + shape boxes + overlaps + off-slide) · `selection` · `find` · `table` · `chart` · `smartart` · `comments` · `animations` · `sections` · `headers_footers` · `theme` · `master` · `layouts` — every read; never moves the view |
-| `ppt_edit` | `write` · `find_replace` · `format` (font + paragraph + shape fill/line + bullets) · `slide_add`/`slide_delete`/`slide_duplicate`/`slide_move`/`set_layout` · `shape_add`/`shape_move`/`shape_resize`/`shape_delete`/`shape_order`/`set_alt` · `shape_animate`/`shape_clear_animations`/`slide_clear_animations` · `table_add_row`/`table_delete_row` · `chart_set_type`/`chart_set_data`/`chart_recolor_text` · `smartart_set_nodes`/`smartart_recolor_text` · `comment_add`/`comment_reply`/`comment_delete` · `section_add`/`section_rename`/`section_delete`/`section_move` · `set_headers_footers` · `theme_set_color`/`theme_set_font` · `master_format_text_style`/`master_format_paragraph_style`/`master_set_background` — every mutation; one Ctrl-Z each |
-| `ppt_render` | `slide_image` · `shape_image` · `deck_snapshot` (one PNG per slide — the whole-deck vision read; `max_dim` or exact `width`/`height`) · `deck_pdf`/`save`/`save_as` (explicit output) · `navigate` (the one deliberate view move) |
+| `ppt_edit` | `write` · `find_replace` · `format` (font + paragraph + shape fill/line + bullets) · `slide_add`/`slide_delete`/`slide_duplicate`/`slide_move`/`set_layout` · `shape_add`/`shape_move`/`shape_resize`/`shape_delete`/`shape_order`/`set_alt` · `media_add` (audio/video narration) · `shape_animate`/`shape_clear_animations`/`slide_clear_animations` · `table_add_row`/`table_delete_row` · `chart_set_type`/`chart_set_data`/`chart_recolor_text` · `smartart_set_nodes`/`smartart_recolor_text` · `comment_add`/`comment_reply`/`comment_delete` · `section_add`/`section_rename`/`section_delete`/`section_move` · `set_headers_footers` · `theme_set_color`/`theme_set_font` · `master_format_text_style`/`master_format_paragraph_style`/`master_set_background` — every mutation; one Ctrl-Z each |
+| `ppt_render` | `slide_image` · `shape_image` · `deck_snapshot` (one PNG per slide — the whole-deck vision read; `max_dim` or exact `width`/`height`) · `deck_pdf`/`save`/`save_as` (explicit output) · `export_video`/`video_status` (deck → MP4; async, blocks until done by default) · `navigate` (the one deliberate view move) |
 | `ppt_show` | live slide show: `state` · `start` · `end` · `next` · `previous` · `goto` · `black` · `white` · `resume` |
 | `ppt_batch` | run a **list** of the ops above against one connection — all `edit`s fenced into a **single** undo entry (`atomic`), with `stop_on_error` control |
 
