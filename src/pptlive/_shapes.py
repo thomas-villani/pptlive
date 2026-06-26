@@ -50,6 +50,7 @@ from .constants import (
     gradient_style_for,
     gradient_style_name,
     is_true,
+    media_type_name,
     parse_color,
     pattern_for,
     pattern_name,
@@ -84,6 +85,10 @@ _DEFAULT_CHART_HEIGHT = 300.0  # ~4.2 in
 _CHART_DEFAULT_STYLE = -1  # AddChart2 Style: -1 = the type's default style
 _DEFAULT_SMARTART_WIDTH = 480.0  # ~6.7 in
 _DEFAULT_SMARTART_HEIGHT = 300.0  # ~4.2 in
+_DEFAULT_AUDIO_WIDTH = 60.0  # a small speaker-icon box
+_DEFAULT_AUDIO_HEIGHT = 60.0
+_DEFAULT_VIDEO_WIDTH = 480.0  # 16:9 video frame
+_DEFAULT_VIDEO_HEIGHT = 270.0
 
 _safe = _com.safe_read  # defensive COM-property read (returns a default on failure)
 
@@ -237,6 +242,38 @@ def is_picture(com_shape: Any) -> bool:
         )
     except Exception:
         return False
+
+
+def is_media(com_shape: Any) -> bool:
+    """True iff the shape is an embedded/linked media clip (`msoMedia`).
+
+    The gate for the media reads — `Shape.Type == msoMedia (16)` is reliable for
+    audio/video (a media clip is never a placeholder masquerade), like `is_picture`.
+    """
+    try:
+        return int(com_shape.Type) == int(MsoShapeType.MEDIA)
+    except Exception:
+        return False
+
+
+def _media_to_dict(com_shape: Any) -> dict[str, Any]:
+    """The media sub-dict for a media shape: kind + duration + playback state.
+
+    `length_s` is the clip duration in **seconds** (`MediaFormat.Length` is ms);
+    `autoplay` reflects `AnimationSettings.PlaySettings.PlayOnEntry`. Every field is
+    read defensively (`_safe`) — some props raise on certain clips — so a media
+    shape never fails the whole structured read.
+    """
+    length_ms = _safe(lambda: float(com_shape.MediaFormat.Length), None)
+    return {
+        "type": media_type_name(_safe(lambda: int(com_shape.MediaType), None)),
+        "length_s": round(length_ms / 1000.0, 3) if length_ms else None,
+        "muted": _safe(lambda: is_true(com_shape.MediaFormat.Muted), None),
+        "volume": _safe(lambda: round(float(com_shape.MediaFormat.Volume), 3), None),
+        "autoplay": _safe(
+            lambda: is_true(com_shape.AnimationSettings.PlaySettings.PlayOnEntry), None
+        ),
+    }
 
 
 def _alt_text_of(com_shape: Any) -> str:
@@ -905,6 +942,9 @@ def shape_to_dict(com_shape: Any, slide_index: int, z_index: int) -> dict[str, A
     d["has_table"] = has_table(com_shape)
     d["has_chart"] = has_chart(com_shape)
     d["has_smartart"] = has_smartart(com_shape)
+    d["has_media"] = is_media(com_shape)
+    if d["has_media"]:
+        d["media"] = _media_to_dict(com_shape)
     if has_text_frame(com_shape):
         d["has_text_frame"] = True
         try:
@@ -1076,6 +1116,25 @@ class Shape(Anchor):
             if not has_smartart(self._com_shape()):
                 raise AnchorNotFoundError("smartart", self.anchor_id)
         return SmartArt(self)
+
+    @property
+    def has_media(self) -> bool:
+        """Whether this shape is an audio/video clip (`Shape.Type == msoMedia`)."""
+        with _com.translate_com_errors():
+            return is_media(self._com_shape())
+
+    @property
+    def media(self) -> dict[str, Any]:
+        """The media clip's `{type, length_s, muted, volume, autoplay}` read.
+
+        Raises `AnchorNotFoundError` (kind `"media"`, exit 2) if the shape holds
+        no media.
+        """
+        with _com.translate_com_errors():
+            sh = self._com_shape()
+            if not is_media(sh):
+                raise AnchorNotFoundError("media", self.anchor_id)
+            return _media_to_dict(sh)
 
     def _text_range(self) -> Any:
         sh = self._com_shape()
@@ -1949,6 +2008,142 @@ class ShapeCollection:
             if alt_text is not None:
                 com_shape.AlternativeText = str(alt_text)
             return self._added()
+
+    def _add_media(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        left: float | None,
+        top: float | None,
+        width: float | None,
+        height: float | None,
+        default_width: float,
+        default_height: float,
+        link: bool,
+        autoplay: bool,
+        hide_icon: bool,
+        pace_slide: bool,
+        alt_text: str | None,
+    ) -> Shape:
+        """Shared core for `add_audio` / `add_video` (`Shapes.AddMediaObject2`).
+
+        Validates the file before any COM, embeds (or links) the clip, optionally
+        wires auto-play / hide-while-not-playing, and — when `pace_slide` — sets the
+        slide to auto-advance to the clip length by reusing `Slide.set_transition`.
+        """
+        fs_path = os.fspath(path)
+        if not os.path.isfile(fs_path):
+            raise FileNotFoundError(f"media not found: {fs_path}")
+        abs_path = os.path.abspath(fs_path)
+        left = _DEFAULT_LEFT if left is None else float(left)
+        top = _DEFAULT_TOP if top is None else float(top)
+        width = default_width if width is None else float(width)
+        height = default_height if height is None else float(height)
+        with _com.translate_com_errors():
+            com_shape = self._com_collection.AddMediaObject2(
+                abs_path,
+                int(MsoTriState.TRUE) if link else int(MsoTriState.FALSE),  # LinkToFile
+                int(MsoTriState.FALSE) if link else int(MsoTriState.TRUE),  # SaveWithDocument
+                left,
+                top,
+                width,
+                height,
+            )
+            if alt_text is not None:
+                com_shape.AlternativeText = str(alt_text)
+            if autoplay or hide_icon:
+                # Best-effort: a media clip exposes PlaySettings, but guard anyway.
+                try:
+                    ps = com_shape.AnimationSettings.PlaySettings
+                    if autoplay:
+                        ps.PlayOnEntry = int(MsoTriState.TRUE)
+                    if hide_icon:
+                        ps.HideWhileNotPlaying = int(MsoTriState.TRUE)
+                except Exception:
+                    pass
+            length_ms = _safe(lambda: float(com_shape.MediaFormat.Length), 0.0)
+            shape = self._added()
+        if pace_slide and length_ms and length_ms > 0:
+            # Reuse the shipped transition writer (sets AdvanceOnTime + AdvanceTime).
+            self._slide.set_transition(advance_after=max(1.0, length_ms / 1000.0))
+        return shape
+
+    def add_audio(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        left: float | None = None,
+        top: float | None = None,
+        width: float | None = None,
+        height: float | None = None,
+        link: bool = False,
+        autoplay: bool = True,
+        hide_icon: bool = True,
+        pace_slide: bool = True,
+        alt_text: str | None = None,
+    ) -> Shape:
+        """Insert an audio clip and return its `Shape` (`Shapes.AddMediaObject2`).
+
+        The narration path: the clip is **embedded** (set `link=True` to keep it on
+        disk and shrink the deck). `autoplay` plays it on slide entry, `hide_icon`
+        hides the speaker icon while it isn't playing, and `pace_slide` sets the
+        slide to auto-advance to the clip's length (so an exported video paces
+        itself to the narration). Geometry is in points; omitted values default to a
+        small icon box near the top-left. The shape's `.has_media` is True. Raises
+        `FileNotFoundError` if `path` doesn't exist (before any COM). Wrap in
+        `deck.edit(...)` for the one-Ctrl-Z fence.
+        """
+        return self._add_media(
+            path,
+            left=left,
+            top=top,
+            width=width,
+            height=height,
+            default_width=_DEFAULT_AUDIO_WIDTH,
+            default_height=_DEFAULT_AUDIO_HEIGHT,
+            link=link,
+            autoplay=autoplay,
+            hide_icon=hide_icon,
+            pace_slide=pace_slide,
+            alt_text=alt_text,
+        )
+
+    def add_video(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        left: float | None = None,
+        top: float | None = None,
+        width: float | None = None,
+        height: float | None = None,
+        link: bool = False,
+        autoplay: bool = True,
+        pace_slide: bool = True,
+        alt_text: str | None = None,
+    ) -> Shape:
+        """Insert a video clip and return its `Shape` (`Shapes.AddMediaObject2`).
+
+        Like `add_audio`, but the clip stays visible (there is no `hide_icon` — a
+        video frame is meant to be seen). Geometry is in points; omitted values
+        default to a 16:9 frame near the top-left. `autoplay` plays it on slide
+        entry; `pace_slide` auto-advances the slide to the clip length. The shape's
+        `.has_media` is True. Raises `FileNotFoundError` if `path` doesn't exist
+        (before any COM). Wrap in `deck.edit(...)` for the one-Ctrl-Z fence.
+        """
+        return self._add_media(
+            path,
+            left=left,
+            top=top,
+            width=width,
+            height=height,
+            default_width=_DEFAULT_VIDEO_WIDTH,
+            default_height=_DEFAULT_VIDEO_HEIGHT,
+            link=link,
+            autoplay=autoplay,
+            hide_icon=False,
+            pace_slide=pace_slide,
+            alt_text=alt_text,
+        )
 
     def add_table(
         self,

@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+**v1.7 — media + narrated-video export.** The highest-ceiling remaining tier: an
+agent can build a deck, add per-slide audio/video narration, auto-pace each slide
+to its clip, and export a finished MP4 — end to end. The whole chain was pre-proven
+live by `scripts/media_video_spike.py` (net-zero); this ships it across library +
+CLI + MCP + both SKILL guides, and the shipped wrappers were re-verified live
+(audio inserted + paced, a real MP4 exported, net-zero).
+
+- **Insert media.** `Slide.add_audio(path, *, left=None, top=None, width=None,
+  height=None, link=False, autoplay=True, hide_icon=True, pace_slide=True,
+  alt_text=None)` and `Slide.add_video(...)` (no `hide_icon` — a video stays
+  visible), thin delegations to `ShapeCollection.add_audio` / `add_video` over
+  `Shapes.AddMediaObject2`. Embeds by default (`link=True` keeps the file on disk);
+  `autoplay` → `PlaySettings.PlayOnEntry`, `hide_icon` → `HideWhileNotPlaying`, and
+  `pace_slide` reads `MediaFormat.Length` and **reuses the shipped
+  `Slide.set_transition(advance_after=…)`** to auto-advance the slide to the clip
+  length (so an exported video paces itself to the narration). `FileNotFoundError`
+  before any COM for a missing path.
+- **Media reads.** `Shape.has_media` (gate on `Shape.Type == msoMedia`) +
+  `Shape.media`; every shape listing now carries `has_media` and, for a media
+  shape, a `media` sub-dict `{type: sound|movie, length_s, muted, volume,
+  autoplay}` (each field read defensively).
+- **Export video.** `deck.export_video(path, *, use_timings=True,
+  default_slide_duration=5, resolution=720, fps=30, quality=85, wait=True,
+  timeout=600)` over `Presentation.CreateVideo` — pptlive's **first async COM
+  operation**. A **read** (no rebind, dirty flag preserved, like `export_pdf`), so
+  no `edit()` fence. **Blocks by default**, polling `CreateVideoStatus` to
+  `done`/`failed` (or raising `VideoExportError` on failure / `timeout`); returns a
+  `VideoExportResult` `{ok, path, status, status_code}`. With `wait=False` it
+  returns the in-flight status immediately — poll `deck.video_status()` until
+  `done`. New `PpMediaType` / `PpMediaTaskStatus` constants and a
+  `VideoExportError` (exit 1).
+- **Front-ends.** CLI: a dedicated `media` group (`media add --kind audio|video`)
+  plus top-level `export-video PATH` and `video-status`. MCP: `ppt_edit` op
+  `media_add`, `ppt_render` ops `export_video` / `video_status` (mp4 is never
+  mis-embedded as an image). Both flow through `ppt_batch` via the shared cores.
+
 ## [0.7.0] — 2026-06-23
 
 ### Added

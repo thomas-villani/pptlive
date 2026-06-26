@@ -1925,6 +1925,69 @@ def entry_effect_name(value: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Media (v1.7) — PpMediaType (a media shape's kind) + PpMediaTaskStatus (the
+# async video-export poll status). Both are *read-back / status* maps only — the
+# insertion kind is `"audio"`/`"video"` chosen at the call site, so no friendly
+# *input* coercer is needed (unlike entry_effect_for).
+# ---------------------------------------------------------------------------
+
+
+class PpMediaType(IntEnum):
+    """`Shape.MediaType` — the kind of media a media shape holds."""
+
+    OTHER = 1
+    SOUND = 2
+    MOVIE = 3
+
+
+_MEDIA_TYPE_NAMES: dict[int, str] = {
+    int(PpMediaType.OTHER): "other",
+    int(PpMediaType.SOUND): "sound",
+    int(PpMediaType.MOVIE): "movie",
+}
+
+
+def media_type_name(value: Any) -> str:
+    """Friendly name for a `Shape.MediaType` int (2 -> "sound", 3 -> "movie")."""
+    try:
+        return _MEDIA_TYPE_NAMES.get(int(value), f"media:{int(value)}")
+    except (TypeError, ValueError):
+        return "unknown"
+
+
+class PpMediaTaskStatus(IntEnum):
+    """`Presentation.CreateVideoStatus` — the async MP4-encode task state.
+
+    `NONE` is "no export has been requested" (the idle state). `QUEUED` /
+    `IN_PROGRESS` are mid-encode; `DONE` / `FAILED` are terminal. `export_video`
+    polls this to completion.
+    """
+
+    NONE = 0
+    IN_PROGRESS = 1
+    QUEUED = 2
+    DONE = 3
+    FAILED = 4
+
+
+_MEDIA_TASK_STATUS_NAMES: dict[int, str] = {
+    int(PpMediaTaskStatus.NONE): "none",
+    int(PpMediaTaskStatus.IN_PROGRESS): "in_progress",
+    int(PpMediaTaskStatus.QUEUED): "queued",
+    int(PpMediaTaskStatus.DONE): "done",
+    int(PpMediaTaskStatus.FAILED): "failed",
+}
+
+
+def media_task_status_name(value: Any) -> str:
+    """Friendly name for a `CreateVideoStatus` int (3 -> "done", 4 -> "failed")."""
+    try:
+        return _MEDIA_TASK_STATUS_NAMES.get(int(value), f"status:{int(value)}")
+    except (TypeError, ValueError):
+        return "unknown"
+
+
+# ---------------------------------------------------------------------------
 # Shape animations (v0.10, the v1.5-rest cut) — MsoAnimEffect + MsoAnimTriggerType
 # ---------------------------------------------------------------------------
 #
