@@ -239,6 +239,10 @@ def ppt_read(
       cascaded from the theme/master?" tell — so a surprise color traces to its
       origin. The other font attrs are still *rendered* values (COM resolves the
       cascade before we see them and exposes no directly-set flag beyond color).
+    - "links": the text-run hyperlinks inside the text anchor at `anchor_id` —
+      each a `{text, start, length, address, sub_address}` (the linked word/span,
+      its 0-based offset + length in the frame, and its URL or in-deck jump). Pair
+      with `ppt_edit` op="link_set"/"link_remove".
     - "text_frame_status": autofit diagnostics for the shape at `anchor_id` —
       `{autosize, word_wrap, margins:{left,right,top,bottom}, overflow_risk}`. The
       read to run when text looks clipped or overflowing: `overflow_risk` is
@@ -383,6 +387,16 @@ def ppt_edit(
     level: int | None = None,
     author: str | None = None,
     initials: str | None = None,
+    anchors: list[str] | None = None,
+    how: str | None = None,
+    relative_to: Literal["slide", "selection"] = "slide",
+    connector_type: str | None = None,
+    begin: str | None = None,
+    end: str | None = None,
+    begin_site: int = 1,
+    end_site: int = 1,
+    start: int | None = None,
+    length: int | None = None,
     doc: str | None = None,
 ) -> dict[str, Any]:
     """Edit the live PowerPoint deck — write/format text, add or arrange slides
@@ -492,6 +506,30 @@ def ppt_edit(
       `url` (external URL/file/mailto) or `slide` (1-based in-deck jump, e.g. a
       "back to agenda" button); optional `screen_tip` hover text. A shape needs no
       text frame to carry a link. "shape_remove_hyperlink": clear the link.
+
+    Arrangement (group / align / connect shapes; address shapes by `anchors`, a
+    list of shape anchor ids on one slide):
+    - "shape_group": combine the `anchors` shapes into one group; returns the new
+      group's `shapeid` (the members keep their ids, listed in `group_item_ids`).
+      "shape_ungroup": ungroup the group at `anchor_id`; the freed members keep
+      their original ids (returned in `ungrouped`).
+    - "shape_align": align the `anchors` shapes — `how` is left/center/right
+      (horizontal) or top/middle/bottom (vertical); `relative_to` is "slide"
+      (default) or "selection". "shape_distribute": evenly space 3+ shapes —
+      `how`="horizontal"/"vertical".
+    - "shape_add_connector": draw a connector line. Attached form: `begin` and
+      `end` shape anchors glue the ends (so the line follows them); `connector_type`
+      is "straight"/"elbow"/"curved"; `begin_site`/`end_site` request a connection
+      site (advisory — PowerPoint reroutes to the shortest). Geometry form: omit
+      `begin`/`end`, pass `slide` + `left`/`top`/`width`/`height`.
+
+    Text-run hyperlinks (a link on a span of text INSIDE any text anchor — a linked
+    word; distinct from the whole-shape "shape_set_hyperlink"):
+    - "link_set": link a span of the text anchor at `anchor_id`. Address the span by
+      `text` (a substring to find — the easy form) or explicit `start`/`length`
+      (0-based). Destination is EXACTLY one of `url` or `slide` (in-deck jump);
+      optional `screen_tip`. "link_remove": clear the addressed span's link, or ALL
+      links in the anchor when no span is given. Read them with ppt_read op="links".
 
     Animations (an entrance/exit effect on a shape; play order is add order):
     - "shape_animate": animate the shape at `anchor_id`. `effect` is the animation
@@ -703,6 +741,16 @@ def ppt_edit(
         "level": level,
         "author": author,
         "initials": initials,
+        "anchors": anchors,
+        "how": how,
+        "relative_to": relative_to,
+        "type": connector_type,
+        "begin": begin,
+        "end": end,
+        "begin_site": begin_site,
+        "end_site": end_site,
+        "start": start,
+        "length": length,
     }
     with _mcp_errors(), attach() as ppt:
         deck = _pick_deck(ppt, doc)

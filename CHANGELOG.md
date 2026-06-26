@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Shape arrangement + text-run-level hyperlinks.** Two roadmap items shipped
+together, each pre-proven live by a net-zero spike
+(`scripts/arrangement_spike.py`, `scripts/run_link_spike.py`) and re-verified
+end-to-end by a net-zero wrapper smoke (align/distribute/connector/group/ungroup +
+run-link set/read/remove on a temp slide). Library + CLI + MCP + both SKILL guides
++ tests (948 green).
+
+- **Arrange shapes.** `ShapeCollection.group(shapes)` (returns the new group as a
+  drift-proof `ShapeById`; members keep their ids, echoed as `group_item_ids`),
+  `Shape.ungroup()` (returns the freed members as `ShapeById` handles — the spike
+  confirmed they keep their **original** ids, no identity churn),
+  `ShapeCollection.align(shapes, how, *, relative_to="slide")` and
+  `distribute(shapes, how, *, relative_to=)` over `ShapeRange.Align`/`.Distribute`
+  (`how` = left/center/right/top/middle/bottom · horizontal/vertical).
+- **Connectors.** `ShapeCollection.add_connector(type="straight", *, begin=, end=,
+  begin_site=1, end_site=1, left/top/width/height)` — the **attached** form glues
+  both ends to shapes via `ConnectorFormat.BeginConnect`/`EndConnect` +
+  `RerouteConnections` so the line follows them (requested sites are advisory —
+  reroute re-picks the shortest); a **geometry** form draws a free-floating line.
+  Shape reads gained a `connector` field (`{type, begin_shape_id, end_shape_id}`).
+- **Text-run-level hyperlinks.** `Anchor.set_link(text=|start=/length=, url=|slide=,
+  screen_tip=)`, `remove_link(...)` (a span, or all links when none given), and
+  `links()` on the `Anchor` base — so a whole-shape anchor, a `Paragraph`, a `Cell`,
+  and `Notes` all carry them — over `TextRange.Characters(...).ActionSettings(
+  ppMouseClick).Hyperlink`. Address a span by literal substring (fuzzy, an ambiguous
+  match raises `AmbiguousMatchError`) or explicit 0-based offset. Paragraph and shape
+  reads gained a `links` array.
+- **Constants.** `MsoAlignCmd`/`align_cmd_for`/`ALIGN_CHOICES`,
+  `MsoDistributeCmd`/`distribute_cmd_for`/`DISTRIBUTE_CHOICES`,
+  `MsoConnectorType`/`connector_type_for`/`connector_type_name`/`CONNECTOR_CHOICES`,
+  and `relative_to_for`/`RELATIVE_TO_CHOICES`.
+- **Front-ends.** CLI `shape group`/`ungroup`/`align`/`distribute`/`connect` and a
+  new top-level `link` group (`set`/`remove`/`list`); MCP `ppt_edit`
+  `shape_group`/`shape_ungroup`/`shape_align`/`shape_distribute`/
+  `shape_add_connector`/`link_set`/`link_remove` and `ppt_read` `links`. The
+  shape-level `_slide_jump_subaddress` was factored into the shared
+  `_anchors.slide_jump_subaddress` reused by both the shape and run-link verbs.
+
 **v1.7 — media + narrated-video export.** The highest-ceiling remaining tier: an
 agent can build a deck, add per-slide audio/video narration, auto-pace each slide
 to its clip, and export a finished MP4 — end to end. The whole chain was pre-proven

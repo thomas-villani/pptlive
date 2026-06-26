@@ -1242,6 +1242,80 @@ frames, volume/mute setters, video styling; native recorded narration; WMV expor
   `mcpb/manifest.json` + `mcpb/pyproject.toml` in sync with the root
   `pyproject.toml` on each bump (no bumpversion wiring yet).
 
+## v-next — shape arrangement + text-run-level hyperlinks — SHIPPED (2026-06-25)
+
+Two roadmap items built together: the **arrangement** verbs (group/ungroup,
+align/distribute, shape-attached connectors) and **run-level hyperlinks** (links
+on a sub-span of any text anchor). Both de-risked by net-zero live spikes
+(`scripts/arrangement_spike.py`, `scripts/run_link_spike.py`, 2026-06-25) before
+hardening, then **verified live end-to-end** (a net-zero wrapper smoke drove
+align/distribute/connector/group/ungroup + run-link set/read/remove on a temp
+slide). All fake-COM unit tests green (`ruff`, `mypy`, `pytest` — 948).
+
+- [x] **Arrangement (`_shapes.py`).** `ShapeCollection.group(shapes) -> ShapeById`
+  (new group id; members keep theirs, echoed as `group_item_ids`),
+  `Shape.ungroup() -> [ShapeById]` (freed members keep their ids),
+  `ShapeCollection.align(shapes, how, *, relative_to="slide")` /
+  `distribute(shapes, how, *, relative_to=)` over `ShapeRange.Align`/`.Distribute`,
+  and `ShapeCollection.add_connector(type, *, begin=, end=, begin_site=, end_site=,
+  left/top/width/height) -> ShapeById` (attached form glues via
+  `BeginConnect`/`EndConnect` + `RerouteConnections`; geometry form for a free
+  line). `shape_to_dict` gained `connector` (`{type, begin_shape_id, end_shape_id}`)
+  and, for a group, `group_item_ids`. New `_resolve_shapes` multi-anchor helper in
+  `_batch.py`.
+- [x] **Run-level hyperlinks (`_anchors.py`, on the `Anchor` base — so `Shape`,
+  `Paragraph`, `Cell`, `Notes` all inherit).** `set_link(text=|start=/length=,
+  url=|slide=, screen_tip=)`, `remove_link(...)` (span, or all when no span),
+  `links()` over `TextRange.Characters(...).ActionSettings(MOUSE_CLICK).Hyperlink` +
+  a `Runs()` walk. `Shape._slide_jump_subaddress` factored to a shared
+  `_anchors.slide_jump_subaddress`. `paragraph_to_dict` + `shape_to_dict` gained a
+  `links` array.
+- [x] **Constants:** `MsoAlignCmd`/`align_cmd_for`/`ALIGN_CHOICES`,
+  `MsoDistributeCmd`/`distribute_cmd_for`/`DISTRIBUTE_CHOICES`,
+  `MsoConnectorType`/`connector_type_for`/`connector_type_name`/`CONNECTOR_CHOICES`,
+  `relative_to_for`/`RELATIVE_TO_CHOICES`.
+- [x] **CLI** `shape group`/`ungroup`/`align`/`distribute`/`connect` + a new top-level
+  `link` group (`set`/`remove`/`list`). **MCP** `ppt_edit` `shape_group`/
+  `shape_ungroup`/`shape_align`/`shape_distribute`/`shape_add_connector`/`link_set`/
+  `link_remove`; `ppt_read` `links`. **Both SKILL guides** updated. Tests:
+  `tests/test_arrangement.py` + `tests/test_run_links.py`; the fake grew
+  `Group`/`Ungroup`/`Align`/`Distribute`/`AddConnector`/`ConnectorFormat`/
+  `ConnectionSiteCount` + a frame-level run-link store with link-aware `Runs()`.
+
+**Arrangement spike findings (`scripts/arrangement_spike.py`, net-zero):**
+- **Group:** `Shapes.Range([names]).Group()` returns a group `Shape` with a
+  **new `Shape.Id`** (e.g. children 2/3/4 → group 5); `group.Type == msoGroup(6)`;
+  the children **keep their Ids** inside `group.GroupItems`. So `group()` returns a
+  fresh `ShapeById(slide, group_id)`.
+- **Ungroup — no identity churn.** `group.Ungroup()` returns a `ShapeRange` whose
+  freed children carry their **original** Ids (2/3/4) and names. So `ungroup()`
+  reads the ids straight off the returned range and hands back `ShapeById` handles
+  — no slide re-read needed.
+- **Align/Distribute:** `Range.Align(cmd, RelativeTo)` /
+  `Range.Distribute(cmd, RelativeTo)` apply cleanly; cmd ints confirmed
+  (`msoAlignLefts=1`, `msoDistributeHorizontally=0`); both `RelativeTo=msoTrue`
+  (slide) and `msoFalse` (selection) work.
+- **Connectors:** a rectangle exposes `ConnectionSiteCount == 4`.
+  `Shapes.AddConnector(type, x1,y1,x2,y2)` → a connector `Shape` (`Connector ==
+  True`, `ConnectorFormat.Type` round-trips). `BeginConnect(shape, site)` /
+  `EndConnect(shape, site)` + `RerouteConnections()` glue both ends
+  (`BeginConnected`/`EndConnected == True`, `BeginConnectedShape.Id` round-trips).
+  **Gotcha:** `RerouteConnections()` **reassigns the connection sites** (requested
+  1/3 read back as 4/2) — so the requested `begin_site`/`end_site` are *advisory*;
+  the reader reports the actual stored sites.
+
+**Run-link spike findings (`scripts/run_link_spike.py`, net-zero) — refutes the
+"COM can't do text-range actions" guess:**
+- `tr.Characters(start+1, length).ActionSettings(ppMouseClick=1).Hyperlink.Address
+  = url` round-trips and **auto-flips** that range's `.Action` to
+  `ppActionHyperlink(7)` — exactly the shape-level behaviour, scoped to the run.
+- Linking a span **splits the frame's runs** at the link boundary, so a
+  `tr.Runs()` walk reads each linked run back as its own run with exact
+  `{start, length, text, address, sub_address}`. This is the `links()` read.
+- A slide-jump `.SubAddress = "<SlideID>,<index>,<title>"` round-trips on a span.
+- `Characters(...).ActionSettings(1).Hyperlink.Delete()` clears just that span and
+  **re-merges** the runs.
+
 ---
 
 ## Open questions (from spec.md — resolve, don't guess)

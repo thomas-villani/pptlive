@@ -132,6 +132,13 @@ report = deck.slides[4].geometry_report()             # geometry sanity-check BE
 
     arrow = shapes.add_shape("right_arrow", left=72, top=300)
     arrow.set_hyperlink(url="https://acme.com")        # or slide=2 for an in-deck jump; no text frame needed
+    grp = shapes.group([panel, star])                  # combine 2+ shapes; returns the group (members keep ids)
+    grp.ungroup()                                      # -> [ShapeById, ...] freed members (keep their original ids)
+    shapes.align([panel, star], "middle", relative_to="slide")   # left/center/right/top/middle/bottom
+    shapes.distribute([a, b, c], "horizontal")         # even spacing, 3+ shapes
+    conn = shapes.add_connector("elbow", begin=panel, end=star)  # glued line follows both shapes (sites are advisory)
+    body.set_link(text="Anthropic", url="https://anthropic.com")  # link a WORD inside text (or start=/length=; slide=N)
+    body.remove_link(text="Anthropic")                 # clear a span (no args clears ALL links); body.links() reads them
     deck.slides[4].set_transition("fade", duration=0.5, advance_after=3)   # entrance + auto-advance
     deck.slides[4].set_background("#1A2B3C")            # per-slide solid bg; follow_master_background() reverts
     star.animate("fade", trigger="after_previous", duration=1)  # entrance effect; exit=True animates it OUT
@@ -143,7 +150,9 @@ chart_png = deck.slides[4].shapes["Chart 2"].export_image()   # one shape, nativ
 ```
 
 Reads surface the new state: every shape carries `hyperlink` (`{address, sub_address}`
-or `None`); each slide read carries `transition` (`{effect, duration, advance_*}`),
+or `None`), `connector` (`{type, begin_shape_id, end_shape_id}` or `None`), `links`
+(text-run hyperlinks, `[{text, start, length, address, sub_address}]`), and — for a
+group — `group_item_ids`; each slide read carries `transition` (`{effect, duration, advance_*}`),
 `background` (`{follows_master, type, color}`), and `animations`
 (`[{seq_index, shapeid, shape, effect, exit, trigger, duration, delay}]`, play order —
 also via `deck.slides[N].animations()`). Effect names: `fade`/`appear`/`fly_in`/

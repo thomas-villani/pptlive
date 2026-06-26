@@ -34,6 +34,7 @@ from .._guide import bundled_skill, skill_body, skill_name
 from .._presentation import Presentation
 from .._shapes import Shape
 from ..constants import (
+    ALIGN_CHOICES,
     ALIGNMENT_CHOICES,
     ANIM_EFFECT_CHOICES,
     ANIM_TRIGGER_CHOICES,
@@ -41,13 +42,16 @@ from ..constants import (
     ARROWHEAD_STYLE_CHOICES,
     AUTOSHAPE_CHOICES,
     CHART_TYPE_CHOICES,
+    CONNECTOR_CHOICES,
     DASH_STYLE_CHOICES,
+    DISTRIBUTE_CHOICES,
     ENTRY_EFFECT_CHOICES,
     GRADIENT_STYLE_CHOICES,
     IMAGE_FORMAT_CHOICES,
     LIST_TYPE_CHOICES,
     PATTERN_CHOICES,
     PRESET_GRADIENT_CHOICES,
+    RELATIVE_TO_CHOICES,
     SAVE_FORMAT_CHOICES,
     SHAPE_IMAGE_FORMAT_CHOICES,
     SMARTART_CHOICES,
@@ -827,6 +831,7 @@ def register(group: click.Group) -> None:
     group.add_command(video_status_cmd)
     group.add_command(shapes_cmd)
     group.add_command(shape)
+    group.add_command(link)
     group.add_command(read)
     group.add_command(write)
     group.add_command(set_paragraphs)
@@ -1386,6 +1391,14 @@ def _resolve_shape(deck: Presentation, anchor_id: str) -> Shape:
     if not isinstance(anchor, Shape):
         raise AnchorNotFoundError("shape", anchor_id)
     return anchor
+
+
+def _resolve_shapes(deck: Presentation, anchors: str) -> list[Shape]:
+    """Resolve a comma-separated list of shape anchors to `Shape` handles."""
+    ids = [a.strip() for a in anchors.split(",") if a.strip()]
+    if not ids:
+        raise click.UsageError("--anchors needs at least one shape anchor")
+    return [_resolve_shape(deck, a) for a in ids]
 
 
 @shape.command(name="add")
@@ -2226,6 +2239,193 @@ def shape_remove_link(ctx: click.Context, deck: Presentation, anchor_id: str) ->
     )
 
 
+@shape.command(name="group")
+@click.option(
+    "--anchors",
+    "anchors",
+    required=True,
+    help="Shapes to group: comma-separated shape:S:N / shapeid:S:ID / names (>= 2).",
+)
+@_deck_command
+def shape_group(ctx: click.Context, deck: Presentation, anchors: str) -> None:
+    """Group two or more shapes on one slide into a single group shape."""
+    members = _resolve_shapes(deck, anchors)
+    with deck.edit("CLI: group shapes"):
+        group = members[0].slide.shapes.group(members)
+    emit(
+        {
+            "ok": True,
+            "anchor_id": group.anchor_id,
+            "shapeid": group.shapeid,
+            "group_item_ids": group.to_dict().get("group_item_ids", []),
+        },
+        as_text=not ctx.obj["as_json"],
+        text=f"grouped {len(members)} shapes -> {group.shapeid}",
+    )
+
+
+@shape.command(name="ungroup")
+@click.option(
+    "--anchor-id", "anchor_id", required=True, help="Group shape to ungroup (shape:/shapeid:/name)."
+)
+@_deck_command
+def shape_ungroup(ctx: click.Context, deck: Presentation, anchor_id: str) -> None:
+    """Ungroup a group shape; the freed members keep their original ids."""
+    sh = _resolve_shape(deck, anchor_id)
+    with deck.edit(f"CLI: ungroup {anchor_id}"):
+        children = sh.ungroup()
+    ids = [c.shapeid for c in children]
+    emit(
+        {"ok": True, "ungrouped": ids},
+        as_text=not ctx.obj["as_json"],
+        text=f"ungrouped into {len(ids)} shapes",
+    )
+
+
+@shape.command(name="align")
+@click.option("--anchors", "anchors", required=True, help="Shapes to align (comma-separated).")
+@click.option(
+    "--how",
+    "how",
+    required=True,
+    type=click.Choice(ALIGN_CHOICES),
+    help="left/center/right (horizontal) or top/middle/bottom (vertical).",
+)
+@click.option(
+    "--relative-to",
+    "relative_to",
+    default="slide",
+    type=click.Choice(RELATIVE_TO_CHOICES),
+    help="Align to the slide (default) or to the selection.",
+)
+@_deck_command
+def shape_align(
+    ctx: click.Context, deck: Presentation, anchors: str, how: str, relative_to: str
+) -> None:
+    """Align a set of shapes to a common edge / center."""
+    members = _resolve_shapes(deck, anchors)
+    with deck.edit("CLI: align shapes"):
+        members[0].slide.shapes.align(members, how, relative_to=relative_to)
+    emit(
+        {"ok": True, "how": how, "shapeids": [m.shapeid for m in members]},
+        as_text=not ctx.obj["as_json"],
+        text=f"aligned {len(members)} shapes ({how}, vs {relative_to})",
+    )
+
+
+@shape.command(name="distribute")
+@click.option("--anchors", "anchors", required=True, help="Shapes to distribute (comma-separated).")
+@click.option(
+    "--how",
+    "how",
+    required=True,
+    type=click.Choice(DISTRIBUTE_CHOICES),
+    help="horizontal or vertical even spacing.",
+)
+@click.option(
+    "--relative-to",
+    "relative_to",
+    default="slide",
+    type=click.Choice(RELATIVE_TO_CHOICES),
+    help="Distribute across the slide (default) or within the selection.",
+)
+@_deck_command
+def shape_distribute(
+    ctx: click.Context, deck: Presentation, anchors: str, how: str, relative_to: str
+) -> None:
+    """Space three or more shapes evenly on one axis."""
+    members = _resolve_shapes(deck, anchors)
+    with deck.edit("CLI: distribute shapes"):
+        members[0].slide.shapes.distribute(members, how, relative_to=relative_to)
+    emit(
+        {"ok": True, "how": how, "shapeids": [m.shapeid for m in members]},
+        as_text=not ctx.obj["as_json"],
+        text=f"distributed {len(members)} shapes ({how})",
+    )
+
+
+@shape.command(name="connect")
+@click.option(
+    "--type",
+    "connector_type",
+    default="straight",
+    type=click.Choice(CONNECTOR_CHOICES),
+    help="straight / elbow / curved.",
+)
+@click.option("--begin", "begin", default=None, help="Shape anchor glued to the start end.")
+@click.option("--end", "end", default=None, help="Shape anchor glued to the finish end.")
+@click.option(
+    "--begin-site", "begin_site", type=int, default=1, help="Start connection site (1-based)."
+)
+@click.option(
+    "--end-site", "end_site", type=int, default=1, help="Finish connection site (1-based)."
+)
+@click.option(
+    "--slide",
+    "slide_index",
+    type=int,
+    default=None,
+    help="Slide for the geometry form (when no --begin/--end).",
+)
+@click.option("--left", "left", type=float, default=None, help="Geometry form: start x (points).")
+@click.option("--top", "top", type=float, default=None, help="Geometry form: start y (points).")
+@click.option(
+    "--width", "width", type=float, default=None, help="Geometry form: span width (points)."
+)
+@click.option(
+    "--height", "height", type=float, default=None, help="Geometry form: span height (points)."
+)
+@_deck_command
+def shape_connect(
+    ctx: click.Context,
+    deck: Presentation,
+    connector_type: str,
+    begin: str | None,
+    end: str | None,
+    begin_site: int,
+    end_site: int,
+    slide_index: int | None,
+    left: float | None,
+    top: float | None,
+    width: float | None,
+    height: float | None,
+) -> None:
+    """Draw a connector — glue it to two shapes (--begin/--end) or a free geometry box."""
+    begin_sh = _resolve_shape(deck, begin) if begin else None
+    end_sh = _resolve_shape(deck, end) if end else None
+    if begin_sh is not None:
+        coll = begin_sh.slide.shapes
+    elif slide_index is not None:
+        coll = deck.slides[slide_index].shapes
+    else:
+        raise click.UsageError(
+            "shape connect needs --begin and --end shapes, or --slide for the geometry form"
+        )
+    with deck.edit("CLI: add connector"):
+        conn = coll.add_connector(
+            connector_type,
+            begin=begin_sh,
+            end=end_sh,
+            begin_site=begin_site,
+            end_site=end_site,
+            left=left,
+            top=top,
+            width=width,
+            height=height,
+        )
+    emit(
+        {
+            "ok": True,
+            "anchor_id": conn.anchor_id,
+            "shapeid": conn.shapeid,
+            "connector": conn.to_dict().get("connector"),
+            "geometry": conn.geometry(),
+        },
+        as_text=not ctx.obj["as_json"],
+        text=f"connector {conn.shapeid} ({connector_type})",
+    )
+
+
 @shape.command(name="reset-to-layout")
 @click.option(
     "--anchor-id", "anchor_id", required=True, help="Placeholder to restore (ph:/shape:/shapeid:)."
@@ -2241,6 +2441,99 @@ def shape_reset_to_layout(ctx: click.Context, deck: Presentation, anchor_id: str
         as_text=not ctx.obj["as_json"],
         text=f"reset {sh.anchor_id} to its layout placeholder",
     )
+
+
+# ---------------------------------------------------------------------------
+# text-run-level hyperlinks (v-next): link set / remove / list
+# ---------------------------------------------------------------------------
+
+
+@click.group(name="link")
+def link() -> None:
+    """Link a word/span inside any text anchor (shape / para / cell / notes)."""
+
+
+@link.command(name="set")
+@click.option(
+    "--anchor-id", "anchor_id", required=True, help="Text anchor (shape:/para:/cell:/notes:)."
+)
+@click.option("--text", "text", default=None, help="Substring to link (the LLM-friendly form).")
+@click.option(
+    "--start", "start", type=int, default=None, help="0-based span start (with --length)."
+)
+@click.option("--length", "length", type=int, default=None, help="Span length (with --start).")
+@click.option("--url", "url", default=None, help="External link target (URL / mailto / file path).")
+@click.option(
+    "--slide", "slide_index", type=int, default=None, help="In-deck jump to this 1-based slide."
+)
+@click.option("--screen-tip", "screen_tip", default=None, help="Hover tooltip (optional).")
+@_deck_command
+def link_set(
+    ctx: click.Context,
+    deck: Presentation,
+    anchor_id: str,
+    text: str | None,
+    start: int | None,
+    length: int | None,
+    url: str | None,
+    slide_index: int | None,
+    screen_tip: str | None,
+) -> None:
+    """Link a span of text — by --text substring or --start/--length — to --url or --slide."""
+    if (url is None) == (slide_index is None):
+        raise click.UsageError("link set requires exactly one of --url or --slide")
+    anchor = deck.anchor_by_id(anchor_id)
+    with deck.edit(f"CLI: set link on {anchor_id}"):
+        result = anchor.set_link(
+            text=text, start=start, length=length, url=url, slide=slide_index, screen_tip=screen_tip
+        )
+    dest = url if url is not None else f"slide {slide_index}"
+    emit(
+        {"ok": True, "anchor_id": anchor.anchor_id, "link": result},
+        as_text=not ctx.obj["as_json"],
+        text=f"linked {result['text']!r} -> {dest}",
+    )
+
+
+@link.command(name="remove")
+@click.option(
+    "--anchor-id", "anchor_id", required=True, help="Text anchor (shape:/para:/cell:/notes:)."
+)
+@click.option("--text", "text", default=None, help="Substring whose link to clear.")
+@click.option(
+    "--start", "start", type=int, default=None, help="0-based span start (with --length)."
+)
+@click.option("--length", "length", type=int, default=None, help="Span length (with --start).")
+@_deck_command
+def link_remove(
+    ctx: click.Context,
+    deck: Presentation,
+    anchor_id: str,
+    text: str | None,
+    start: int | None,
+    length: int | None,
+) -> None:
+    """Remove a span's link, or ALL links in the anchor when no span is given."""
+    anchor = deck.anchor_by_id(anchor_id)
+    with deck.edit(f"CLI: remove link on {anchor_id}"):
+        removed = anchor.remove_link(text=text, start=start, length=length)
+    emit(
+        {"ok": True, "anchor_id": anchor.anchor_id, "removed": removed},
+        as_text=not ctx.obj["as_json"],
+        text=f"removed {removed} link(s) from {anchor.anchor_id}",
+    )
+
+
+@link.command(name="list")
+@click.option(
+    "--anchor-id", "anchor_id", required=True, help="Text anchor (shape:/para:/cell:/notes:)."
+)
+@_deck_command
+def link_list(ctx: click.Context, deck: Presentation, anchor_id: str) -> None:
+    """List the text-run hyperlinks in a text anchor (text, start, length, address)."""
+    anchor = deck.anchor_by_id(anchor_id)
+    rows = anchor.links()
+    emit(rows, as_text=not ctx.obj["as_json"], text=f"{len(rows)} link(s) in {anchor.anchor_id}")
 
 
 # ---------------------------------------------------------------------------

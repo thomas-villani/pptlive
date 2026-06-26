@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import _com
-from ._anchors import Anchor, Paragraph, ParagraphCollection
+from ._anchors import Anchor, Paragraph, ParagraphCollection, links_in_range, slide_jump_subaddress
 from .constants import (
     MsoShadowStyle,
     MsoShapeType,
@@ -33,6 +33,7 @@ from .constants import (
     MsoTriState,
     PpActionType,
     PpMouseActivation,
+    align_cmd_for,
     anim_effect_for,
     anim_effect_name,
     anim_trigger_for,
@@ -44,8 +45,11 @@ from .constants import (
     autosize_name,
     chart_type_for,
     color_hex_or_none,
+    connector_type_for,
+    connector_type_name,
     dash_style_for,
     dash_style_name,
+    distribute_cmd_for,
     fill_type_name,
     gradient_style_for,
     gradient_style_name,
@@ -57,6 +61,7 @@ from .constants import (
     placeholder_kind_name,
     placeholder_types_for,
     preset_gradient_for,
+    relative_to_for,
     shape_image_filter_for,
     shape_type_name,
     smartart_layout_for,
@@ -882,6 +887,72 @@ def _hyperlink_to_dict(com_shape: Any) -> dict[str, Any] | None:
     return {"address": address or None, "sub_address": sub_address or None}
 
 
+def is_connector(com_shape: Any) -> bool:
+    """True iff the shape is a connector line (`Shape.Connector` is msoTrue)."""
+    return _safe(lambda: is_true(com_shape.Connector), False)
+
+
+def is_group(com_shape: Any) -> bool:
+    """True iff the shape is a group (`Shape.Type == msoGroup`)."""
+    return _safe(lambda: int(com_shape.Type) == int(MsoShapeType.GROUP), False)
+
+
+def _group_item_ids(com_shape: Any) -> list[int]:
+    """The stable `Shape.Id`s of a group's members (the spike verified they survive
+    grouping), so a read of a group exposes its children by drift-proof id."""
+
+    def _walk() -> list[int]:
+        items = com_shape.GroupItems
+        return [int(items(i).Id) for i in range(1, int(items.Count) + 1)]
+
+    return _safe(_walk, [])
+
+
+def _center_of(com_shape: Any) -> tuple[float, float]:
+    """The center point (x, y) of a shape's bounding box, in points."""
+    return (
+        float(com_shape.Left) + float(com_shape.Width) / 2.0,
+        float(com_shape.Top) + float(com_shape.Height) / 2.0,
+    )
+
+
+def _check_site(com_shape: Any, site: int, label: str) -> None:
+    """Validate a 1-based connection-site index against `Shape.ConnectionSiteCount`."""
+    count = _safe(lambda: int(com_shape.ConnectionSiteCount), 0)
+    if int(site) < 1 or int(site) > count:
+        raise ValueError(
+            f"{label}={site} out of range; {shape_type_name(com_shape.Type)} has "
+            f"{count} connection site(s)"
+        )
+
+
+def _connector_to_dict(com_shape: Any) -> dict[str, Any] | None:
+    """`{type, begin_shape_id, end_shape_id}` for a connector, or None for a non-connector.
+
+    A connector reports its line geometry (`ConnectorFormat.Type`) and the stable
+    `Shape.Id` of whatever shape each end is glued to (or `None` when that end
+    floats free). Per the spike, `RerouteConnections()` may have re-chosen the
+    actual connection sites, so the glued-shape ids — not the requested sites — are
+    what reads back meaningfully.
+    """
+    if not is_connector(com_shape):
+        return None
+    cf = _safe(lambda: com_shape.ConnectorFormat, None)
+    if cf is None:
+        return None
+
+    def _end_id(connected_attr: str, shape_attr: str) -> int | None:
+        if not _safe(lambda: is_true(getattr(cf, connected_attr)), False):
+            return None
+        return _safe(lambda: int(getattr(cf, shape_attr).Id), None)
+
+    return {
+        "type": _safe(lambda: connector_type_name(int(cf.Type)), None),
+        "begin_shape_id": _end_id("BeginConnected", "BeginConnectedShape"),
+        "end_shape_id": _end_id("EndConnected", "EndConnectedShape"),
+    }
+
+
 def effect_to_dict(eff: Any, slide_index: int) -> dict[str, Any]:
     """One animation `Effect` -> `{shapeid, shape, effect, exit, trigger, duration,
     delay}` (the row `slide.animations()` and `Shape.animate` echo).
@@ -930,7 +1001,10 @@ def shape_to_dict(com_shape: Any, slide_index: int, z_index: int) -> dict[str, A
         "line": _line_to_dict(com_shape),
         "effects": _effects_to_dict(com_shape),
         "hyperlink": _hyperlink_to_dict(com_shape),
+        "connector": _connector_to_dict(com_shape),
     }
+    if is_group(com_shape):
+        d["group_item_ids"] = _group_item_ids(com_shape)
     if is_placeholder(com_shape):
         try:
             d["placeholder"] = placeholder_kind_name(com_shape.PlaceholderFormat.Type)
@@ -951,6 +1025,7 @@ def shape_to_dict(com_shape: Any, slide_index: int, z_index: int) -> dict[str, A
             d["text"] = str(com_shape.TextFrame.TextRange.Text or "")
         except Exception:
             d["text"] = None
+        d["links"] = _safe(lambda: links_in_range(com_shape.TextFrame.TextRange), [])
     else:
         d["has_text_frame"] = False
         d["text"] = None
@@ -1518,6 +1593,30 @@ class Shape(Anchor):
             found = find_shape_by_id(self._slide.com, shape_id)
             return found[0] if found is not None else int(sh.ZOrderPosition)
 
+    def ungroup(self) -> list[ShapeById]:
+        """Ungroup this group shape; return drift-proof handles to the freed members.
+
+        Reverses `ShapeCollection.group` — `GroupShape.Ungroup()` dissolves the
+        group and frees its members back onto the slide. Per the spike
+        (`scripts/arrangement_spike.py`), the freed children **keep their original
+        `Shape.Id`s**, so this returns a `ShapeById` per member (resolvable as
+        `shapeid:S:ID`). The group's own wrapper is spent afterwards (its shape no
+        longer exists), like after `delete()`.
+
+        Raises `ValueError` (before any COM) if this shape is not a group. A
+        mutation: wrap in `deck.edit(...)` for the one-Ctrl-Z fence.
+        """
+        with _com.translate_com_errors():
+            com = self._com_shape()
+            if not is_group(com):
+                raise ValueError(
+                    f"ungroup() needs a group shape, got "
+                    f"{shape_type_name(com.Type)} ({self.anchor_id})"
+                )
+            freed = com.Ungroup()
+            child_ids = [int(freed(i).Id) for i in range(1, int(freed.Count) + 1)]
+        return [ShapeById(self._slide, cid) for cid in child_ids]
+
     def animate(
         self,
         effect: str | int = "fade",
@@ -1612,22 +1711,12 @@ class Shape(Anchor):
             return _hyperlink_to_dict(sh) or {}
 
     def _slide_jump_subaddress(self, slide_index: int) -> str:
-        """Build the `"<SlideID>,<index>,<title>"` SubAddress for an in-deck jump.
+        """The `"<SlideID>,<index>,<title>"` SubAddress for an in-deck jump.
 
-        Resolves the target slide live (so a bad index raises `SlideNotFoundError`
-        before any mutation) and reads its stable `SlideID`, position, and title —
-        the canonical PowerPoint slide-jump encoding (verified in hyperlink_spike).
+        Delegates to the shared `_anchors.slide_jump_subaddress` (also used by the
+        text-run `Anchor.set_link`).
         """
-        target = self._slide.deck.slides[slide_index]  # SlideNotFoundError (exit 2) if missing
-        tcom = target.com
-        with _com.translate_com_errors():
-            slide_id = int(tcom.SlideID)
-            index = int(tcom.SlideIndex)
-            try:
-                title = str(tcom.Shapes.Title.TextFrame.TextRange.Text)
-            except Exception:
-                title = ""
-        return f"{slide_id},{index},{title}"
+        return slide_jump_subaddress(self._slide, slide_index)
 
     def remove_hyperlink(self) -> None:
         """Remove this shape's mouse-click hyperlink (`Hyperlink.Delete`).
@@ -1889,6 +1978,159 @@ class ShapeCollection:
         with _com.translate_com_errors():
             handle._com_shape()  # eager existence check (clean exit-2 if absent)
         return handle
+
+    # -- arrangement (v-next; wrap in deck.edit(...) for view + one-Ctrl-Z) ----
+
+    def _range_indices(self, shapes: Sequence[Shape]) -> list[int]:
+        """Resolve a list of `Shape` handles to their *current* z-order indices.
+
+        Uses the stable `Shape.Id` of each handle to look up its live collection
+        index (so the result is robust against duplicate shape names and the
+        z-order an upstream op may have drifted). Raises `AnchorNotFoundError` if a
+        handle no longer resolves on this slide. The caller passes the int list to
+        `Shapes.Range(...)`.
+        """
+        slide_com = self._slide.com
+        indices: list[int] = []
+        for sh in shapes:
+            sid = int(sh._com_shape().Id)
+            found = find_shape_by_id(slide_com, sid)
+            if found is None:
+                raise AnchorNotFoundError("shape", sh.anchor_id)
+            indices.append(found[0])
+        return indices
+
+    def group(self, shapes: Sequence[Shape]) -> ShapeById:
+        """Group two or more shapes into a single group shape; return its handle.
+
+        `Shapes.Range([...]).Group()` combines the shapes; the new group gets a
+        **fresh `Shape.Id`** (so this returns a `ShapeById` for it), while the
+        members keep their own ids inside `group.GroupItems` (read back in the
+        group's `group_item_ids`) — verified in `scripts/arrangement_spike.py`.
+        Reverse with `Shape.ungroup`.
+
+        Raises `ValueError` (before any COM) for fewer than two shapes; an unknown
+        member raises `AnchorNotFoundError`. A mutation: wrap in `deck.edit(...)`.
+        """
+        members = list(shapes)
+        if len(members) < 2:
+            raise ValueError(f"group() needs at least 2 shapes, got {len(members)}")
+        with _com.translate_com_errors():
+            indices = self._range_indices(members)
+            group = self._com_collection.Range(indices).Group()
+            group_id = int(group.Id)
+        return ShapeById(self._slide, group_id)
+
+    def align(
+        self, shapes: Sequence[Shape], how: str | int, *, relative_to: str | int | bool = "slide"
+    ) -> None:
+        """Align a set of shapes to a common edge / center.
+
+        `how` is `"left"`/`"center"`/`"right"` (horizontal) or `"top"`/`"middle"`/
+        `"bottom"` (vertical) — see `constants.ALIGN_CHOICES`. `relative_to` is
+        `"slide"` (align against the slide, the default) or `"selection"` (align
+        the shapes to one another). `Shapes.Range([...]).Align(cmd, RelativeTo)`.
+
+        Raises `ValueError` (before any COM) for an unknown `how`/`relative_to`, an
+        empty set, or a selection-relative align of fewer than two shapes. A
+        mutation: wrap in `deck.edit(...)`.
+        """
+        cmd = align_cmd_for(how)  # ValueError before any COM
+        rel = relative_to_for(relative_to)
+        members = list(shapes)
+        if not members:
+            raise ValueError("align() needs at least one shape")
+        if rel == int(MsoTriState.FALSE) and len(members) < 2:
+            raise ValueError("aligning relative to the selection needs at least 2 shapes")
+        with _com.translate_com_errors():
+            indices = self._range_indices(members)
+            self._com_collection.Range(indices).Align(cmd, rel)
+
+    def distribute(
+        self, shapes: Sequence[Shape], how: str | int, *, relative_to: str | int | bool = "slide"
+    ) -> None:
+        """Space a set of shapes evenly on one axis.
+
+        `how` is `"horizontal"` or `"vertical"` (`constants.DISTRIBUTE_CHOICES`);
+        `relative_to` is `"slide"` (default) or `"selection"`.
+        `Shapes.Range([...]).Distribute(cmd, RelativeTo)`. Distributing is only
+        meaningful for three or more shapes (the two outermost pin the span and the
+        rest are evenly spaced between them).
+
+        Raises `ValueError` (before any COM) for an unknown `how`/`relative_to` or
+        fewer than three shapes. A mutation: wrap in `deck.edit(...)`.
+        """
+        cmd = distribute_cmd_for(how)  # ValueError before any COM
+        rel = relative_to_for(relative_to)
+        members = list(shapes)
+        if len(members) < 3:
+            raise ValueError(f"distribute() needs at least 3 shapes, got {len(members)}")
+        with _com.translate_com_errors():
+            indices = self._range_indices(members)
+            self._com_collection.Range(indices).Distribute(cmd, rel)
+
+    def add_connector(
+        self,
+        connector_type: str | int = "straight",
+        *,
+        begin: Shape | None = None,
+        end: Shape | None = None,
+        begin_site: int = 1,
+        end_site: int = 1,
+        left: float | None = None,
+        top: float | None = None,
+        width: float | None = None,
+        height: float | None = None,
+    ) -> ShapeById:
+        """Add a connector line and return its handle (`Shapes.AddConnector`).
+
+        Two forms:
+
+        - **Attached (primary):** pass `begin=` and `end=` shape handles to glue the
+          two ends to those shapes (via `ConnectorFormat.BeginConnect` /
+          `EndConnect` + `RerouteConnections`), so the line follows them when they
+          move. `begin_site` / `end_site` request a 1-based connection site on each
+          shape, but are **advisory** — `RerouteConnections()` re-chooses the
+          shortest sites (spike finding), and the resulting glue reads back under
+          the shape's `connector` field.
+        - **Geometry:** omit both shapes and pass explicit `left`/`top`/`width`/
+          `height` (points) to draw a free-floating connector across that box.
+
+        `connector_type` is `"straight"`/`"elbow"`/`"curved"`
+        (`constants.CONNECTOR_CHOICES`). Raises `ValueError` (before any COM) for a
+        bad type, an out-of-range site, or an incomplete spec (need both `begin` and
+        `end`, or full explicit geometry). A mutation: wrap in `deck.edit(...)`.
+        """
+        type_int = connector_type_for(connector_type)  # ValueError before any COM
+        if (begin is None) != (end is None):
+            raise ValueError("add_connector() needs BOTH begin= and end= (or neither)")
+        attaching = begin is not None and end is not None
+        if not attaching and None in (left, top, width, height):
+            raise ValueError(
+                "add_connector() needs begin= and end= shapes, or explicit "
+                "left/top/width/height geometry"
+            )
+        with _com.translate_com_errors():
+            if attaching:
+                assert begin is not None and end is not None  # narrowed above
+                begin_com = begin._com_shape()
+                end_com = end._com_shape()
+                _check_site(begin_com, begin_site, "begin_site")
+                _check_site(end_com, end_site, "end_site")
+                x1, y1 = _center_of(begin_com)
+                x2, y2 = _center_of(end_com)
+            else:
+                x1, y1 = float(left), float(top)  # type: ignore[arg-type]
+                x2 = float(left) + float(width)  # type: ignore[arg-type]
+                y2 = float(top) + float(height)  # type: ignore[arg-type]
+            conn = self._com_collection.AddConnector(type_int, x1, y1, x2, y2)
+            conn_id = int(conn.Id)
+            if attaching:
+                cf = conn.ConnectorFormat
+                cf.BeginConnect(begin_com, int(begin_site))
+                cf.EndConnect(end_com, int(end_site))
+                conn.RerouteConnections()
+        return ShapeById(self._slide, conn_id)
 
     # -- creators (v0.2; wrap in deck.edit(...) for view + one-Ctrl-Z) ---------
     #

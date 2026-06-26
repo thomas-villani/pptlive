@@ -25,8 +25,11 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 from . import _com
+from ._findreplace import find_matches
 from .constants import (
     MsoTriState,
+    PpActionType,
+    PpMouseActivation,
     PpPlaceholderType,
     alignment_for,
     bullet_type_for,
@@ -38,7 +41,7 @@ from .constants import (
     theme_color_name,
     tristate_value,
 )
-from .exceptions import AnchorNotFoundError
+from .exceptions import AmbiguousMatchError, AnchorNotFoundError
 
 if TYPE_CHECKING:
     from ._shapes import Shape
@@ -243,6 +246,11 @@ class Anchor(ABC):
     @abstractmethod
     def anchor_id(self) -> str:
         """Stable string identifier (e.g. `notes:3`, `shape:2:1`, `ph:2:body`)."""
+
+    @property
+    @abstractmethod
+    def slide(self) -> Slide:
+        """The slide this anchor lives on (used to resolve in-deck link jumps)."""
 
     @property
     def name(self) -> str:
@@ -511,6 +519,95 @@ class Anchor(ABC):
             else:
                 tr.InsertAfter("\r" + text)
 
+    # -- text-run-level hyperlinks (v-next) ------------------------------------
+    #
+    # The text-range analog of `Shape.set_hyperlink`: a link on a SUB-SPAN of this
+    # anchor's text (a linked word inside a textbox / cell / notes), over
+    # `TextRange.Characters(...).ActionSettings(ppMouseClick).Hyperlink`. On the
+    # base `Anchor`, so a whole-shape anchor, a `Paragraph`, a `Cell`, and `Notes`
+    # all share them. Mutations: wrap in `deck.edit(...)`.
+
+    def set_link(
+        self,
+        text: str | None = None,
+        *,
+        start: int | None = None,
+        length: int | None = None,
+        url: str | None = None,
+        slide: int | None = None,
+        screen_tip: str | None = None,
+    ) -> dict[str, Any]:
+        """Link a span of this anchor's text; return the resulting link dict.
+
+        **Address the span** by literal substring `text=` (the LLM-friendly
+        default — located fuzzily, an ambiguous multi-match raises
+        `AmbiguousMatchError`, no match `AnchorNotFoundError`) or by explicit 0-based
+        `start`/`length`. **Destination:** exactly one of `url=` (an external URL /
+        `mailto:` / file path) or `slide=` (a 1-based in-deck slide jump). Optional
+        `screen_tip` hover tooltip.
+
+        Returns `{text, start, length, address, sub_address}`. Raises `ValueError`
+        (before any COM) for a bad span/destination combination or a blank `url`. A
+        mutation: wrap in `deck.edit(...)` for the one-Ctrl-Z fence.
+        """
+        if (url is None) == (slide is None):
+            raise ValueError("set_link() requires exactly one of url= or slide=")
+        if url is not None and not str(url).strip():
+            raise ValueError("set_link(url=) must be a non-empty string")
+        sub_address: str | None = None
+        if slide is not None:
+            # Resolve the jump target before any mutation (SlideNotFoundError, exit 2).
+            sub_address = slide_jump_subaddress(self.slide, int(slide))
+        with _com.translate_com_errors():
+            tr = self._text_range()
+            span_start, span_len, span_text = _resolve_span(tr, text, start, length)
+            link = tr.Characters(span_start + 1, span_len).ActionSettings(_MOUSE_CLICK).Hyperlink
+            if url is not None:
+                link.Address = str(url)
+            else:
+                link.Address = ""  # SubAddress alone makes it an in-deck jump
+                link.SubAddress = sub_address
+            if screen_tip is not None:
+                link.ScreenTip = str(screen_tip)
+        return {
+            "text": span_text,
+            "start": span_start,
+            "length": span_len,
+            "address": str(url) if url is not None else None,
+            "sub_address": sub_address,
+        }
+
+    def remove_link(
+        self, text: str | None = None, *, start: int | None = None, length: int | None = None
+    ) -> int:
+        """Remove text-run hyperlinks from this anchor; return how many were cleared.
+
+        With no span (`text`/`start`/`length` all omitted) clears **all** links in
+        the anchor; otherwise clears just the addressed span (same addressing as
+        `set_link`). `Hyperlink.Delete()` per span. A mutation: wrap in
+        `deck.edit(...)`.
+        """
+        with _com.translate_com_errors():
+            tr = self._text_range()
+            if text is None and start is None and length is None:
+                rows = links_in_range(tr)
+                # Delete back-to-front: a cleared link re-merges its run, shifting
+                # later runs — reverse order keeps each span's offsets valid.
+                for row in reversed(rows):
+                    tr.Characters(int(row["start"]) + 1, int(row["length"])).ActionSettings(
+                        _MOUSE_CLICK
+                    ).Hyperlink.Delete()
+                return len(rows)
+            span_start, span_len, _ = _resolve_span(tr, text, start, length)
+            tr.Characters(span_start + 1, span_len).ActionSettings(_MOUSE_CLICK).Hyperlink.Delete()
+            return 1
+
+    def links(self) -> list[dict[str, Any]]:
+        """Every text-run hyperlink in this anchor — `[{text, start, length, address,
+        sub_address}]` in document order (a read; see `links_in_range`)."""
+        with _com.translate_com_errors():
+            return links_in_range(self._text_range())
+
     def __repr__(self) -> str:
         return f"<{type(self).__name__} {self.anchor_id!r}>"
 
@@ -564,6 +661,115 @@ def _strip_break(text: str) -> str:
 
 
 _safe = _com.safe_read  # defensive COM-property read (returns a default on failure)
+
+_MOUSE_CLICK = int(PpMouseActivation.MOUSE_CLICK)
+
+
+def _action_link(com_obj: Any) -> dict[str, Any] | None:
+    """`{address, sub_address}` for a `TextRange`/run/`Characters` mouse-click link.
+
+    The text-range analog of the shape-level `_hyperlink_to_dict`: a span carries a
+    link only when its `ActionSettings(ppMouseClick).Action` is `ppActionHyperlink`.
+    Both empty fields collapse to `None`. Guarded — anything unreadable returns None.
+    """
+    try:
+        acts = com_obj.ActionSettings(_MOUSE_CLICK)
+        if int(acts.Action) != int(PpActionType.HYPERLINK):
+            return None
+        link = acts.Hyperlink
+        address = str(_safe(lambda: link.Address, "") or "")
+        sub_address = str(_safe(lambda: link.SubAddress, "") or "")
+    except Exception:
+        return None
+    if not address and not sub_address:
+        return None
+    return {"address": address or None, "sub_address": sub_address or None}
+
+
+def links_in_range(tr: Any) -> list[dict[str, Any]]:
+    """Every text-run-level hyperlink in a `TextRange`, as `{text, start, length,
+    address, sub_address}` rows in document order.
+
+    Walks `tr.Runs()` — PowerPoint splits a run at a link boundary (spike finding),
+    so each linked span is its own run — accumulating the 0-based in-frame offset.
+    Defensive: an unwalkable range yields `[]`.
+    """
+
+    def _walk() -> list[dict[str, Any]]:
+        runs = tr.Runs()
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        for i in range(1, int(runs.Count) + 1):
+            run = tr.Runs(i, 1)
+            text = str(run.Text or "")
+            link = _action_link(run)
+            if link is not None:
+                rows.append({"text": text, "start": offset, "length": len(text), **link})
+            offset += len(text)
+        return rows
+
+    return _safe(_walk, [])
+
+
+def _resolve_span(
+    tr: Any, text: str | None, start: int | None, length: int | None
+) -> tuple[int, int, str]:
+    """Resolve a link target span to `(0-based start, length, matched text)`.
+
+    Address either by literal substring `text=` (located with the fuzzy
+    `find_matches` — zero matches → `AnchorNotFoundError` exit 2, more than one →
+    `AmbiguousMatchError` exit 5, the LLM-friendly default) or by explicit 0-based
+    `start`/`length`. Exactly one mode; offsets are bounds-checked against the
+    frame's text. Reads `tr.Text` — call inside `translate_com_errors`.
+    """
+    raw = str(tr.Text or "")
+    if text is not None:
+        if start is not None or length is not None:
+            raise ValueError("pass either text= or start=/length=, not both")
+        matches = find_matches(raw, text)
+        if not matches:
+            raise AnchorNotFoundError("find", text)
+        if len(matches) > 1:
+            anchors = ", ".join(f"@{m.start}" for m in matches)
+            raise AmbiguousMatchError(
+                text,
+                [{"start": m.start, "length": m.end - m.start, "text": m.text} for m in matches],
+                message=(
+                    f"{len(matches)} occurrences of {text!r} in this text "
+                    f"(offsets {anchors}); target one with start=/length="
+                ),
+            )
+        m = matches[0]
+        return m.start, m.end - m.start, m.text
+    if start is None or length is None:
+        raise ValueError("a link span needs text=, or both start= and length=")
+    start, length = int(start), int(length)
+    if start < 0 or length <= 0 or start + length > len(raw):
+        raise ValueError(
+            f"span start={start} length={length} out of range for {len(raw)}-character text"
+        )
+    return start, length, raw[start : start + length]
+
+
+def slide_jump_subaddress(slide: Slide, slide_index: int) -> str:
+    """Build the `"<SlideID>,<index>,<title>"` SubAddress for an in-deck slide jump.
+
+    Resolves the target slide live on `slide`'s deck (so a bad index raises
+    `SlideNotFoundError` before any mutation) and reads its stable `SlideID`,
+    position, and title — the canonical PowerPoint slide-jump encoding (verified in
+    `scripts/hyperlink_spike.py`). Shared by the shape-level `Shape.set_hyperlink`
+    and the text-run `Anchor.set_link`.
+    """
+    target = slide.deck.slides[slide_index]  # SlideNotFoundError (exit 2) if missing
+    tcom = target.com
+    with _com.translate_com_errors():
+        slide_id = int(tcom.SlideID)
+        index = int(tcom.SlideIndex)
+        try:
+            title = str(tcom.Shapes.Title.TextFrame.TextRange.Text)
+        except Exception:
+            title = ""
+    return f"{slide_id},{index},{title}"
 
 
 def _font_color_hex(font: Any) -> str | None:
@@ -699,6 +905,7 @@ def paragraph_to_dict(para_range: Any, anchor_id: str, index: int) -> dict[str, 
         "space_after": _spacing_dict(pf, "SpaceAfter", "LineRuleAfter"),
         "line_spacing": _spacing_dict(pf, "SpaceWithin", "LineRuleWithin"),
         "run_sizes": _run_sizes(para_range),
+        "links": links_in_range(para_range),
         "bold": font["bold"],
         "size": font["size"],
         "font": font,

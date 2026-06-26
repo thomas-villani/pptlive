@@ -522,6 +522,176 @@ def zorder_cmd_for(name: str | int) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Shape arrangement (v-next): align / distribute / connectors
+# ---------------------------------------------------------------------------
+
+
+class MsoAlignCmd(IntEnum):
+    """`ShapeRange.Align(cmd, RelativeTo)` — how to align a set of shapes."""
+
+    LEFTS = 1
+    CENTERS = 2
+    RIGHTS = 3
+    TOPS = 4
+    MIDDLES = 5
+    BOTTOMS = 6
+
+
+_ALIGN_NAMES: dict[str, MsoAlignCmd] = {
+    "left": MsoAlignCmd.LEFTS,
+    "lefts": MsoAlignCmd.LEFTS,
+    "center": MsoAlignCmd.CENTERS,
+    "centre": MsoAlignCmd.CENTERS,
+    "centers": MsoAlignCmd.CENTERS,
+    "right": MsoAlignCmd.RIGHTS,
+    "rights": MsoAlignCmd.RIGHTS,
+    "top": MsoAlignCmd.TOPS,
+    "tops": MsoAlignCmd.TOPS,
+    "middle": MsoAlignCmd.MIDDLES,
+    "middles": MsoAlignCmd.MIDDLES,
+    "bottom": MsoAlignCmd.BOTTOMS,
+    "bottoms": MsoAlignCmd.BOTTOMS,
+}
+
+# Canonical names the CLI/MCP advertise (left/center/right are horizontal,
+# top/middle/bottom are vertical).
+ALIGN_CHOICES: tuple[str, ...] = ("left", "center", "right", "top", "middle", "bottom")
+
+
+def align_cmd_for(name: str | int) -> int:
+    """Friendly align name (or a raw `MsoAlignCmd` int) -> the int.
+
+    `"left"`/`"center"`/`"right"` (horizontal edges) and `"top"`/`"middle"`/
+    `"bottom"` (vertical edges) match case/separator-insensitively; a raw int
+    passes through. Raises `ValueError` (listing the names) for an unknown name.
+    """
+    if isinstance(name, bool):
+        raise ValueError(f"invalid align command: {name!r}")
+    if isinstance(name, int):
+        return int(name)
+    found = _ALIGN_NAMES.get(_normalize_name(name))
+    if found is None:
+        choices = ", ".join(ALIGN_CHOICES)
+        raise ValueError(f"unknown align command {name!r}; expected one of: {choices}")
+    return int(found)
+
+
+class MsoDistributeCmd(IntEnum):
+    """`ShapeRange.Distribute(cmd, RelativeTo)` — even spacing on one axis."""
+
+    HORIZONTALLY = 0
+    VERTICALLY = 1
+
+
+_DISTRIBUTE_NAMES: dict[str, MsoDistributeCmd] = {
+    "horizontal": MsoDistributeCmd.HORIZONTALLY,
+    "horizontally": MsoDistributeCmd.HORIZONTALLY,
+    "h": MsoDistributeCmd.HORIZONTALLY,
+    "vertical": MsoDistributeCmd.VERTICALLY,
+    "vertically": MsoDistributeCmd.VERTICALLY,
+    "v": MsoDistributeCmd.VERTICALLY,
+}
+
+DISTRIBUTE_CHOICES: tuple[str, ...] = ("horizontal", "vertical")
+
+
+def distribute_cmd_for(name: str | int) -> int:
+    """Friendly distribute name (or a raw `MsoDistributeCmd` int) -> the int.
+
+    `"horizontal"` / `"vertical"` match case-insensitively; a raw int passes
+    through. Raises `ValueError` (listing the names) for an unknown name.
+    """
+    if isinstance(name, bool):
+        raise ValueError(f"invalid distribute command: {name!r}")
+    if isinstance(name, int):
+        return int(name)
+    found = _DISTRIBUTE_NAMES.get(_normalize_name(name))
+    if found is None:
+        choices = ", ".join(DISTRIBUTE_CHOICES)
+        raise ValueError(f"unknown distribute command {name!r}; expected one of: {choices}")
+    return int(found)
+
+
+# `RelativeTo` for Align/Distribute: msoTrue = relative to the slide, msoFalse =
+# relative to one another (the selection's bounding box).
+_RELATIVE_TO_NAMES: dict[str, bool] = {
+    "slide": True,
+    "page": True,
+    "selection": False,
+    "shapes": False,
+    "eachother": False,
+    "other": False,
+}
+
+RELATIVE_TO_CHOICES: tuple[str, ...] = ("slide", "selection")
+
+
+def relative_to_for(value: str | int | bool) -> int:
+    """Coerce a relative-to choice to the `RelativeTo` `MsoTriState` int.
+
+    `"slide"` -> `msoTrue` (align/distribute against the slide); `"selection"` ->
+    `msoFalse` (against the selection's own bounding box). A bool or raw int
+    passes through (`True`/non-zero -> msoTrue). Raises `ValueError` for an
+    unknown name.
+    """
+    if isinstance(value, bool):
+        return int(MsoTriState.TRUE if value else MsoTriState.FALSE)
+    if isinstance(value, int):
+        return int(MsoTriState.TRUE if value else MsoTriState.FALSE)
+    found = _RELATIVE_TO_NAMES.get(_normalize_name(value))
+    if found is None:
+        choices = ", ".join(RELATIVE_TO_CHOICES)
+        raise ValueError(f"unknown relative-to {value!r}; expected one of: {choices}")
+    return int(MsoTriState.TRUE if found else MsoTriState.FALSE)
+
+
+class MsoConnectorType(IntEnum):
+    """`Shapes.AddConnector(type, …)` — the connector line geometry."""
+
+    STRAIGHT = 1
+    ELBOW = 2
+    CURVED = 3
+
+
+_CONNECTOR_NAMES: dict[str, MsoConnectorType] = {
+    "straight": MsoConnectorType.STRAIGHT,
+    "line": MsoConnectorType.STRAIGHT,
+    "elbow": MsoConnectorType.ELBOW,
+    "bent": MsoConnectorType.ELBOW,
+    "angle": MsoConnectorType.ELBOW,
+    "curved": MsoConnectorType.CURVED,
+    "curve": MsoConnectorType.CURVED,
+}
+
+CONNECTOR_CHOICES: tuple[str, ...] = ("straight", "elbow", "curved")
+
+
+def connector_type_for(name: str | int) -> int:
+    """Friendly connector type (or a raw `MsoConnectorType` int) -> the int.
+
+    `"straight"` / `"elbow"` / `"curved"` match case-insensitively; a raw int
+    passes through. Raises `ValueError` (listing the names) for an unknown name.
+    """
+    if isinstance(name, bool):
+        raise ValueError(f"invalid connector type: {name!r}")
+    if isinstance(name, int):
+        return int(name)
+    found = _CONNECTOR_NAMES.get(_normalize_name(name))
+    if found is None:
+        choices = ", ".join(CONNECTOR_CHOICES)
+        raise ValueError(f"unknown connector type {name!r}; expected one of: {choices}")
+    return int(found)
+
+
+def connector_type_name(value: int) -> str:
+    """`MsoConnectorType` int -> a friendly name (for connector reads)."""
+    try:
+        return MsoConnectorType(int(value)).name.lower()
+    except ValueError:
+        return str(int(value))
+
+
+# ---------------------------------------------------------------------------
 # Text structure (v0.3): paragraph alignment, bullets, font color
 # ---------------------------------------------------------------------------
 
