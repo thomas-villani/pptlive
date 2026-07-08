@@ -135,8 +135,10 @@ in their own stages below — v0.1 and the Open Questions section.)
   graph (app → presentations → slides → shapes → text frames → placeholders →
   notes), plus `no_powerpoint`, `real_powerpoint`, and `ppt`/`deck` helpers.
 - [x] `uv sync --extra dev`; `uv run pytest` (68 passed), `ruff`, `mypy` green.
-- [ ] CI: a Windows runner for the smoke suite + a cross-OS unit-test job
-  (cross-cutting; can trail v0).
+- [x] CI: a Windows runner for the smoke suite + a cross-OS unit-test job
+  (shipped 2026-07-08 — cross-OS unit matrix in `.github/workflows/test.yml`; the
+  live-PowerPoint smoke job is the manual `smoke.yml` stub. See the Cross-cutting
+  section below.)
 
 ---
 
@@ -1208,17 +1210,64 @@ frames, volume/mute setters, video styling; native recorded narration; WMV expor
 
 ## Cross-cutting (any release)
 
-- [ ] **HRESULT coverage** — start from wordlive's `_BUSY_HRESULTS`; widen as
-  real `com_error`s show up in smoke runs (add the slide-show-running rejection).
-- [ ] **Smoke fixtures** — a real `.pptx` checked in with known slides /
-  placeholders / a table / notes, so smoke tests have a stable target.
-- [ ] **`\n`-in-live-reads smoke spike** (carried over from the retired
-  `REFACTOR-PLAN.md`). Confirm whether a raw `TextRange.Text` read ever contains a
-  bare `\n` and, if so, whether COM `.Paragraphs()` treats it as a break. If it
-  does, `_selection.read_selection`'s `\r`-only paragraph count would undercount and
-  should add `\n` (but never `\v`, which is an explicit *soft* break). A live check,
-  not a code edit — the current `\r`-only count is correct for `para:` addressing as
-  far as the unit tests and prior spikes show.
+**Foundational-hardening batch — SHIPPED (2026-07-08).** The "pay down the
+cross-cutting debt" batch, spiked-first: two live-COM discovery spikes ran net-zero
+against real PowerPoint and both **closed their item with no feature code** (the 5th
+and 6th spec assumptions a spike has settled), then the deterministic build work (CI
+matrix + checked-in smoke fixture) landed.
+
+- [x] **`\n`-in-live-reads smoke spike — RESOLVED (no code change), verified live
+  2026-07-08 (`scripts/newline_reads_spike.py`, net-zero).** *Question:* does a raw
+  `TextRange.Text` **read** ever yield a bare `\n`, and does COM `.Paragraphs()`
+  treat it as a break (which would make `_selection.read_selection`'s `\r`-only
+  paragraph count *undercount*)? *Finding — nuanced but decisive:* a bare `\n`
+  **can** survive a read (a raw LF set via `.Text` reads back as LF — it is *not*
+  converted to `\r` or `\v`), **but PowerPoint treats `\n` as a soft break, never a
+  paragraph break** — `.Paragraphs().Count` counts only `\r`. In every probe (CR,
+  LF, CRLF→CR, VT, and mixed `A\rB\nC\vD` → 2 paragraphs) the `\r`-count + 1 exactly
+  matched COM's real paragraph count. So `read_selection`'s `\r`-only heuristic is
+  **verified correct** and needs no `\n` addition. (`\v` stays excluded — it's an
+  explicit soft break, as the item noted.)
+- [x] **HRESULT coverage — slide-show-rejection probe RESOLVED: there is none;
+  verified live 2026-07-08 (`scripts/busy_hresult_spike.py`, net-zero).** The item
+  asked to "add the slide-show-running rejection" to `_BUSY_HRESULTS`. The 2026-05-28
+  show spike found a *text* edit succeeds mid-show; this spike extended that to the
+  **structural** ops it hadn't probed — `AddSlide` / `Duplicate` / `Delete` /
+  `MoveTo` / `AddShape` / set `CustomLayout` / `Save` / a second
+  `SlideShowSettings.Run`, all mid-show — and **every one succeeded, none rejected**.
+  So a running show blocks nothing at all, and there is **no slide-show HRESULT to
+  add**. `_BUSY_HRESULTS` stays as-is; the "widen as real errors surface in smoke
+  runs" posture continues (the smoke run also re-confirmed the deliberate exclusion
+  of `0x800706BA RPC_S_SERVER_UNAVAILABLE` — the embedded-Excel server *gone* during
+  a chart write, an unrecoverable ComError, not busy).
+- [x] **CI — cross-OS unit matrix + manual smoke stub (2026-07-08).** CI already
+  existed (`ci.yml` → reusable `test.yml`, consumed by `release.yml` too — one gate,
+  no drift). `test.yml` was enriched from ubuntu/3.13-only into a **`lint` job**
+  (`ruff check` + `ruff format --check` + `mypy`, `uv sync --locked`) plus a
+  **`test` matrix** — ubuntu × py3.11–3.14 (3.14 `continue-on-error` for early
+  warning) and windows × py3.11–3.13 (the real target platform, pywin32 wheels) —
+  enforcing the 3.11+ floor (verified green locally on 3.11 and 3.13). New
+  **`smoke.yml`** runs `pytest -m smoke` but is `workflow_dispatch`-only against a
+  `[self-hosted, windows, powerpoint]` runner (no GitHub-hosted image has
+  PowerPoint) — dormant, not red, until such a runner is registered.
+- [x] **Smoke fixture — `tests/fixtures/smoke_deck.pptx` checked in (2026-07-08).**
+  A stable 3-slide target (title / agenda body + speaker notes / a 2×2 table),
+  authored by **pptlive itself** over COM (no `python-pptx` dep) via the re-runnable
+  `tests/fixtures/build_smoke_fixture.py` and saved with `deck.save_as`. New smoke
+  test `test_fixture_reads_back` opens it read-only and asserts the known content —
+  the first smoke case exercising the **read path against content pptlive is
+  *opening*, not one it just wrote** (a save/reopen mangle a round-trip can't catch).
+  All three smoke tests pass live (2026-07-08).
+- [x] **`.gitattributes` — line-ending + binary policy (2026-07-08).** Added now
+  that the repo checks in its first binary artifact (the `.pptx` fixture). Mirrors
+  wordlive's file: `* text=auto eol=lf` (LF in the repo on every platform, silencing
+  the `core.autocrlf=true` "LF will be replaced by CRLF" warning on `uv.lock` / yml),
+  explicit `text eol=lf` for lockfile/json/toml/yml, `eol=crlf` for Windows scripts
+  (`.bat`/`.cmd`/`.ps1`), and `binary` for the Office/image/PDF/video/`.mcpb`
+  artifacts pptlive reads, exports, or bundles — so a filter can never corrupt the
+  `.pptx` zip container (verified: the fixture resolves `text: unset` and a
+  renormalize leaves its blob untouched). The repo index was already all-LF, so the
+  normalization is churn-only (no content change).
 - [x] **Docs** — MkDocs Material site under `docs/` (mirrors wordlive's setup:
   `mkdocs.yml`, `docs` extra in `pyproject.toml`, mkdocstrings autodoc of the
   public surface). Pages: Home (README include), Getting started, Concepts,

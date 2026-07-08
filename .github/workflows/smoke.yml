@@ -1,0 +1,42 @@
+name: smoke
+
+# Live-PowerPoint smoke suite (`pytest -m smoke`). Unlike the unit gate in
+# test.yml, these tests drive a *real* PowerPoint over COM, so they cannot run on
+# a GitHub-hosted runner — no hosted Windows image ships Microsoft PowerPoint.
+#
+# This job is therefore MANUAL (workflow_dispatch only) and targets a SELF-HOSTED
+# Windows runner that has PowerPoint installed, labelled `powerpoint`. Until such a
+# runner is registered for the repo, a dispatched run simply stays queued (it is
+# never picked up) — the workflow is dormant, not red. To enable it:
+#
+#   1. On a Windows box with Microsoft PowerPoint + `uv`, register a self-hosted
+#      runner (repo Settings → Actions → Runners) with the labels below.
+#   2. Trigger from the Actions tab → "smoke" → Run workflow.
+#
+# The smoke fixtures are net-zero (each test opens its own throwaway deck / the
+# checked-in tests/fixtures/smoke_deck.pptx and never saves), so a run leaves the
+# machine's PowerPoint state untouched.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: smoke (live PowerPoint)
+    # Requires a self-hosted Windows runner with PowerPoint; see the header.
+    runs-on: [self-hosted, windows, powerpoint]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.17"
+          enable-cache: true
+
+      - name: Install (with dev extras)
+        run: uv sync --locked --extra dev
+
+      - name: Smoke tests (live PowerPoint over COM)
+        run: uv run pytest -m smoke -q
