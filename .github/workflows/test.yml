@@ -1,34 +1,91 @@
 name: test
 
-# Reusable test gate: ruff + mypy + the fake-COM unit suite (no PowerPoint, so
-# it runs on Linux; smoke tests are deselected by default). Called by ci.yml on
-# every PR / push to main, and by release.yml before it builds or publishes — one
-# definition so the two can never drift.
+# Reusable test gate: a lint job (ruff check + ruff format + mypy) and a
+# cross-OS / multi-Python matrix running the fake-COM unit suite. Smoke tests
+# (`-m smoke`) are deselected by default (they need a real PowerPoint install —
+# see smoke.yml), so this whole gate runs unattended on GitHub-hosted runners.
+#
+# Called by ci.yml on every PR / push to main, and by release.yml before it
+# builds or publishes — one definition so the two can never drift.
 on:
   workflow_call:
 
 permissions:
   contents: read
 
+env:
+  # Use setup-python's interpreter rather than a uv-managed CPython, so the
+  # matrix version is exactly the one installed; keep uv on it.
+  UV_PYTHON_PREFERENCE: only-system
+
 jobs:
-  test:
+  lint:
+    name: lint (ruff + mypy)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          # Pin uv so the lockfile it resolves matches the committed one; keep in
+          # step with the version developers run locally.
+          version: "0.11.17"
           enable-cache: true
 
-      - name: Install deps
-        run: uv sync --extra dev
+      # --locked fails if uv.lock drifted from pyproject.toml, so a dependency
+      # change that skipped `uv lock` can't merge silently.
+      - name: Install dev dependencies
+        run: uv sync --locked --extra dev
 
-      - name: Lint
-        run: uv run ruff check .
+      - name: Ruff lint
+        run: uv run ruff check src tests
 
-      - name: Type-check
+      - name: Ruff format
+        run: uv run ruff format --check src tests
+
+      - name: mypy
         run: uv run mypy
 
-      - name: Unit tests
-        run: uv run pytest
+  test:
+    name: test (py${{ matrix.python-version }} on ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # 3.14 is fresh — let it run for early warning without failing the gate.
+    continue-on-error: ${{ matrix.python-version == '3.14' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The library floor is 3.11 (pyproject requires-python); sweep the
+        # supported line on Linux, where the fake-COM suite needs no pywin32.
+        os: [ubuntu-latest]
+        python-version: ['3.11', '3.12', '3.13', '3.14']
+        # Plus Windows — the platform users actually run — to confirm pptlive
+        # installs (pywin32 wheels) and the fake-COM suite passes there too.
+        include:
+          - os: windows-latest
+            python-version: '3.11'
+          - os: windows-latest
+            python-version: '3.12'
+          - os: windows-latest
+            python-version: '3.13'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          allow-prereleases: true
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.17"
+          enable-cache: true
+
+      - name: Install (with dev extras)
+        run: uv sync --extra dev --python ${{ matrix.python-version }}
+
+      - name: Unit tests (fake COM; smoke deselected)
+        run: uv run --no-sync pytest -q

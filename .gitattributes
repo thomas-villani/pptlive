@@ -1,0 +1,37 @@
+# Line-ending policy for the repo.
+#
+# Store text as LF in the repository and check it out as LF on every platform,
+# so a contributor's `core.autocrlf=true` (the Windows default) can't rewrite
+# files on checkout. That rewrite is what produced the recurring
+# "LF will be replaced by CRLF" warnings — most visibly on uv.lock, which uv
+# regenerates with LF and git then wanted to flip back to CRLF on every touch.
+* text=auto eol=lf
+
+# Lockfiles / structured data: be explicit that they stay LF and byte-stable.
+uv.lock text eol=lf
+*.json  text eol=lf
+*.toml  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+
+# Windows-native scripts are the exception — keep CRLF (run by cmd.exe).
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary assets — never normalize line endings (it would corrupt the container).
+# `*.pptx` is the checked-in smoke fixture (tests/fixtures/smoke_deck.pptx); the
+# rest are formats pptlive reads or exports (images / PDF / video) plus the .mcpb
+# one-click bundle built at release.
+*.pptx binary
+*.ppt  binary
+*.potx binary
+*.ppsx binary
+*.xlsx binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.pdf  binary
+*.mp4  binary
+*.mcpb binary
