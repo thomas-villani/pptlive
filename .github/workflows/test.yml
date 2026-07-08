@@ -50,8 +50,8 @@ jobs:
       - name: mypy
         run: uv run mypy
 
-  test:
-    name: test (py${{ matrix.python-version }} on ${{ matrix.os }})
+  unit:
+    name: unit (py${{ matrix.python-version }} on ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     # 3.14 is fresh — let it run for early warning without failing the gate.
     continue-on-error: ${{ matrix.python-version == '3.14' }}
@@ -89,3 +89,24 @@ jobs:
 
       - name: Unit tests (fake COM; smoke deselected)
         run: uv run --no-sync pytest -q
+
+  # Single stable gate that aggregates lint + the whole unit matrix. Branch
+  # protection requires the context "test / test" — with a matrix, the per-cell
+  # checks are "test / unit (py3.11 on ubuntu-latest)" etc. (their names carry the
+  # matrix params), so no bare "test / test" would ever report and the PR would
+  # wait forever. This job's name IS "test", so it always produces that context,
+  # regardless of how the matrix grows or which Python line we sweep next.
+  test:
+    name: test
+    needs: [lint, unit]
+    if: always()  # run even when a needed job failed, so the gate can report red
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require lint + unit to have passed
+        run: |
+          echo "lint=${{ needs.lint.result }} unit=${{ needs.unit.result }}"
+          if [ "${{ needs.lint.result }}" != "success" ] || [ "${{ needs.unit.result }}" != "success" ]; then
+            echo "::error::A required job did not succeed."
+            exit 1
+          fi
+          echo "All required jobs passed."
