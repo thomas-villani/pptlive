@@ -28,9 +28,9 @@ jobs:
     # Requires a self-hosted Windows runner with PowerPoint; see the header.
     runs-on: [self-hosted, windows, powerpoint]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           version: "0.11.17"
           enable-cache: true
