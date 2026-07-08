@@ -166,3 +166,31 @@ def test_cli_video_status(fake_powerpoint: Any) -> None:
     assert res.exit_code == 0
     payload = json.loads(res.output)
     assert payload["status"] == "none"  # no export requested yet
+
+
+def test_add_audio_surfaces_playsettings_failure(
+    deck: Any, tmp_path: Any, monkeypatch: Any
+) -> None:
+    # The autoplay/hide_icon write is no longer swallowed: if PlaySettings can't be
+    # reached, the failure surfaces instead of silently dropping the caller's
+    # request (which would break the narrate → auto-advance → export_video flow).
+    fake_shape_cls = type(deck.slides[1].shapes[1].com)
+
+    def _boom(self: Any) -> Any:
+        raise RuntimeError("PlaySettings unavailable")
+
+    monkeypatch.setattr(fake_shape_cls, "AnimationSettings", property(_boom))
+    with pytest.raises(RuntimeError), deck.edit("add audio"):
+        deck.slides[1].add_audio(_audio(tmp_path))
+
+
+def test_export_video_rejects_out_of_range_params(deck: Any, tmp_path: Any) -> None:
+    # Validate before any COM: a bad param is a clean ValueError, not a confusing
+    # raw CreateVideo COM error.
+    out = tmp_path / "deck.mp4"
+    with pytest.raises(ValueError, match="quality"):
+        deck.export_video(out, quality=101)
+    with pytest.raises(ValueError, match="resolution"):
+        deck.export_video(out, resolution=0)
+    with pytest.raises(ValueError, match="fps"):
+        deck.export_video(out, fps=0)

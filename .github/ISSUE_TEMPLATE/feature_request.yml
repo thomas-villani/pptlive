@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest a capability or improvement.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the problem / use case?
+      description: What are you trying to do that pptlive makes hard or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: >-
+        What would the API look like? Most capabilities are exposed across
+        surfaces that stay in sync — the Python API, the CLI, the `exec` op, and
+        an MCP command — so sketch whichever fits.
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives / workarounds
+      description: >-
+        Anything you've already tried, including dropping to the raw COM object
+        via the `.com` escape hatch.
+    validations:
+      required: false

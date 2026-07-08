@@ -561,6 +561,13 @@ class Slide:
                 "advance_after, or advance_on_click"
             )
         effect_int = entry_effect_for(effect) if effect is not None else None  # ValueError first
+        # Durations are seconds; reject negatives before any COM (PowerPoint would
+        # either clamp silently or emit an opaque COM error). advance_after=0 is
+        # valid — it keeps the timing but requires a click.
+        if duration is not None and float(duration) < 0:
+            raise ValueError(f"duration must be non-negative seconds, got {duration!r}")
+        if advance_after is not None and float(advance_after) < 0:
+            raise ValueError(f"advance_after must be non-negative seconds, got {advance_after!r}")
         with _com.translate_com_errors():
             t = self._slide.SlideShowTransition
             if effect_int is not None:

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 Documentation
+    url: https://thomas-villani.github.io/pptlive/
+    about: How-to guides, the CLI / Python / MCP reference, the cookbook, and the error contract.

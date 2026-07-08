@@ -1,0 +1,85 @@
+name: Bug report
+description: Something in pptlive misbehaves against a running PowerPoint instance.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! pptlive bugs are often version- and
+        surface-specific — the environment fields below are usually the deciding
+        clue for a COM issue, so please fill them in.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+      placeholder: |
+        Steps to reproduce:
+        1. ...
+        2. ...
+
+        Expected: ...
+        Actual: ...
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which surface?
+      description: How were you driving pptlive?
+      options:
+        - Python API (import pptlive as pl)
+        - CLI (pptlive ...)
+        - MCP server (pptlive-mcp)
+        - exec batch (pptlive exec / ppt_batch)
+    validations:
+      required: true
+  - type: input
+    id: pptlive-version
+    attributes:
+      label: pptlive version
+      description: "`pptlive --version`, or `pip show pptlive` / `uv pip show pptlive`."
+      placeholder: "0.7.0"
+    validations:
+      required: true
+  - type: input
+    id: powerpoint-version
+    attributes:
+      label: Microsoft PowerPoint version
+      placeholder: "Microsoft 365 / PowerPoint 2021 / 2019 / 2016 / 2013 / 2010"
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: "3.13.1"
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 23H2"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output / traceback
+      description: >-
+        The full traceback, or the JSON error payload from the CLI / MCP
+        (`code`, message, exit code). Pasted text is rendered as code — no
+        backticks needed.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I'm on Windows with Microsoft PowerPoint installed and running.
+          required: true
+        - label: I've reproduced this on the latest released version of pptlive.
+          required: false

@@ -125,3 +125,12 @@ def test_cli_slide_set_transition_bad_effect_rejected(fake_powerpoint) -> None: 
         main, ["slide", "set-transition", "--slide", "1", "--effect", "warp"]
     )
     assert result.exit_code == 2  # click rejects the invalid --effect choice
+
+
+def test_set_transition_rejects_negative_durations(deck) -> None:  # type: ignore[no-untyped-def]
+    # Durations are seconds; a negative is a clean ValueError before any COM.
+    # advance_after=0 stays valid (keep the timing, require a click).
+    with deck.edit("t"), pytest.raises(ValueError, match="duration"):
+        deck.slides[1].set_transition("fade", duration=-1.0)
+    with deck.edit("t"), pytest.raises(ValueError, match="advance_after"):
+        deck.slides[1].set_transition("fade", advance_after=-2.0)

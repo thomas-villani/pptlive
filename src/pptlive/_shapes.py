@@ -2294,15 +2294,17 @@ class ShapeCollection:
             if alt_text is not None:
                 com_shape.AlternativeText = str(alt_text)
             if autoplay or hide_icon:
-                # Best-effort: a media clip exposes PlaySettings, but guard anyway.
-                try:
-                    ps = com_shape.AnimationSettings.PlaySettings
-                    if autoplay:
-                        ps.PlayOnEntry = int(MsoTriState.TRUE)
-                    if hide_icon:
-                        ps.HideWhileNotPlaying = int(MsoTriState.TRUE)
-                except Exception:
-                    pass
+                # PlaySettings drives auto-play / hide-while-not-playing. A media
+                # object inserted via AddMediaObject2 always exposes it, so a
+                # failure here is genuine — surface it (translated) rather than
+                # silently drop the caller's request. `autoplay` defaults True and
+                # the narrate → auto-advance → export_video flow depends on it, so a
+                # silent swallow would produce a wrong video with no error.
+                ps = com_shape.AnimationSettings.PlaySettings
+                if autoplay:
+                    ps.PlayOnEntry = int(MsoTriState.TRUE)
+                if hide_icon:
+                    ps.HideWhileNotPlaying = int(MsoTriState.TRUE)
             length_ms = _safe(lambda: float(com_shape.MediaFormat.Length), 0.0)
             shape = self._added()
         if pace_slide and length_ms and length_ms > 0:

@@ -83,6 +83,28 @@ CLI + MCP + both SKILL guides, and the shipped wrappers were re-verified live
   `media_add`, `ppt_render` ops `export_video` / `video_status` (mp4 is never
   mis-embedded as an image). Both flow through `ppt_batch` via the shared cores.
 
+### Fixed
+
+- **`add_audio` / `add_video` no longer silently drop `autoplay` / `hide_icon`.**
+  The `PlaySettings` write was wrapped in a bare `except: pass`, so if it failed the
+  clip was inserted but the requested auto-play was silently dropped — which would
+  quietly break the narrate → auto-advance → `export_video` flow (`autoplay`
+  defaults `True`). The write now surfaces a failure instead of swallowing it
+  (verified live: real media objects expose `PlaySettings`, so the happy path is
+  unchanged).
+- **CLI renders a missing-file error cleanly instead of a traceback.** `shape
+  set-picture` / `picture-fill` / `add --kind picture` and `media add` raise
+  `FileNotFoundError` (an `OSError`), which the top-level CLI boundary didn't catch —
+  it escaped as a raw traceback (exit code was still 1). It's now a clean `error: …`
+  line, matching the MCP boundary.
+
+### Changed
+
+- **Validate before COM in `export_video` and `set_transition`.** `export_video`
+  now rejects a non-positive `resolution`/`fps` or an out-of-range `quality` (0–100),
+  and `set_transition` rejects a negative `duration`/`advance_after` (0 stays valid),
+  with a clean `ValueError` before any COM call instead of a confusing raw COM error.
+
 ## [0.7.0] — 2026-06-23
 
 ### Added

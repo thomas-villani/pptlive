@@ -69,9 +69,13 @@ def _run(ctx: click.Context, fn: Any) -> None:
     except PptliveError as exc:
         click.echo(f"error: {exc}", err=True)
         sys.exit(_exit_for(exc))
-    except ValueError as exc:
-        # Library-level input validation (e.g. a line_spacing multiple > 5, an
-        # out-of-range indent level) — a clean exit 1, not a traceback.
+    except (ValueError, OSError) as exc:
+        # ValueError: library-level input validation (e.g. a line_spacing multiple
+        # > 5, an out-of-range indent level). OSError: file-touching verbs —
+        # FileNotFoundError from `shape set-picture` / `picture-fill` / `add --kind
+        # picture` / `media add`, FileExistsError from `save-as`. Both a clean exit
+        # 1, not a traceback — mirroring the MCP boundary, which already maps
+        # ValueError / FileNotFoundError / FileExistsError to `invalid_args`.
         click.echo(f"error: {exc}", err=True)
         sys.exit(EXIT_OTHER)
 

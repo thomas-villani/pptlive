@@ -1136,3 +1136,17 @@ def test_install_mcp_claude_code_writes_project_mcp_json(tmp_path, monkeypatch) 
     assert (
         json.loads(target.read_text(encoding="utf-8"))["mcpServers"]["pptlive"]["command"] == "uvx"
     )
+
+
+def test_missing_file_is_a_clean_error_not_a_traceback(fake_powerpoint, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # A missing file surfaces as the library's FileNotFoundError (an OSError). The
+    # _run boundary must render it as a clean `error: …` / exit 1, not let it escape
+    # as a traceback — the regression guard for the OSError branch (set_picture
+    # checks the file before the is-a-picture check, so this fires deterministically).
+    missing = tmp_path / "nope.png"
+    result = CliRunner().invoke(
+        main, ["shape", "set-picture", "--anchor-id", "shape:2:1", "--path", str(missing)]
+    )
+    assert result.exit_code == 1
+    assert not isinstance(result.exception, FileNotFoundError)  # handled, not escaped
+    assert "picture not found" in result.stderr

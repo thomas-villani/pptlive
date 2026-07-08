@@ -235,6 +235,14 @@ class Presentation:
         A failed encode raises `VideoExportError`.
         """
         abspath = str(Path(os.fspath(path)).expanduser().resolve())
+        # Validate before any COM so a bad value is a clean ValueError, not a
+        # confusing raw CreateVideo COM error (the project's validate-first pattern).
+        if int(resolution) <= 0:
+            raise ValueError(f"resolution must be a positive pixel height, got {resolution!r}")
+        if int(fps) <= 0:
+            raise ValueError(f"fps must be positive, got {fps!r}")
+        if not 0 <= int(quality) <= 100:
+            raise ValueError(f"quality must be between 0 and 100, got {quality!r}")
         with _com.translate_com_errors():
             self._pres.CreateVideo(
                 abspath,

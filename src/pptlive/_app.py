@@ -33,7 +33,8 @@ class PowerPoint:
 
     @property
     def visible(self) -> bool:
-        return bool(self._app.Visible)
+        with _com.translate_com_errors():
+            return bool(self._app.Visible)
 
     @property
     def presentations(self) -> PresentationCollection:
