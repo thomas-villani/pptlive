@@ -27,11 +27,57 @@ record the finding, then harden library + CLI + MCP + tests together.
 
 | Tier | Theme | Status | Why it remains |
 | ---- | ----- | ------ | -------------- |
+| **Linter / regularizer** | Consistency audit + one-pass autofix (`deck.lint()`/`regularize()`) — the wordlive linter, re-applied | `[ ]` design ✅ · proofing spiked ✅ | **Highest-leverage next feature.** Pure composition over shipped verbs; new work is `format_info()` + the rule engine. Design in `spec-linter.md`. See its own section below. |
 | **v1.4-rest** | Navigation & structure: sections, headers/footers, run-level hyperlinks | `[x]` | Sections + headers/footers shipped (v0.6); **text-run-level hyperlinks shipped 2026-06-25** — tier complete. |
 | **v1.5-rest** | Animations | `[x]` main cut · `[ ]` long tail | Whole-shape entrance/exit shipped (v0.10); per-paragraph levels / motion paths / reordering remain. |
 | **v1.7** | Media + narrated-video export | `[x]` | SHIPPED 2026-06-25 — insert audio/video narration, self-time slides, export MP4 (async `CreateVideo`). Only the media long tail (trimming, bookmarks, recorded narration) remains. |
 | **Opportunistic** | Tables/charts/SmartArt/arrangement/tags/metadata/OLE | mixed | **Arrangement (group/align/distribute/connectors) shipped 2026-06-25.** Pull the rest on demand. |
 | **Deferred** | Async/events, full layout authoring, deep theme/master follow-ups | `[ ]` | Real but lower leverage or larger architectural lift. |
+
+---
+
+## Linter / regularizer — the consistency audit + one-pass autofix
+
+The highest-leverage feature still open, and (like the wordlive linter it ports)
+**pure composition** — `deck.lint()` audits a deck for presentation-quality defects,
+`deck.regularize()` autofixes the mechanical ones in one atomic-undo pass, both over
+verbs pptlive already ships. Full design: **`spec-linter.md`**; staged checklist:
+**`IMPLEMENTATION.md` → "Linter / regularizer — PLANNED"**. The one-paragraph why:
+the last hour before a deck ships is spent on objective, mechanical, already-scriptable
+fixes (headers all one font/size, shapes lined up, no empty bullets, numeric columns
+right-aligned, copyright/confidential present, slide numbers, slide size) — exactly what
+an agent should own.
+
+**The design diff from wordlive** (why this is a real port, not a copy): PowerPoint has
+~no named paragraph styles, so consistency isn't Word's "direct override fighting the
+style." It's three PowerPoint-native primitives — **P2 mode/dominant across peers** (all
+titles alike; the headline), **P3 spatial regularity** (alignment/geometry, on the
+shipped `geometry_report()`), and weakly **P1 placeholder-vs-master cascade**. Rules stay
+`consistency` / `structural` / `policy` (profile-driven), and the `Finding`/`regularize`
+engine + `adds_content` gate port near-verbatim from `_linting.py`.
+
+- [ ] **Build the foundation + the two clusters the user named first** — `format_info()`
+  read, the peer-mode helper, then `title-font-consistent` (P2) and `edge-alignment` /
+  `shape-off-slide` (P3), then the `regularize` loop + idempotency test. Then P4 text
+  (empty bullets, table numerics), P5 deck (notices, slide numbers, slide size) +
+  profiles. Wire Python / CLI / **exec op** / MCP + both SKILL guides. Findings anchor by
+  the drift-proof `shapeid:S:ID`.
+
+- [~] **Proofing (`spelling`) — SPIKED 2026-07-08 (`scripts/proofing_spike.py`), a GO
+  via a borrowed engine; later batch.** PowerPoint has a spell checker but exposes **no
+  way to call it** — no `Application.CheckSpelling`/`GetSpellingSuggestions`, no
+  `TextRange.SpellingErrors`. **The path: borrow a hidden `Word.Application` over COM**
+  (Word's checker works on bare strings, runs `Visible=False`, and is near-ubiquitous
+  beside PowerPoint). We tokenize each frame ourselves → **exact `(shapeid, start,
+  length)` spans + suggestions**; both live test-deck typos caught. Build musts:
+  - **Fail gracefully if Word isn't installed** (rare for a PowerPoint user, but real):
+    a failed `Dispatch("Word.Application")` makes `lint` **skip the `spelling` cluster and
+    say so in the report** — never a crash; only a `--rules spelling` that explicitly
+    asked may error with a "needs Word" message.
+  - **One scratch invisible doc per pass** (`Documents.Add()` — `GetSpellingSuggestions`
+    needs a document; `CheckSpelling` doesn't), reused for all tokens, closed in `finally`.
+  - **`_com.py` owns the only `Dispatch("Word.Application")`** (`word_speller()` helper),
+    keeping the pywin32-seam rule intact; natural home for a future `deck.proofing()`.
 
 ---
 

@@ -1367,6 +1367,77 @@ slide). All fake-COM unit tests green (`ruff`, `mypy`, `pytest` — 948).
 
 ---
 
+## Linter / regularizer — PLANNED (`spec-linter.md`)
+
+The wordlive linter re-applied to PowerPoint: audit a deck for presentation-quality
+defects (`deck.lint()`), then autofix the mechanical ones in one atomic-undo pass
+(`deck.regularize()`). **Pure composition over shipped write verbs** (`format`,
+`shape_move`/`shape_resize`, `shape_align`, `set_headers_footers`, `write`,
+`set_paragraphs`, `table_set_fill`/`set_border`) — no new COM *write* surface; the new
+work is the `format_info()` read + the rule engine (ported near-verbatim from wordlive's
+`_linting.py`: `Finding`/`Rule` dataclasses, registry, `_select_rules`, `run_lint`,
+`regularize`). **The big diff from wordlive:** PowerPoint has ~no named paragraph styles,
+so consistency isn't "direct override vs style" — it's (P2) **mode/dominant across peers**
+(all titles alike), (P3) **spatial regularity** (alignment/geometry, via the shipped
+`geometry_report()`), and only weakly (P1) placeholder-vs-master-cascade. See
+`spec-linter.md` §2. Build order (§10 there):
+
+- [ ] **Foundation** — `anchor.format_info()` (effective font/paragraph + master/layout
+  cascade baseline + `override`/`mixed`, reusing the shipped `color_source`) + the
+  peer-mode helper (P2) + a cascade-baseline resolver (composition over the shipped
+  `reset_to_layout` + `deck.master.read()`). **Spike:** confirm `CustomLayout`
+  placeholder → master `TextStyles` fallback resolves a concrete font per placeholder
+  kind + level across a couple of templates.
+- [ ] **P2 headline cluster** (the user's "same font/size" ask) —
+  `title-font-consistent`, `body-font-consistent`, `title-position-consistent`. Findings
+  anchor by the **drift-proof `shapeid:S:ID`** (a `regularize` pass reorders z-order).
+- [ ] **P3 geometry cluster** ("lined up properly") — `shape-off-slide`,
+  `edge-alignment` (→ `shape_align`), `placeholder-off-layout` (→ `shape_reset_layout`),
+  built on `Slide.geometry_report()`.
+- [ ] **`regularize`** — the `run_batch`-over-findings loop (one `deck.edit(
+  "Regularize formatting")`, one Ctrl-Z; `own_undo=False` inside an `exec` batch) + the
+  `adds_content` gate (`{applied, skipped, deferred, findings}`) + the idempotency smoke
+  test (regularize twice → 2nd pass `applied` empty).
+- [ ] **P4 text cluster** ("no empty bullets") — `empty-bullet`/`trailing-empty-paragraph`
+  (`adds_content`), whitespace rules, `table-numeric-right-align` + the numeric-column parse.
+- [ ] **P5 deck cluster + profiles** ("copyright/confidential", slide numbers, slide
+  size) — `slide-number-present`, `confidentiality-notice`/`copyright-notice`,
+  `slide-size`; the `Profile` loader (`pptlive.lint.json`, house-style targets).
+- [ ] **Wire all four front-ends** — Python `deck.lint`/`regularize`; CLI `lint` /
+  `regularize [--dry-run] [--allow-content]`; **exec op** `regularize` (write, joins the
+  atomic batch); MCP `ppt_read op=lint` / `ppt_edit op=regularize` — plus both SKILL
+  guides + a "hand off a clean deck" cookbook entry.
+
+- [~] **Proofing (`spelling`) — SPIKED 2026-07-08 (`scripts/proofing_spike.py`,
+  net-zero read); a later batch (carries a cross-app dependency).** The "typos" ask.
+  **Finding — PowerPoint's own COM has no spell-check and no way to ask for one:** no
+  `Application.CheckSpelling`/`GetSpellingSuggestions`, no `TextRange.SpellingErrors`
+  (only `Application.LanguageSettings` + `TextRange.LanguageID`→`1033` exist). **But a
+  hidden `Word.Application` borrowed over COM is a fully working checker** —
+  `CheckSpelling(word)`→bool and `GetSpellingSuggestions(word)`→candidates, Word runs
+  `Visible=False` (PowerPoint can't), and it checks bare strings. Both live misspellings
+  on the test deck were caught with correct suggestions (`favoritely`→*favorite*,
+  `Potatoe`→*Potatoes*). Because pptlive **tokenizes each frame itself** (regex →
+  `start`/`length`), the token check yields **exact spans** — a `spelling` finding gets a
+  precise `(shapeid, start, length)` + a suggestion-based `find_replace` fix. Build notes
+  the spike pinned:
+  - **Word gets one scratch invisible doc per lint pass** (`word.Documents.Add()`):
+    `GetSpellingSuggestions` raises "no document is open" without one; `CheckSpelling`
+    doesn't. Reuse the one instance for every token; `doc.Close(0)` + `Quit()` in `finally`.
+  - **Fail gracefully when Word isn't installed** (rare for a PowerPoint user, but
+    possible): `Dispatch("Word.Application")` failing means proofing is *unavailable* — a
+    `WordNotAvailableError` (or a `None`-checker sentinel) that makes `lint` **skip the
+    `spelling` cluster and note it in the report**, never a hard error; a `lint
+    --rules spelling` that *explicitly* asked for it may exit non-zero with a clear
+    "install Word / this rule needs Word" message. Decide the exact surface at build.
+  - **`_com.py` owns the only `Dispatch("Word.Application")`** — a `word_speller()`
+    helper (cached per apartment) — keeping the "pywin32 only in `_com.py`" rule intact.
+    Natural home for a future `deck.proofing()` surface (the missing wordlive mirror),
+    with `spelling` as its first consumer. False-positive hygiene: skip ALL-CAPS
+    acronyms / tokens with digits / brand terms; honor `LanguageID` past en-US later.
+
+---
+
 ## Open questions (from spec.md — resolve, don't guess)
 
 1. ~~**Name.**~~ **Resolved: `pptlive`.** The whole Bootstrap + v0 tree
