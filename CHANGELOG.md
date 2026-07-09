@@ -66,8 +66,23 @@ CLI + MCP + both SKILL guides, and the shipped wrappers were re-verified live
   before any COM for a missing path.
 - **Media reads.** `Shape.has_media` (gate on `Shape.Type == msoMedia`) +
   `Shape.media`; every shape listing now carries `has_media` and, for a media
-  shape, a `media` sub-dict `{type: sound|movie, length_s, muted, volume,
-  autoplay}` (each field read defensively).
+  shape, a `media` sub-dict `{type: sound|movie, length_s, start_s, end_s, muted,
+  volume, autoplay}` (each field read defensively; `start_s`/`end_s` are the trim
+  window in seconds).
+- **Media playback controls (long-tail).** `Shape.set_media_playback(*, muted=None,
+  volume=None, start=None, end=None)` sets an existing audio/video clip's mute,
+  volume (`0.0-1.0`), and **trim** window (`start`/`end` in *seconds* — omit an edge
+  to keep it), over `MediaFormat.Muted`/`.Volume`/`.StartPoint`/`.EndPoint`. Values
+  are validated up front (volume in `[0, 1]`; `0 <= start < end <= length`) so a bad
+  request is a clean `ValueError` before any COM, rather than PowerPoint's opaque
+  "Illegal value." A net-zero spike (`scripts/media_longtail_spike.py`) pinned the
+  round-trips and confirmed the trim-order gotcha (set `[0, end]` before pulling
+  `StartPoint` in, so the pair is never transiently invalid). CLI `media set
+  --anchor-id … [--muted|--no-muted] [--volume] [--start] [--end]`; MCP `ppt_edit`
+  op `media_set` (`muted`/`volume`/`trim_start`/`trim_end`). *Poster frames,
+  bookmarks, and video styling stay deferred — `MediaFormat.SetDisplayPicture` does
+  not marshal under the late-bound `_com` dispatch (the `ExportAsFixedFormat`-class
+  problem).*
 - **Export video.** `deck.export_video(path, *, use_timings=True,
   default_slide_duration=5, resolution=720, fps=30, quality=85, wait=True,
   timeout=600)` over `Presentation.CreateVideo` — pptlive's **first async COM

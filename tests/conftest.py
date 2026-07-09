@@ -689,6 +689,62 @@ class _FakeActionSetting:
         self.Action = 7 if linked else 0  # ppActionHyperlink / ppActionNone
 
 
+class _FakeMediaFormat:
+    """Stateful fake of `Shape.MediaFormat` — persists the mute/volume/trim setters.
+
+    Mirrors the live COM: `Length`/`StartPoint`/`EndPoint` are milliseconds, `Muted`
+    is a tri-state, `Volume` a 0..1 float. Deliberately *permissive* (it stores any
+    value) so tests exercise the wrapper's own Python-side range validation, which
+    fires before COM.
+    """
+
+    def __init__(self, media: dict[str, Any]) -> None:
+        self._m = media
+        media.setdefault("muted", False)
+        media.setdefault("volume", 0.8)
+        media.setdefault("start_ms", 0.0)
+        media.setdefault("end_ms", float(media["length_ms"]))
+
+    @property
+    def Length(self) -> float:
+        return float(self._m["length_ms"])
+
+    @property
+    def Muted(self) -> bool:
+        # Live COM returns a NATIVE bool (not a tri-state) — mirror that so the read
+        # is exercised the way the wrapper must read it (bool(), not is_true).
+        return bool(self._m["muted"])
+
+    @Muted.setter
+    def Muted(self, value: Any) -> None:
+        # The wrapper writes msoTrue (-1) / msoFalse (0); store it as a bool like COM.
+        self._m["muted"] = bool(value)
+
+    @property
+    def Volume(self) -> float:
+        return float(self._m["volume"])
+
+    @Volume.setter
+    def Volume(self, value: float) -> None:
+        self._m["volume"] = float(value)
+
+    @property
+    def StartPoint(self) -> float:
+        return float(self._m["start_ms"])
+
+    @StartPoint.setter
+    def StartPoint(self, value: float) -> None:
+        self._m["start_ms"] = float(value)
+
+    @property
+    def EndPoint(self) -> float:
+        return float(self._m["end_ms"])
+
+    @EndPoint.setter
+    def EndPoint(self, value: float) -> None:
+        self._m["end_ms"] = float(value)
+
+
 class _FakeShape:
     """A shape. `text=None` means no text frame (picture/line)."""
 
@@ -744,6 +800,7 @@ class _FakeShape:
         # Media (v1.7): set by AddMediaObject2. `_media` holds {type, length_ms};
         # PlaySettings carries the auto-play flags the wrapper writes.
         self._media: dict[str, Any] | None = None
+        self._media_format: _FakeMediaFormat | None = None
         self._play_settings = SimpleNamespace(
             PlayOnEntry=_MSO_FALSE, HideWhileNotPlaying=_MSO_FALSE
         )
@@ -892,7 +949,9 @@ class _FakeShape:
     def MediaFormat(self) -> Any:
         if self._media is None:
             raise AttributeError("shape is not media")
-        return SimpleNamespace(Length=float(self._media["length_ms"]), Muted=_MSO_FALSE, Volume=0.5)
+        if self._media_format is None:
+            self._media_format = _FakeMediaFormat(self._media)
+        return self._media_format
 
     @property
     def AnimationSettings(self) -> Any:

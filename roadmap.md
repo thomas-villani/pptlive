@@ -210,9 +210,15 @@ no new dependency; what remains below is the deferred long tail.
     used by this tier. *(Resolved: failed/timeout → `VideoExportError`; `export_video`
     blocks by default with `wait=False` + `video_status()` for non-blocking polling.)*
 
-- [ ] **Media long tail (deferred from the v1.7 cut).**
-  - Trimming (`MediaFormat.StartPoint` / `EndPoint`), bookmarks, poster frames,
-    volume/mute setters, video styling.
+- [~] **Media long tail (partly shipped).**
+  - **SHIPPED** — mute/volume setters + trimming (`MediaFormat.Muted`/`.Volume`/
+    `.StartPoint`/`.EndPoint`) via `Shape.set_media_playback` (spike
+    `scripts/media_longtail_spike.py`, net-zero). See CHANGELOG `[Unreleased]`.
+  - **Still deferred:** poster frames + bookmarks + video styling. `MediaFormat.
+    SetDisplayPicture` (poster) does **not** marshal under the late-bound `_com`
+    dispatch (pywin32 coerces the path arg to `int` — the `ExportAsFixedFormat`-class
+    problem), and a real video is needed to verify the happy path — revisit if a
+    workflow needs it.
   - Native recorded narration (`Slide.NotesPage` / `RecordNarration`) — a separate
     capture path, not the file-insertion path shipped here.
   - WMV export (`SaveAs` 37) — MP4 via `CreateVideo` is the one path shipped.

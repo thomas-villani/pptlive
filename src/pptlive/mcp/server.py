@@ -374,6 +374,10 @@ def ppt_edit(
     autoplay: bool = True,
     hide_icon: bool = True,
     pace_slide: bool = True,
+    muted: bool | None = None,
+    volume: float | None = None,
+    trim_start: float | None = None,
+    trim_end: float | None = None,
     values: list[str] | None = None,
     row: int | None = None,
     column: int | None = None,
@@ -493,6 +497,10 @@ def ppt_edit(
       auto-advances the slide to the clip length (so "export_video" paces itself to
       the narration). Optional `left`/`top`/`width`/`height`/`alt_text`. The "build
       a deck, narrate it, export a video" path pairs this with render "export_video".
+    - "media_set": set playback options on an existing media clip at `anchor_id`
+      (audio or video) — any of `muted` (bool), `volume` (0.0-1.0), `start`/`end`
+      (the trim window, in **seconds**; omit an edge to keep it). At least one is
+      required. Errors if the shape holds no media, or a value is out of range.
     - "shape_move": move to absolute `left`/`top`. "shape_resize": set `width`/`height`.
     - "shape_order": restack by `order`="front"/"back"/"forward"/"backward" (e.g.
       send a new background panel to the back, behind existing content).
@@ -728,6 +736,10 @@ def ppt_edit(
         "autoplay": autoplay,
         "hide_icon": hide_icon,
         "pace_slide": pace_slide,
+        "muted": muted,
+        "volume": volume,
+        "trim_start": trim_start,
+        "trim_end": trim_end,
         "values": values,
         "row": row,
         "column": column,

@@ -1353,6 +1353,33 @@ def test_media_add_requires_path(fake_powerpoint: Any) -> None:
         ppt_edit("media_add", slide=1, kind="audio")
 
 
+def test_media_set_playback(fake_powerpoint: Any, tmp_path: Any) -> None:
+    wav = tmp_path / "narration.wav"
+    wav.write_bytes(b"RIFFfake")
+    added = ppt_edit("media_add", slide=1, kind="audio", path=str(wav))
+    out = ppt_edit(
+        "media_set",
+        anchor_id=added["anchor_id"],
+        muted=True,
+        volume=0.4,
+        trim_start=0.2,
+        trim_end=1.0,
+    )
+    assert out["ok"] is True
+    assert out["media"]["muted"] is True
+    assert out["media"]["volume"] == 0.4
+    assert out["media"]["start_s"] == 0.2
+    assert out["media"]["end_s"] == 1.0
+
+
+def test_media_set_requires_an_option(fake_powerpoint: Any, tmp_path: Any) -> None:
+    wav = tmp_path / "narration.wav"
+    wav.write_bytes(b"RIFFfake")
+    added = ppt_edit("media_add", slide=1, kind="audio", path=str(wav))
+    with pytest.raises(ToolError, match="at least one"):
+        ppt_edit("media_set", anchor_id=added["anchor_id"])
+
+
 def test_export_video_blocks_and_never_embeds(fake_powerpoint: Any, tmp_path: Any) -> None:
     out = tmp_path / "deck.mp4"
     res = ppt_render("export_video", out=str(out), resolution=480)
