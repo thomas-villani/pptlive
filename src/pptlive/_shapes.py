@@ -264,21 +264,92 @@ def is_media(com_shape: Any) -> bool:
 def _media_to_dict(com_shape: Any) -> dict[str, Any]:
     """The media sub-dict for a media shape: kind + duration + playback state.
 
-    `length_s` is the clip duration in **seconds** (`MediaFormat.Length` is ms);
-    `autoplay` reflects `AnimationSettings.PlaySettings.PlayOnEntry`. Every field is
-    read defensively (`_safe`) — some props raise on certain clips — so a media
-    shape never fails the whole structured read.
+    `length_s`, `start_s`, and `end_s` are seconds (the COM `MediaFormat.Length` /
+    `.StartPoint` / `.EndPoint` are milliseconds — never surfaced raw); `start_s`/
+    `end_s` are the **trim** window (0 → `length_s` when untrimmed). `volume` is a
+    `0.0..1.0` fraction; `autoplay` reflects `AnimationSettings.PlaySettings.
+    PlayOnEntry`. Every field is read defensively (`_safe`) — some props raise on
+    certain clips — so a media shape never fails the whole structured read.
     """
     length_ms = _safe(lambda: float(com_shape.MediaFormat.Length), None)
+    start_ms = _safe(lambda: float(com_shape.MediaFormat.StartPoint), None)
+    end_ms = _safe(lambda: float(com_shape.MediaFormat.EndPoint), None)
     return {
         "type": media_type_name(_safe(lambda: int(com_shape.MediaType), None)),
         "length_s": round(length_ms / 1000.0, 3) if length_ms else None,
-        "muted": _safe(lambda: is_true(com_shape.MediaFormat.Muted), None),
+        "start_s": round(start_ms / 1000.0, 3) if start_ms is not None else None,
+        "end_s": round(end_ms / 1000.0, 3) if end_ms is not None else None,
+        # Muted is a plain boolean property (COM returns a native bool, NOT a
+        # tri-state -1 — so read it with bool(), not is_true's `== msoTrue`).
+        "muted": _safe(lambda: bool(com_shape.MediaFormat.Muted), None),
         "volume": _safe(lambda: round(float(com_shape.MediaFormat.Volume), 3), None),
         "autoplay": _safe(
             lambda: is_true(com_shape.AnimationSettings.PlaySettings.PlayOnEntry), None
         ),
     }
+
+
+def _check_trim(start_ms: float, end_ms: float, length_ms: float) -> None:
+    """A trim window must be `0 <= start < end <= length` (ValueError before any COM).
+
+    PowerPoint rejects an out-of-range `StartPoint`/`EndPoint` with an opaque
+    "Invalid request. Illegal value." — catch it in Python first with a clear message
+    (all values in seconds for the message; the args are milliseconds).
+    """
+    tol = 1.0  # 1 ms slack for float round-trips at the clip end
+    if start_ms < -tol:
+        raise ValueError(f"start must be >= 0, got {start_ms / 1000.0:g}s")
+    if end_ms <= start_ms:
+        raise ValueError(
+            f"end ({end_ms / 1000.0:g}s) must be greater than start ({start_ms / 1000.0:g}s)"
+        )
+    if end_ms > length_ms + tol:
+        raise ValueError(
+            f"end ({end_ms / 1000.0:g}s) exceeds the clip length ({length_ms / 1000.0:g}s)"
+        )
+
+
+def apply_media_playback(
+    com_shape: Any,
+    *,
+    muted: bool | None = None,
+    volume: float | None = None,
+    start: float | None = None,
+    end: float | None = None,
+) -> None:
+    """Write playback settings onto a media `Shape`'s `MediaFormat` — only the kwargs passed.
+
+    `muted` toggles `MediaFormat.Muted`; `volume` is a `0.0..1.0` fraction
+    (`MediaFormat.Volume`); `start`/`end` are the **trim** window in *seconds*
+    (converted to the COM `StartPoint`/`EndPoint`, which are milliseconds — never
+    surfaced raw). Values are validated up front against the clip length so a bad
+    request raises a clean `ValueError` before any COM mutation. Caller wraps this in
+    `translate_com_errors()` and gates on `is_media`.
+    """
+    if volume is not None:
+        if isinstance(volume, bool) or not isinstance(volume, (int, float)):
+            raise ValueError(f"volume must be a number in [0, 1], got {volume!r}")
+        if not 0.0 <= float(volume) <= 1.0:
+            raise ValueError(f"volume must be in [0, 1] (0 silent, 1 full), got {volume!r}")
+
+    mf = com_shape.MediaFormat
+    new_start_ms = new_end_ms = None
+    if start is not None or end is not None:
+        length_ms = float(mf.Length)
+        new_start_ms = float(mf.StartPoint) if start is None else float(start) * 1000.0
+        new_end_ms = float(mf.EndPoint) if end is None else float(end) * 1000.0
+        _check_trim(new_start_ms, new_end_ms, length_ms)
+
+    if muted is not None:
+        mf.Muted = int(MsoTriState.TRUE) if muted else int(MsoTriState.FALSE)
+    if volume is not None:
+        mf.Volume = float(volume)
+    if new_start_ms is not None and new_end_ms is not None:
+        # Widen to [0, new_end] before pulling StartPoint in, so the pair is never
+        # transiently invalid (COM rejects StartPoint > EndPoint at write time).
+        mf.StartPoint = 0.0
+        mf.EndPoint = new_end_ms
+        mf.StartPoint = new_start_ms
 
 
 def _alt_text_of(com_shape: Any) -> str:
@@ -1200,7 +1271,7 @@ class Shape(Anchor):
 
     @property
     def media(self) -> dict[str, Any]:
-        """The media clip's `{type, length_s, muted, volume, autoplay}` read.
+        """The media clip's `{type, length_s, start_s, end_s, muted, volume, autoplay}` read.
 
         Raises `AnchorNotFoundError` (kind `"media"`, exit 2) if the shape holds
         no media.
@@ -1209,6 +1280,36 @@ class Shape(Anchor):
             sh = self._com_shape()
             if not is_media(sh):
                 raise AnchorNotFoundError("media", self.anchor_id)
+            return _media_to_dict(sh)
+
+    def set_media_playback(
+        self,
+        *,
+        muted: bool | None = None,
+        volume: float | None = None,
+        start: float | None = None,
+        end: float | None = None,
+    ) -> dict[str, Any]:
+        """Set playback options on this audio/video clip: mute, volume, and trim.
+
+        `muted` silences the clip; `volume` is a `0.0..1.0` fraction; `start`/`end`
+        are the **trim** window in *seconds* (omit an edge to keep it — e.g.
+        `start=2` trims the lead-in but keeps the tail). At least one option must be
+        given. Applies to both audio and video.
+
+        Raises `AnchorNotFoundError` (kind `"media"`, exit 2) if the shape holds no
+        media, or `ValueError` (before any COM) for a volume outside `[0, 1]` or a
+        trim window that isn't `0 <= start < end <= length`. A mutation — wrap in
+        `deck.edit(...)` for view preservation + a one-Ctrl-Z fence. Returns the
+        refreshed media read.
+        """
+        if muted is None and volume is None and start is None and end is None:
+            raise ValueError("set_media_playback needs at least one of muted/volume/start/end")
+        with _com.translate_com_errors():
+            sh = self._com_shape()
+            if not is_media(sh):
+                raise AnchorNotFoundError("media", self.anchor_id)
+            apply_media_playback(sh, muted=muted, volume=volume, start=start, end=end)
             return _media_to_dict(sh)
 
     def _text_range(self) -> Any:

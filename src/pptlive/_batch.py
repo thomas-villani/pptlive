@@ -117,6 +117,7 @@ class EditOp(StrEnum):
     SET_LAYOUT = "set_layout"
     SHAPE_ADD = "shape_add"
     MEDIA_ADD = "media_add"
+    MEDIA_SET = "media_set"
     SHAPE_MOVE = "shape_move"
     SHAPE_RESIZE = "shape_resize"
     SHAPE_DELETE = "shape_delete"
@@ -663,6 +664,22 @@ def _edit_media_add(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
     else:  # video
         created = slide.add_video(p["path"], **common, **geom)
     return {"ok": True, **created.to_dict()}
+
+
+@edit_op(EditOp.MEDIA_SET)
+def _edit_media_set(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    sh = _resolve_shape(deck, p.get("anchor_id"))
+    _require(
+        any(p.get(k) is not None for k in ("muted", "volume", "trim_start", "trim_end")),
+        "edit op='media_set' requires at least one of `muted`/`volume`/`trim_start`/`trim_end`",
+    )
+    media = sh.set_media_playback(
+        muted=p.get("muted"),
+        volume=p.get("volume"),
+        start=p.get("trim_start"),
+        end=p.get("trim_end"),
+    )
+    return {"ok": True, "anchor_id": sh.anchor_id, "shapeid": sh.shapeid, "media": media}
 
 
 @edit_op(EditOp.SHAPE_MOVE)

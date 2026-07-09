@@ -737,6 +737,49 @@ def media_add(
     )
 
 
+@media.command(name="set")
+@click.option(
+    "--anchor-id",
+    "anchor_id",
+    required=True,
+    help="Media clip to adjust (shape:S:N / shapeid:S:ID / ph:S:KIND).",
+)
+@click.option(
+    "--muted/--no-muted",
+    "muted",
+    default=None,
+    help="Silence the clip (--no-muted un-mutes).",
+)
+@click.option("--volume", type=float, default=None, help="Playback volume, 0.0-1.0.")
+@click.option(
+    "--start", "trim_start", type=float, default=None, help="Trim: clip start, in seconds."
+)
+@click.option("--end", "trim_end", type=float, default=None, help="Trim: clip end, in seconds.")
+@_deck_command
+def media_set(
+    ctx: click.Context,
+    deck: Presentation,
+    anchor_id: str,
+    muted: bool | None,
+    volume: float | None,
+    trim_start: float | None,
+    trim_end: float | None,
+) -> None:
+    """Set playback options on a media clip: mute, volume, and the trim window.
+
+    `--start`/`--end` are the trim window in seconds (omit an edge to keep it).
+    At least one option is required; the shape must hold audio/video.
+    """
+    sh = _resolve_shape(deck, anchor_id)  # exit 2 if missing / not a shape
+    with deck.edit(f"CLI: set media playback on {anchor_id}"):
+        media = sh.set_media_playback(muted=muted, volume=volume, start=trim_start, end=trim_end)
+    emit(
+        {"ok": True, "anchor_id": sh.anchor_id, "shapeid": sh.shapeid, "media": media},
+        as_text=not ctx.obj["as_json"],
+        text=f"set media on {sh.anchor_id}",
+    )
+
+
 @click.command(name="export-video")
 @click.argument("path", type=click.Path(dir_okay=False, path_type=Path))
 @click.option(

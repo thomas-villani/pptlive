@@ -87,6 +87,84 @@ def test_media_property_on_non_media_shape_raises(deck: Any) -> None:
         _ = shape.media
 
 
+# -- library: playback long-tail (mute / volume / trim) ---------------------
+
+
+def test_media_read_includes_trim_window(deck: Any, tmp_path: Any) -> None:
+    with deck.edit("add audio"):
+        shape = deck.slides[1].add_audio(_audio(tmp_path))
+    media = shape.media
+    # Untrimmed: start 0 → end = clip length (1.2 s).
+    assert media["start_s"] == 0.0
+    assert media["end_s"] == 1.2
+
+
+def test_set_media_playback_mute_and_volume_round_trip(deck: Any, tmp_path: Any) -> None:
+    with deck.edit("add audio"):
+        shape = deck.slides[1].add_audio(_audio(tmp_path))
+    with deck.edit("set playback"):
+        out = shape.set_media_playback(muted=True, volume=0.25)
+    assert out["muted"] is True
+    assert out["volume"] == 0.25
+    # Re-read confirms it persisted.
+    assert shape.media["muted"] is True
+    assert shape.media["volume"] == 0.25
+    with deck.edit("unmute"):
+        shape.set_media_playback(muted=False)
+    assert shape.media["muted"] is False
+
+
+def test_set_media_playback_trim_seconds_round_trip(deck: Any, tmp_path: Any) -> None:
+    with deck.edit("add audio"):
+        shape = deck.slides[1].add_audio(_audio(tmp_path))
+    with deck.edit("trim"):
+        out = shape.set_media_playback(start=0.2, end=1.0)
+    assert out["start_s"] == 0.2
+    assert out["end_s"] == 1.0
+
+
+def test_set_media_playback_partial_trim_keeps_other_edge(deck: Any, tmp_path: Any) -> None:
+    with deck.edit("add audio"):
+        shape = deck.slides[1].add_audio(_audio(tmp_path))
+    with deck.edit("trim start only"):
+        out = shape.set_media_playback(start=0.3)
+    assert out["start_s"] == 0.3
+    assert out["end_s"] == 1.2  # unchanged (clip length)
+
+
+def test_set_media_playback_volume_out_of_range_raises(deck: Any, tmp_path: Any) -> None:
+    with deck.edit("add audio"):
+        shape = deck.slides[1].add_audio(_audio(tmp_path))
+    for bad in (-0.1, 1.5):
+        with pytest.raises(ValueError, match="volume"), deck.edit("bad volume"):
+            shape.set_media_playback(volume=bad)
+
+
+def test_set_media_playback_bad_trim_raises_before_com(deck: Any, tmp_path: Any) -> None:
+    with deck.edit("add audio"):
+        shape = deck.slides[1].add_audio(_audio(tmp_path))
+    # end <= start, end > length, start < 0 all rejected with a clean ValueError.
+    with pytest.raises(ValueError, match="greater than"), deck.edit("e"):
+        shape.set_media_playback(start=0.8, end=0.4)
+    with pytest.raises(ValueError, match="exceeds"), deck.edit("e"):
+        shape.set_media_playback(end=5.0)
+    with pytest.raises(ValueError, match="start"), deck.edit("e"):
+        shape.set_media_playback(start=-0.5, end=1.0)
+
+
+def test_set_media_playback_requires_an_option(deck: Any, tmp_path: Any) -> None:
+    with deck.edit("add audio"):
+        shape = deck.slides[1].add_audio(_audio(tmp_path))
+    with pytest.raises(ValueError, match="at least one"), deck.edit("noop"):
+        shape.set_media_playback()
+
+
+def test_set_media_playback_on_non_media_raises(deck: Any) -> None:
+    shape = deck.slides[1].shapes[1]  # a placeholder
+    with pytest.raises(AnchorNotFoundError), deck.edit("nope"):
+        shape.set_media_playback(muted=True)
+
+
 # -- library: video export --------------------------------------------------
 
 
@@ -148,6 +226,51 @@ def test_cli_media_add_video(fake_powerpoint: Any, tmp_path: Any) -> None:
     assert res.exit_code == 0
     payload = json.loads(res.output)
     assert payload["media"]["type"] == "movie"
+
+
+def test_cli_media_set(fake_powerpoint: Any, tmp_path: Any) -> None:
+    runner = CliRunner()
+    add = runner.invoke(
+        main,
+        ["--json", "media", "add", "--slide", "1", "--kind", "audio", "--path", _audio(tmp_path)],
+    )
+    assert add.exit_code == 0
+    anchor = json.loads(add.output)["anchor_id"]
+    res = runner.invoke(
+        main,
+        [
+            "--json",
+            "media",
+            "set",
+            "--anchor-id",
+            anchor,
+            "--muted",
+            "--volume",
+            "0.3",
+            "--start",
+            "0.2",
+            "--end",
+            "1.0",
+        ],
+    )
+    assert res.exit_code == 0
+    payload = json.loads(res.output)
+    assert payload["ok"] is True
+    assert payload["media"]["muted"] is True
+    assert payload["media"]["volume"] == 0.3
+    assert payload["media"]["start_s"] == 0.2
+    assert payload["media"]["end_s"] == 1.0
+
+
+def test_cli_media_set_bad_volume_exit_1(fake_powerpoint: Any, tmp_path: Any) -> None:
+    runner = CliRunner()
+    add = runner.invoke(
+        main,
+        ["--json", "media", "add", "--slide", "1", "--kind", "audio", "--path", _audio(tmp_path)],
+    )
+    anchor = json.loads(add.output)["anchor_id"]
+    res = runner.invoke(main, ["--json", "media", "set", "--anchor-id", anchor, "--volume", "9"])
+    assert res.exit_code == 1
 
 
 def test_cli_export_video(fake_powerpoint: Any, tmp_path: Any) -> None:
