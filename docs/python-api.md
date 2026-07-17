@@ -204,7 +204,9 @@ insert an audio/video clip (embedded by default; `link=True` keeps the file on d
 `autoplay` plays the clip on slide entry, `hide_icon` hides the audio icon while idle
 (audio only), and `pace_slide` auto-advances the slide to the clip's length — so an
 exported video paces itself to the narration. Each shape read carries a `media` dict
-(`{type, length_s, muted, volume, autoplay}`) and `has_media`.
+(`{type, length_s, start_s, end_s, muted, volume, autoplay}` — `start_s`/`end_s` are
+the trim window in seconds) and `has_media`. `Shape.set_media_playback(muted=,
+volume=, start=, end=)` sets those playback options on an existing clip.
 
 [`deck.export_video(path)`](#pptlive.Presentation) exports the deck to an MP4 via
 PowerPoint's async `CreateVideo`. Like `export_pdf` it is a **read** (no rebind, dirty

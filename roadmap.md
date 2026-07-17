@@ -30,7 +30,7 @@ record the finding, then harden library + CLI + MCP + tests together.
 | **Linter / regularizer** | Consistency audit + one-pass autofix (`deck.lint()`/`regularize()`) — the wordlive linter, re-applied | `[ ]` design ✅ · proofing spiked ✅ | **Highest-leverage next feature.** Pure composition over shipped verbs; new work is `format_info()` + the rule engine. Design in `spec-linter.md`. See its own section below. |
 | **v1.4-rest** | Navigation & structure: sections, headers/footers, run-level hyperlinks | `[x]` | Sections + headers/footers shipped (v0.6); **text-run-level hyperlinks shipped 2026-06-25** — tier complete. |
 | **v1.5-rest** | Animations | `[x]` main cut · `[ ]` long tail | Whole-shape entrance/exit shipped (v0.10); per-paragraph levels / motion paths / reordering remain. |
-| **v1.7** | Media + narrated-video export | `[x]` | SHIPPED 2026-06-25 — insert audio/video narration, self-time slides, export MP4 (async `CreateVideo`). Only the media long tail (trimming, bookmarks, recorded narration) remains. |
+| **v1.7** | Media + narrated-video export | `[x]` | SHIPPED 2026-06-25 — insert audio/video narration, self-time slides, export MP4 (async `CreateVideo`). Mute/volume/**trimming** shipped since; only poster frames, bookmarks, and recorded narration remain. |
 | **Opportunistic** | Tables/charts/SmartArt/arrangement/tags/metadata/OLE | mixed | **Arrangement (group/align/distribute/connectors) shipped 2026-06-25.** Pull the rest on demand. |
 | **Deferred** | Async/events, full layout authoring, deep theme/master follow-ups | `[ ]` | Real but lower leverage or larger architectural lift. |
 

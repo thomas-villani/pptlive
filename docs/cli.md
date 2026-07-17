@@ -441,8 +441,14 @@ The "build a deck, narrate it, export a video" path.
   `--pace-slide` auto-advances the slide to the clip's length so an exported video
   paces itself to the narration. Turn any off with `--no-autoplay` /
   `--no-hide-icon` / `--no-pace-slide`. Optional `--left/--top/--width/--height`
-  (points), `--alt-text`. Reads carry a `media` field (`{type, length_s, muted,
-  volume, autoplay}`); `type` is `sound`/`movie`.
+  (points), `--alt-text`. Reads carry a `media` field (`{type, length_s, start_s,
+  end_s, muted, volume, autoplay}`); `type` is `sound`/`movie`, and `start_s`/`end_s`
+  are the trim window in seconds.
+- **`media set --anchor-id ANCHOR [--muted/--no-muted] [--volume 0.0-1.0]
+  [--start S] [--end S]`** — set playback options on an existing clip. `--start` /
+  `--end` are the trim window in **seconds** (omit an edge to keep it); `--volume` is
+  `0.0`–`1.0`. Values are validated before any COM call, so a bad request is a clean
+  exit 1 rather than PowerPoint's opaque "Illegal value".
 - **`export-video PATH [--resolution 720] [--fps 30] [--quality 85]
   [--default-slide-duration 5] [--no-use-timings]`** — export the deck to an MP4. A
   **read** (no rebind). Wraps PowerPoint's async `CreateVideo`: **blocks until done
@@ -646,6 +652,108 @@ file when `--out` is omitted.
 ```bash
 pptlive shape export --anchor-id shape:4:3 --out logo.png
 ```
+
+### `shape group` / `shape ungroup`
+
+Combine shapes into one group shape, or free them again. `--anchors` is
+comma-separated and takes any shape form (`shape:S:N`, `shapeid:S:ID`, or a name);
+grouping needs at least two, all on the same slide.
+
+Members keep their **original ids** through both verbs, so a `shapeid:S:ID` handle
+taken before a group survives the ungroup — the group itself gets a new id.
+
+```bash
+pptlive shape group --anchors "shape:4:2,shape:4:3,shape:4:4"
+pptlive shape ungroup --anchor-id shapeid:4:57
+```
+
+### `shape align` / `shape distribute`
+
+Snap a set of shapes to a common edge, or space them evenly.
+
+`--how` is `left`/`center`/`right` (horizontal) or `top`/`middle`/`bottom` (vertical)
+for `align`, and `horizontal`/`vertical` for `distribute`. `--relative-to` is `slide`
+(the default) or `selection` — align to the slide's edges, or to the bounding box of
+the shapes themselves. `distribute` needs three or more shapes to have anything to
+space out.
+
+```bash
+# Flush a column of shapes to a common left edge, relative to each other
+pptlive shape align --anchors "shape:4:2,shape:4:3,shape:4:4" --how left --relative-to selection
+
+# Space them evenly down the slide
+pptlive shape distribute --anchors "shape:4:2,shape:4:3,shape:4:4" --how vertical
+```
+
+### `shape connect`
+
+Draw a connector, in one of two forms:
+
+- **Attached** — pass `--begin` / `--end` shape anchors and the line is *glued* to
+  them, so it follows when they move. `--begin-site` / `--end-site` (1-based) request
+  a connection point, but they're **advisory**: PowerPoint reroutes to the shortest
+  path and may re-pick.
+- **Geometry** — pass `--slide` plus `--left/--top/--width/--height` for a
+  free-floating line attached to nothing.
+
+`--type` is `straight` (default), `elbow`, or `curved`. Shape reads carry a
+`connector` field (`{type, begin_shape_id, end_shape_id}`).
+
+```bash
+pptlive shape connect --begin shape:4:2 --end shape:4:3 --type elbow
+pptlive shape connect --slide 4 --left 100 --top 200 --width 180 --height 0
+```
+
+---
+
+## Links — the `link` group
+
+Hyperlinks on a **span of text inside** an anchor — the run-level companion to the
+whole-shape `shape set-hyperlink`. Works on any text anchor: a shape, a `para:`, a
+table `cell:`, or `notes:`.
+
+Address the span either by literal substring (`--text`, the LLM-friendly form) or by
+explicit `--start` (0-based) + `--length`. An ambiguous `--text` match raises
+`AmbiguousMatchError` (exit 5) rather than silently linking the first hit.
+
+Target is exactly one of `--url` (external — URL, `mailto:`, or a file path) or
+`--slide` (an in-deck jump to a 1-based slide).
+
+### `link set`
+
+```bash
+# Link a substring to an external URL, with a hover tooltip
+pptlive link set --anchor-id para:4:2:1 --text "our pricing" \
+    --url "https://example.com/pricing" --screen-tip "Opens the pricing page"
+
+# Jump to another slide in the deck
+pptlive link set --anchor-id shape:4:2 --text "see the appendix" --slide 12
+
+# Explicit offset instead of a substring
+pptlive link set --anchor-id notes:4 --start 0 --length 5 --url "https://example.com"
+```
+
+### `link remove`
+
+Clears one span's link, or **all** links in the anchor when no span is given.
+
+```bash
+pptlive link remove --anchor-id para:4:2:1 --text "our pricing"
+pptlive link remove --anchor-id para:4:2:1          # every link in the paragraph
+```
+
+### `link list`
+
+```bash
+pptlive link list --anchor-id para:4:2:1
+```
+
+```json
+[{"text": "our pricing", "start": 12, "length": 11, "address": "https://example.com/pricing", "sub_address": ""}]
+```
+
+`start` is a 0-based character offset (the same form `link set --start` takes), and
+`sub_address` carries the in-deck target for a `--slide` jump.
 
 ---
 
