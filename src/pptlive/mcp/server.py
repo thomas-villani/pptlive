@@ -498,9 +498,11 @@ def ppt_edit(
       the narration). Optional `left`/`top`/`width`/`height`/`alt_text`. The "build
       a deck, narrate it, export a video" path pairs this with render "export_video".
     - "media_set": set playback options on an existing media clip at `anchor_id`
-      (audio or video) — any of `muted` (bool), `volume` (0.0-1.0), `start`/`end`
-      (the trim window, in **seconds**; omit an edge to keep it). At least one is
-      required. Errors if the shape holds no media, or a value is out of range.
+      (audio or video) — any of `muted` (bool), `volume` (0.0-1.0),
+      `trim_start`/`trim_end` (the trim window, in **seconds**; omit an edge to keep
+      it). At least one is required. Errors if the shape holds no media, or a value
+      is out of range. (Note `start`/`end` are *different* params on this tool — the
+      link-span offset and the connector's end shape — not the media trim window.)
     - "shape_move": move to absolute `left`/`top`. "shape_resize": set `width`/`height`.
     - "shape_order": restack by `order`="front"/"back"/"forward"/"backward" (e.g.
       send a new background panel to the back, behind existing content).
