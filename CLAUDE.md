@@ -50,9 +50,13 @@ src/pptlive/
                      (tests monkeypatch the getters)
   _app.py            PowerPoint handle + attach() / connect()
   _presentation.py   Presentation (the wordlive Document analog) + PresentationCollection
-  _slides.py         SlideCollection / Slide  (add [+placeholder geometry]/delete/duplicate/move_to/set_layout, notes, read(), geometry_report(), animations()/clear_animations())
-  _shapes.py         ShapeCollection / Shape / ShapeById  (a Shape IS an Anchor when it has a text frame; geometry + fill/line + z-order + animate() + set_picture() re-source verbs)
-  _anchors.py        Anchor base + Paragraph, Cell, Notes  (set_paragraphs / reset_format + line-spacing unit knobs [v1.6])
+                     (+ save/save_as/export_pdf; export_video()/video_status() — the
+                     first async COM op, over CreateVideo [v1.7])
+  _slides.py         SlideCollection / Slide  (add [+placeholder geometry]/delete/duplicate/move_to/set_layout, notes, read(), geometry_report(), animations()/clear_animations(), add_audio()/add_video() [v1.7])
+  _shapes.py         ShapeCollection / Shape / ShapeById  (a Shape IS an Anchor when it has a text frame; geometry + fill/line + z-order + animate() + set_picture() re-source verbs;
+                     group()/ungroup()/align()/distribute()/add_connector() arrangement;
+                     has_media/media + set_media_playback() [v1.7])
+  _anchors.py        Anchor base + Paragraph, Cell, Notes  (set_paragraphs / reset_format + line-spacing unit knobs [v1.6]; set_link()/remove_link()/links() text-run hyperlinks)
   _tables.py         Table / Cell  (a table is a shape; cell:S:N:R:C anchors; cell fill + borders, row/column-wise; add/delete row+column)  [v0.5/v-next]
   _charts.py         Chart       (a chart is a shape; data via embedded Excel)         [v0.7]
   _smartart.py       SmartArt    (a diagram is a shape; node tree read/set_nodes; recolor_text + per-node format_node)  [v0.8/v-next]
@@ -309,6 +313,60 @@ node with a 1-based `node_index` (its depth-first / `AllNodes` position) that
 `table_delete_column`/`smartart_format_node`) + both SKILL guides. Still open on the
 edit surface: shape-type swap, table cell merge, SmartArt node *fill* / structural
 node add-delete.
+
+**Media + narrated video (v1.7), arrangement, and run-level links — the v0.8.0
+round.** (1) **Media** — `Slide.add_audio(path, …)` / `add_video(…)` over
+`Shapes.AddMediaObject2` (embed by default; `autoplay` → `PlaySettings.PlayOnEntry`,
+`pace_slide` reads `MediaFormat.Length` and reuses `set_transition(advance_after=)` so
+an exported video paces itself to the narration). `Shape.set_media_playback(muted=,
+volume=, start=, end=)` sets mute / volume / the **trim** window (seconds), validated
+pre-COM. Shape reads carry `has_media` + a `media` dict `{type, length_s, start_s,
+end_s, muted, volume, autoplay}`. (2) **`deck.export_video(path, …)`** over
+`Presentation.CreateVideo` — pptlive's **first async COM op**: a *read* (no rebind,
+dirty flag kept, like `export_pdf`), blocking by default while polling
+`CreateVideoStatus`, or `wait=False` + `deck.video_status()`. Failure/timeout →
+`VideoExportError` (exit 1). *Poster frames don't marshal under the late-bound
+dispatch — the `ExportAsFixedFormat` problem again.* (3) **Arrangement** —
+`ShapeCollection.group()/ungroup()/align()/distribute()/add_connector()`; a connector
+either glues to two shapes (`BeginConnect`/`EndConnect` + `RerouteConnections`, so
+requested sites are advisory) or draws free-floating. Members keep their **original
+ids** across group/ungroup; the group gets a new one. (4) **Text-run hyperlinks** —
+`Anchor.set_link()/remove_link()/links()` on the `Anchor` base (so shape, `Paragraph`,
+`Cell`, and `Notes` all have them), addressing a span by substring (ambiguous →
+`AmbiguousMatchError`) or 0-based offset — distinct from the whole-shape
+`set_hyperlink`.
+
+## Constants are pinned to the typelib — don't hand-transcribe (learned the hard way)
+
+`tests/test_typelib_parity.py` checks every `constants.py` `IntEnum` against the live
+Office/PowerPoint/Excel **type libraries**. It exists because hand-transcribed values
+shipped **four real bugs** that nothing else could catch:
+
+- `MsoAlignCmd` was 1-based (it's **0-based**) — `align "left"` aligned *centers*,
+  `"bottom"` sent an out-of-range 6.
+- `MsoAnimEffect` — **7 of 10** curated effects wrong; `"zoom"` sent 31, which is
+  PowerPoint's `GrowAndTurn`.
+- `MsoAutoSize` — the two autofit modes **swapped**, so `text_frame_status` reported
+  the opposite mode.
+- `PpViewType.NOTES_PAGE` / `PpSlideLayout.TWO_COLUMN_TEXT` — latent, aimed at
+  `ppViewNotesMaster` / `ppLayoutTable`.
+
+**The lesson that matters: a round-trip spike cannot validate a constant.** Both the
+align and animation spikes "passed" by confirming our wrong value against itself — you
+send 31, read back 31, and call it `"zoom"`. The fake COM has the same blind spot, since
+it mirrors whatever the enum says. So when adding a constant: **read it off the typelib**
+(`gencache.EnsureModule` → `win32com.client.constants`) and add it to `EXPECTED` in the
+parity test. Two traps that already bit: `msoAnimEffect*` lives in the **PowerPoint**
+typelib despite the `mso` prefix (the Office one silently returns nothing), and the
+Office name is **not** derivable from ours (`MsoZOrderCmd.SEND_TO_BACK` is
+`msoSendToBack`, not `msoZOrderSendToBack`). Design a live probe so a *wrong* value
+produces a *different* observable result — the align spike used three equal-width rects,
+where align-lefts and align-centers are indistinguishable.
+
+Likewise `tests/test_docs_parity.py` fails if any `_batch.py` op is missing from
+`README.md` / `docs/mcp.md` — the op tables silently drifted for two releases. When you
+add an op, the definition of done is **library + CLI + MCP + docs/ + both SKILL guides
++ tests** (`docs/` is the one that kept getting skipped).
 
 Agent skills shipped as **two** guides (`pptlive-cli` + `pptlive-python`), not
 wordlive's single one — `llm-help [--python]` dumps one, `install-skill` writes
