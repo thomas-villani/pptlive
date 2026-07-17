@@ -20,3 +20,4 @@ scripts/.undo_test_state.json
 
 # Personal scratch notes (local only)
 notes.md
+RELEASE-*.md
