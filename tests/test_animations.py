@@ -31,7 +31,7 @@ def test_anim_effect_for_friendly_and_aliases() -> None:
     assert anim_effect_for("fly_in") == 2
     # case / separator insensitive
     assert anim_effect_for("Fly In") == 2
-    assert anim_effect_for("float-in") == 21
+    assert anim_effect_for("float-in") == 30  # msoAnimEffectFloat
     # raw int passes through (the escape hatch for exotic effects)
     assert anim_effect_for(99) == 99
 

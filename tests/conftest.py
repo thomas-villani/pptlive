@@ -806,10 +806,12 @@ class _FakeShape:
         )
         self._text_frame = _FakeTextFrame(text) if text is not None else None
         # Modern TextFrame2 — the wrapper reads AutoSize off this (the classic
-        # TextFrame.AutoSize is the mixed sentinel on real builds). 1 =
+        # TextFrame.AutoSize is the mixed sentinel on real builds). 2 =
         # msoAutoSizeTextToFitShape, a content placeholder's "shrink on overflow".
+        # (Was 1 here, which is actually msoAutoSizeShapeToFitText — the enum was
+        # swapped, so the fake's value and its own comment disagreed.)
         self._text_frame2 = (
-            SimpleNamespace(AutoSize=1, WordWrap=_MSO_TRUE, HasText=_MSO_TRUE)
+            SimpleNamespace(AutoSize=2, WordWrap=_MSO_TRUE, HasText=_MSO_TRUE)
             if text is not None
             else None
         )
@@ -1573,8 +1575,8 @@ class _FakeShapeRange:
         if not self._shapes:
             return
         # A simple, assertable mutation: snap all shapes' edge to the first shape's
-        # (horizontal cmds 1/2/3 -> Left; vertical 4/5/6 -> Top).
-        if int(cmd) in (1, 2, 3):
+        # (horizontal cmds 0/1/2 -> Left; vertical 3/4/5 -> Top).
+        if int(cmd) in (0, 1, 2):
             target = self._shapes[0].Left
             for s in self._shapes:
                 s.Left = target

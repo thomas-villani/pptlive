@@ -41,7 +41,7 @@ from pptlive import _selection
 _MSO_TRUE = -1
 _MSO_FALSE = 0
 _MSO_GROUP = 6  # msoGroup
-_MSO_ALIGN_LEFTS = 1
+_MSO_ALIGN_LEFTS = 0  # msoAlignLefts — the Align enum is 0-based (verified vs the typelib)
 _MSO_DISTRIBUTE_HORIZONTALLY = 0
 _MSO_CONNECTOR_ELBOW = 2
 
@@ -50,9 +50,15 @@ def _err(exc: Exception) -> str:
     return f"{type(exc).__name__}: {exc}"[:300]
 
 
-def _add_rect(shapes: Any, left: float, top: float) -> Any:
-    """Add a named rectangle and return the raw COM shape."""
-    sh = shapes.add_shape("rectangle", left=left, top=top, width=120.0, height=60.0)
+def _add_rect(shapes: Any, left: float, top: float, width: float = 120.0) -> Any:
+    """Add a named rectangle and return the raw COM shape.
+
+    `width` varies on purpose in the align probe: on equal-width shapes an
+    align-lefts and an align-centers produce identical `Left` values, so a probe
+    built from uniform rects cannot tell the two apart (and would pass against the
+    wrong Align constant).
+    """
+    sh = shapes.add_shape("rectangle", left=left, top=top, width=width, height=60.0)
     return sh.com
 
 
@@ -99,9 +105,10 @@ def probe_align_distribute(slide_com: Any, shapes: Any) -> dict[str, Any]:
     """Align lefts (relative to slide) and distribute horizontally (relative to selection)."""
     out: dict[str, Any] = {}
     try:
-        a = _add_rect(shapes, 80.0, 240.0)
-        b = _add_rect(shapes, 300.0, 300.0)
-        c = _add_rect(shapes, 500.0, 360.0)
+        # Distinct widths so "all Lefts equal" can only mean align-lefts.
+        a = _add_rect(shapes, 80.0, 240.0, width=120.0)
+        b = _add_rect(shapes, 300.0, 300.0, width=180.0)
+        c = _add_rect(shapes, 500.0, 360.0, width=240.0)
         names = [str(a.Name), str(b.Name), str(c.Name)]
 
         rng = slide_com.Shapes.Range(names)
