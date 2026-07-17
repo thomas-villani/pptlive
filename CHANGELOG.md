@@ -23,8 +23,8 @@ run-link set/read/remove on a temp slide). Library + CLI + MCP + both SKILL guid
   `ShapeCollection.align(shapes, how, *, relative_to="slide")` and
   `distribute(shapes, how, *, relative_to=)` over `ShapeRange.Align`/`.Distribute`
   (`how` = left/center/right/top/middle/bottom · horizontal/vertical).
-- **Connectors.** `ShapeCollection.add_connector(type="straight", *, begin=, end=,
-  begin_site=1, end_site=1, left/top/width/height)` — the **attached** form glues
+- **Connectors.** `ShapeCollection.add_connector(connector_type="straight", *, begin=,
+  end=, begin_site=1, end_site=1, left/top/width/height)` — the **attached** form glues
   both ends to shapes via `ConnectorFormat.BeginConnect`/`EndConnect` +
   `RerouteConnections` so the line follows them (requested sites are advisory —
   reroute re-picks the shortest); a **geometry** form draws a free-floating line.
@@ -100,6 +100,38 @@ CLI + MCP + both SKILL guides, and the shipped wrappers were re-verified live
 
 ### Fixed
 
+**Four wrong COM constants, found by a new typelib-parity test.** `constants.py` is
+hand-transcribed, and neither the unit suite (the fake COM mirrors whatever the enum
+says) nor a round-trip spike (the wrong id round-trips *perfectly*) can catch a wrong
+value. `tests/test_typelib_parity.py` now pins every enum against the live
+Office/PowerPoint/Excel **type libraries**, and found these on its first run:
+
+- **`shape align` aligned the wrong edge — every `how` was off by one.**
+  `MsoAlignCmd` shipped 1-based; the Office enum is **0-based**. So `left` aligned
+  *centers*, `center` aligned *rights*, `right` aligned **tops** (a horizontal request
+  moving shapes vertically), and `bottom` sent an out-of-range `6` that failed
+  outright. Verified live, with a negative control: under the old enum, aligning three
+  different-width shapes `left` leaves three *different* left edges. Now covered by a
+  live smoke test (`test_align_uses_the_real_office_enum`). `MsoDistributeCmd` and
+  `MsoConnectorType` were correct and are unchanged.
+- **`shape animate` played the wrong animation — 7 of the 10 curated effects.**
+  `"zoom"` sent `31`, which is PowerPoint's `GrowAndTurn`; `"wipe"` sent `EaseIn`;
+  `"grow_turn"` sent `RandomBars`; and `float_in` / `split` / `swivel` / `wheel` were
+  likewise shifted. (`appear` / `fly_in` / `fade` were correct.) Corrected against the
+  **PowerPoint** typelib — `msoAnimEffect*` lives there, not in the Office one,
+  despite the `mso` prefix. `float_in` now maps to `msoAnimEffectFloat` (30).
+  *Behavior change:* a deck built with the old (wrong) effect names will animate
+  differently — correctly — after upgrading. Shipped in v0.10; not a 0.7.0 regression.
+- **`text_frame_status` reported the opposite autofit mode.** `MsoAutoSize`'s
+  `SHAPE_TO_FIT_TEXT` / `TEXT_TO_FIT_SHAPE` were swapped (the typelib has
+  `msoAutoSizeShapeToFitText=1`), and `MIXED` was `-1` rather than the real `-2`, so a
+  genuinely mixed frame read back as `"autosize:-2"` instead of `"mixed"`. Read-only:
+  nothing *sets* AutoSize, and `overflow_risk` treats both modes alike, so only the
+  reported name was wrong.
+- **Two latent constants corrected.** `PpViewType.NOTES_PAGE` was `5`
+  (`ppViewNotesMaster`) and `PpSlideLayout.TWO_COLUMN_TEXT` was `4` (`ppLayoutTable`).
+  Neither is reachable from the current API — fixed before they could be wired up.
+
 - **`add_audio` / `add_video` no longer silently drop `autoplay` / `hide_icon`.**
   The `PlaySettings` write was wrapped in a bare `except: pass`, so if it failed the
   clip was inserted but the requested auto-play was silently dropped — which would
@@ -119,6 +151,30 @@ CLI + MCP + both SKILL guides, and the shipped wrappers were re-verified live
   now rejects a non-positive `resolution`/`fps` or an out-of-range `quality` (0–100),
   and `set_transition` rejects a negative `duration`/`advance_after` (0 stays valid),
   with a clean `ValueError` before any COM call instead of a confusing raw COM error.
+- **The MCP `media_set` docstring named parameters that don't exist.** It documented
+  the trim window as `start` / `end`, but the tool's params are `trim_start` /
+  `trim_end` — and `start` / `end` *do* exist on `ppt_edit` as unrelated things (the
+  link-span offset and a connector's end shape), so a model following the docstring
+  got a type error or `invalid_args` naming params it was never told about. The CLI
+  was unaffected.
+- **Docs: the MCP op tables are complete again.** `README.md` was missing **28** of
+  the 103 dispatchable ops and `docs/mcp.md` **15** — drift that had accumulated over
+  two releases (v0.7.0's `table_set_fill` / `shape_set_picture` /
+  `smartart_format_node` / … were never documented either). `docs/cli.md` gained the
+  `shape group`/`ungroup`/`align`/`distribute`/`connect` subsections, a `link`
+  section, and `media set`; the `media` field list in `cli.md` / `cookbook.md` /
+  `python-api.md` now includes `start_s` / `end_s`.
+
+### Internal
+
+- **Two parity tests that make this class of drift impossible to ship again.**
+  `tests/test_typelib_parity.py` pins every `constants.py` enum to the live Office
+  type libraries (19 mapped; the other 17 are listed with a reason, and a companion
+  test fails if a new enum is neither mapped nor excused — so "unchecked" can't look
+  like "passing"). `tests/test_docs_parity.py` fails if any `_batch.py` op is absent
+  from `README.md` / `docs/mcp.md`, matching on the backticked form so prose words
+  like "write" or "format" don't count as documentation. Both need no PowerPoint
+  window; the typelib check reads the type library, not a running app (~0.5s).
 
 ## [0.7.0] — 2026-06-23
 
