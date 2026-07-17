@@ -16,6 +16,30 @@ from click.testing import CliRunner
 
 from pptlive._batch import BatchOpError, EditOp, _edit_core
 from pptlive.cli.main import main
+from pptlive.constants import MsoAlignCmd, MsoDistributeCmd
+
+# -- constants: pinned against the live Office typelib ----------------------
+
+
+def test_align_cmd_matches_the_office_typelib() -> None:
+    """`MsoAlignCmd` is 0-based — the one Mso* enum here that doesn't start at 1.
+
+    Shipped 1-based in v0.7.0-dev, which silently shifted every align by one slot
+    (`left` aligned centers; `bottom` sent an out-of-range 6). The fake COM can't
+    catch this — it mirrors whatever the enum says — so these values are pinned
+    against the real Office typelib
+    (`gencache.EnsureModule('{2DF8D04C-5BFA-101B-BDE5-00AA0044DE52}', 0, 2, 8)`):
+
+        msoAlignLefts 0  msoAlignCenters 1  msoAlignRights  2
+        msoAlignTops  3  msoAlignMiddles 4  msoAlignBottoms 5
+
+    Distribute is pinned alongside it because the two adjacent enums disagreeing
+    (Distribute 0-based, Align 1-based) was the tell that went unnoticed.
+    """
+    assert (MsoAlignCmd.LEFTS, MsoAlignCmd.CENTERS, MsoAlignCmd.RIGHTS) == (0, 1, 2)
+    assert (MsoAlignCmd.TOPS, MsoAlignCmd.MIDDLES, MsoAlignCmd.BOTTOMS) == (3, 4, 5)
+    assert (MsoDistributeCmd.HORIZONTALLY, MsoDistributeCmd.VERTICALLY) == (0, 1)
+
 
 # -- library: group / ungroup -----------------------------------------------
 
@@ -64,14 +88,14 @@ def test_align_snaps_lefts_and_records_cmd(deck) -> None:  # type: ignore[no-unt
         s2.shapes.align(members, "left")
     lefts = {round(m.geometry()["left"], 3) for m in members}
     assert len(lefts) == 1  # all aligned to one left edge
-    assert s2.com.Shapes._align_calls[-1] == (1, -1)  # msoAlignLefts, relative-to-slide
+    assert s2.com.Shapes._align_calls[-1] == (0, -1)  # msoAlignLefts, relative-to-slide
 
 
 def test_align_middle_uses_vertical_cmd(deck) -> None:  # type: ignore[no-untyped-def]
     s2 = deck.slides[2]
     with deck.edit("t"):
         s2.shapes.align([s2.shapes[1], s2.shapes[2]], "middle", relative_to="selection")
-    assert s2.com.Shapes._align_calls[-1] == (5, 0)  # msoAlignMiddles, relative-to-selection
+    assert s2.com.Shapes._align_calls[-1] == (4, 0)  # msoAlignMiddles, relative-to-selection
 
 
 def test_align_selection_needs_two(deck) -> None:  # type: ignore[no-untyped-def]

@@ -136,10 +136,10 @@ class MsoAutoSize(IntEnum):
     mixed sentinel on current builds — see `scripts/text_model_spike.py`).
     """
 
-    MIXED = -1
+    MIXED = -2
     NONE = 0  # neither resizes; text can overflow the frame
-    TEXT_TO_FIT_SHAPE = 1  # shrink the text to fit the shape ("shrink text on overflow")
-    SHAPE_TO_FIT_TEXT = 2  # grow the shape to fit the text
+    SHAPE_TO_FIT_TEXT = 1  # grow the shape to fit the text
+    TEXT_TO_FIT_SHAPE = 2  # shrink the text to fit the shape ("shrink text on overflow")
 
 
 _AUTOSIZE_NAMES: dict[int, str] = {
@@ -276,7 +276,7 @@ class PpViewType(IntEnum):
     NORMAL = 9
     SLIDE = 1
     OUTLINE = 6
-    NOTES_PAGE = 5
+    NOTES_PAGE = 3  # 5 is ppViewNotesMaster, not the notes page
     SLIDE_SORTER = 7
 
 
@@ -291,7 +291,7 @@ class PpSlideLayout(IntEnum):
 
     TITLE = 1
     TEXT = 2
-    TWO_COLUMN_TEXT = 4
+    TWO_COLUMN_TEXT = 3  # 4 is ppLayoutTable, not two-column text
     TITLE_ONLY = 11
     BLANK = 12
     OBJECT = 16
@@ -527,14 +527,19 @@ def zorder_cmd_for(name: str | int) -> int:
 
 
 class MsoAlignCmd(IntEnum):
-    """`ShapeRange.Align(cmd, RelativeTo)` — how to align a set of shapes."""
+    """`ShapeRange.Align(cmd, RelativeTo)` — how to align a set of shapes.
 
-    LEFTS = 1
-    CENTERS = 2
-    RIGHTS = 3
-    TOPS = 4
-    MIDDLES = 5
-    BOTTOMS = 6
+    0-based, unlike most Mso* enums — verified against the Office typelib
+    (`msoAlignLefts` is 0, not 1). The horizontal cmds are 0-2 and the vertical
+    3-5; anything that branches on the axis must split there.
+    """
+
+    LEFTS = 0
+    CENTERS = 1
+    RIGHTS = 2
+    TOPS = 3
+    MIDDLES = 4
+    BOTTOMS = 5
 
 
 _ALIGN_NAMES: dict[str, MsoAlignCmd] = {
@@ -2177,18 +2182,25 @@ class MsoAnimEffect(IntEnum):
     A small, well-documented subset of the large `MsoAnimEffect` enum; pass a raw
     int to reach any effect pptlive hasn't named. An effect animates a shape *in*
     by default and *out* when applied as an exit effect (`Effect.Exit`).
+
+    Values are pinned against the **PowerPoint** typelib
+    (`{91493440-5A91-11CF-8700-00AA0060263B}`), not the Office one — `msoAnimEffect*`
+    lives there despite the `mso` prefix. Seven of these shipped wrong in v0.10 (e.g.
+    `ZOOM` sent 31, which is PowerPoint's `GrowAndTurn`); a round-trip check cannot
+    catch that, since the wrong id round-trips perfectly. See
+    `test_anim_effect_matches_the_office_typelib`.
     """
 
     APPEAR = 1
     FLY_IN = 2
     FADE = 10
-    GROW_TURN = 14
-    FLOAT_IN = 21  # the classic msoAnimEffectRiseUp ("float in" in modern UI)
-    SPLIT = 23
-    SWIVEL = 26
-    WHEEL = 28
-    WIPE = 29
-    ZOOM = 31
+    SPLIT = 16
+    SWIVEL = 19
+    WHEEL = 21
+    WIPE = 22
+    ZOOM = 23
+    FLOAT_IN = 30  # msoAnimEffectFloat; the adjacent msoAnimEffectRiseUp is 34
+    GROW_TURN = 31
 
 
 # Friendly token -> MsoAnimEffect int.

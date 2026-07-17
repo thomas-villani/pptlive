@@ -106,6 +106,41 @@ def test_table_round_trips(fresh_deck: pl.Presentation) -> None:
     assert grid[1] == ["Eng", "24"]
 
 
+def test_align_uses_the_real_office_enum(fresh_deck: pl.Presentation) -> None:
+    """`shapes.align` maps each `how` to the right live `ShapeRange.Align` cmd.
+
+    Regression for the 0-vs-1-based `MsoAlignCmd` bug: the enum shipped 1-based, so
+    `left` aligned *centers*, `right` aligned *tops*, and `bottom` sent an
+    out-of-range 6 that errored outright. The unit suite cannot catch this class of
+    bug — the fake COM mirrors whatever the enum says — so it has to be pinned live.
+
+    The three rectangles have **distinct widths** on purpose: on equal-width shapes
+    an align-lefts and an align-centers produce identical `Left` values, so uniform
+    shapes cannot tell the two apart (exactly why the original spike passed against
+    the wrong constant).
+    """
+    with fresh_deck.edit("smoke: align"):
+        slide = fresh_deck.slides.add("blank")
+        a = slide.shapes.add_shape("rectangle", left=80.0, top=240.0, width=120.0, height=60.0)
+        b = slide.shapes.add_shape("rectangle", left=300.0, top=300.0, width=180.0, height=60.0)
+        c = slide.shapes.add_shape("rectangle", left=500.0, top=360.0, width=240.0, height=90.0)
+        members = [a, b, c]
+        slide.shapes.align(members, "left", relative_to="selection")
+
+    lefts = [round(m.geometry()["left"], 1) for m in members]
+    assert len(set(lefts)) == 1, f"align 'left' did not align left edges: {lefts}"
+    # Centers must now *differ* — if they matched, we aligned centers, not lefts.
+    centers = [round(m.geometry()["left"] + m.geometry()["width"] / 2, 1) for m in members]
+    assert len(set(centers)) == 3, f"align 'left' aligned centers instead: {centers}"
+
+    # `bottom` is the case that errored outright under the 1-based enum (cmd 6).
+    with fresh_deck.edit("smoke: align bottom"):
+        slide.shapes.align(members, "bottom", relative_to="selection")
+
+    bottoms = [round(m.geometry()["top"] + m.geometry()["height"], 1) for m in members]
+    assert len(set(bottoms)) == 1, f"align 'bottom' did not align bottom edges: {bottoms}"
+
+
 @pytest.fixture
 def fixture_deck(real_powerpoint: pl.PowerPoint) -> Iterator[pl.Presentation]:
     """Open the checked-in smoke fixture read-only; close it on teardown.
