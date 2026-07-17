@@ -26,9 +26,13 @@ Two things worth knowing before editing the map below:
    despite the `mso` prefix; looking it up in the Office one silently finds nothing.
    All three are loaded and merged here, mirroring how `constants` resolves.
 
-A member with no Office counterpart (a curated or synthetic value) opts out by
-omission. `EXPECT_ABSENT` documents the ones that are deliberately unmapped, so
-"missing" never silently means "unchecked".
+All 36 enums are mapped (a 2026-07-17 audit promoted the last 17 "curated subset"
+enums into `EXPECTED` after confirming every member — mapping a partial enum
+asserts only that the members we transcribed are right, not that we have all of
+them). `EXPECT_ABSENT` is the escape hatch for a future genuinely-unmappable enum
+(a synthetic or derived value) and is empty for now; a member with no Office
+counterpart opts out by omission, and the companion test makes sure "unmapped and
+unexcused" can never silently read as "checked".
 """
 
 from __future__ import annotations
@@ -164,29 +168,202 @@ EXPECTED: dict[str, dict[str, str]] = {
         "TEXT": "ppSelectionText",
     },
     "XlAxisType": {"CATEGORY": "xlCategory", "VALUE": "xlValue"},
+    # --- the "curated subset" enums, promoted from EXPECT_ABSENT after a full
+    #     audit (2026-07-17). Every one was correct — but mapping a curated subset
+    #     asserts only that the members we *did* transcribe are right, not that we
+    #     have all of them, so a partial enum is still fully checked here. Names
+    #     were machine-generated off the typelib and pasted, not hand-typed.
+    "MsoAutoShapeType": {
+        "RECTANGLE": "msoShapeRectangle",
+        "PARALLELOGRAM": "msoShapeParallelogram",
+        "TRAPEZOID": "msoShapeTrapezoid",
+        "DIAMOND": "msoShapeDiamond",
+        "ROUNDED_RECTANGLE": "msoShapeRoundedRectangle",
+        "OCTAGON": "msoShapeOctagon",
+        "ISOSCELES_TRIANGLE": "msoShapeIsoscelesTriangle",
+        "RIGHT_TRIANGLE": "msoShapeRightTriangle",
+        "OVAL": "msoShapeOval",
+        "HEXAGON": "msoShapeHexagon",
+        "CROSS": "msoShapeCross",
+        "REGULAR_PENTAGON": "msoShapeRegularPentagon",
+        "HEART": "msoShapeHeart",
+        "RIGHT_ARROW": "msoShapeRightArrow",
+        "LEFT_ARROW": "msoShapeLeftArrow",
+        "UP_ARROW": "msoShapeUpArrow",
+        "DOWN_ARROW": "msoShapeDownArrow",
+        "FIVE_POINT_STAR": "msoShape5pointStar",
+    },
+    "MsoGradientStyle": {
+        "MIXED": "msoGradientMixed",
+        "HORIZONTAL": "msoGradientHorizontal",
+        "VERTICAL": "msoGradientVertical",
+        "DIAGONAL_UP": "msoGradientDiagonalUp",
+        "DIAGONAL_DOWN": "msoGradientDiagonalDown",
+        "FROM_CORNER": "msoGradientFromCorner",
+        "FROM_TITLE": "msoGradientFromTitle",
+        "FROM_CENTER": "msoGradientFromCenter",
+    },
+    "MsoShadowStyle": {
+        "MIXED": "msoShadowStyleMixed",
+        "INNER": "msoShadowStyleInnerShadow",
+        "OUTER": "msoShadowStyleOuterShadow",
+    },
+    "MsoShapeType": {
+        "AUTO_SHAPE": "msoAutoShape",
+        "CALLOUT": "msoCallout",
+        "CHART": "msoChart",
+        "COMMENT": "msoComment",
+        "FREEFORM": "msoFreeform",
+        "GROUP": "msoGroup",
+        "EMBEDDED_OLE_OBJECT": "msoEmbeddedOLEObject",
+        "FORM_CONTROL": "msoFormControl",
+        "LINE": "msoLine",
+        "LINKED_OLE_OBJECT": "msoLinkedOLEObject",
+        "LINKED_PICTURE": "msoLinkedPicture",
+        "OLE_CONTROL_OBJECT": "msoOLEControlObject",
+        "PICTURE": "msoPicture",
+        "PLACEHOLDER": "msoPlaceholder",
+        "TEXT_EFFECT": "msoTextEffect",
+        "MEDIA": "msoMedia",
+        "TEXT_BOX": "msoTextBox",
+        "SCRIPT_ANCHOR": "msoScriptAnchor",
+        "TABLE": "msoTable",
+        "CANVAS": "msoCanvas",
+        "DIAGRAM": "msoDiagram",
+        "INK": "msoInk",
+        "INK_COMMENT": "msoInkComment",
+        "SMART_ART": "msoSmartArt",
+    },
+    "MsoThemeColorSchemeIndex": {
+        "DARK1": "msoThemeDark1",
+        "LIGHT1": "msoThemeLight1",
+        "DARK2": "msoThemeDark2",
+        "LIGHT2": "msoThemeLight2",
+        "ACCENT1": "msoThemeAccent1",
+        "ACCENT2": "msoThemeAccent2",
+        "ACCENT3": "msoThemeAccent3",
+        "ACCENT4": "msoThemeAccent4",
+        "ACCENT5": "msoThemeAccent5",
+        "ACCENT6": "msoThemeAccent6",
+        "HYPERLINK": "msoThemeHyperlink",
+        "FOLLOWED_HYPERLINK": "msoThemeFollowedHyperlink",
+    },
+    "PpActionType": {
+        "NONE": "ppActionNone",
+        "HYPERLINK": "ppActionHyperlink",
+    },
+    "PpBulletType": {
+        "NONE": "ppBulletNone",
+        "UNNUMBERED": "ppBulletUnnumbered",
+        "NUMBERED": "ppBulletNumbered",
+        "MIXED": "ppBulletMixed",
+    },
+    "PpEntryEffect": {
+        "NONE": "ppEffectNone",
+        "CUT": "ppEffectCut",
+        "CUT_THROUGH_BLACK": "ppEffectCutThroughBlack",
+        "RANDOM": "ppEffectRandom",
+        "BLINDS_HORIZONTAL": "ppEffectBlindsHorizontal",
+        "BLINDS_VERTICAL": "ppEffectBlindsVertical",
+        "CHECKERBOARD_ACROSS": "ppEffectCheckerboardAcross",
+        "CHECKERBOARD_DOWN": "ppEffectCheckerboardDown",
+        "COVER_LEFT": "ppEffectCoverLeft",
+        "COVER_UP": "ppEffectCoverUp",
+        "COVER_RIGHT": "ppEffectCoverRight",
+        "COVER_DOWN": "ppEffectCoverDown",
+        "DISSOLVE": "ppEffectDissolve",
+        "FADE": "ppEffectFade",
+        "UNCOVER_LEFT": "ppEffectUncoverLeft",
+        "UNCOVER_UP": "ppEffectUncoverUp",
+        "UNCOVER_RIGHT": "ppEffectUncoverRight",
+        "UNCOVER_DOWN": "ppEffectUncoverDown",
+    },
+    "PpParagraphAlignment": {
+        "LEFT": "ppAlignLeft",
+        "CENTER": "ppAlignCenter",
+        "RIGHT": "ppAlignRight",
+        "JUSTIFY": "ppAlignJustify",
+        "DISTRIBUTE": "ppAlignDistribute",
+        "THAI_DISTRIBUTE": "ppAlignThaiDistribute",
+        "JUSTIFY_LOW": "ppAlignJustifyLow",
+    },
+    "PpPlaceholderType": {
+        "TITLE": "ppPlaceholderTitle",
+        "BODY": "ppPlaceholderBody",
+        "CENTER_TITLE": "ppPlaceholderCenterTitle",
+        "SUBTITLE": "ppPlaceholderSubtitle",
+        "VERTICAL_TITLE": "ppPlaceholderVerticalTitle",
+        "VERTICAL_BODY": "ppPlaceholderVerticalBody",
+        "OBJECT": "ppPlaceholderObject",
+        "CHART": "ppPlaceholderChart",
+        "BITMAP": "ppPlaceholderBitmap",
+        "MEDIA_CLIP": "ppPlaceholderMediaClip",
+        "ORG_CHART": "ppPlaceholderOrgChart",
+        "TABLE": "ppPlaceholderTable",
+        "SLIDE_NUMBER": "ppPlaceholderSlideNumber",
+        "HEADER": "ppPlaceholderHeader",
+        "FOOTER": "ppPlaceholderFooter",
+        "DATE": "ppPlaceholderDate",
+        "VERTICAL_OBJECT": "ppPlaceholderVerticalObject",
+        "PICTURE": "ppPlaceholderPicture",
+    },
+    "PpShapeFormat": {
+        "GIF": "ppShapeFormatGIF",
+        "JPG": "ppShapeFormatJPG",
+        "PNG": "ppShapeFormatPNG",
+        "BMP": "ppShapeFormatBMP",
+    },
+    "PpSlideShowState": {
+        "RUNNING": "ppSlideShowRunning",
+        "PAUSED": "ppSlideShowPaused",
+        "BLACK_SCREEN": "ppSlideShowBlackScreen",
+        "WHITE_SCREEN": "ppSlideShowWhiteScreen",
+        "DONE": "ppSlideShowDone",
+    },
+    "PpSlideShowRangeType": {
+        "ALL": "ppShowAll",
+        "SLIDE_RANGE": "ppShowSlideRange",
+        "NAMED_SLIDE_SHOW": "ppShowNamedSlideShow",
+    },
+    "PpMouseActivation": {
+        "MOUSE_CLICK": "ppMouseClick",
+        "MOUSE_OVER": "ppMouseOver",
+    },
+    "PpMediaTaskStatus": {
+        "NONE": "ppMediaTaskStatusNone",
+        "IN_PROGRESS": "ppMediaTaskStatusInProgress",
+        "QUEUED": "ppMediaTaskStatusQueued",
+        "DONE": "ppMediaTaskStatusDone",
+        "FAILED": "ppMediaTaskStatusFailed",
+    },
+    "MsoSmartArtNodePosition": {
+        "DEFAULT": "msoSmartArtNodeDefault",
+        "AFTER": "msoSmartArtNodeAfter",
+        "BEFORE": "msoSmartArtNodeBefore",
+        "ABOVE": "msoSmartArtNodeAbove",
+        "BELOW": "msoSmartArtNodeBelow",
+    },
+    "XlChartType": {
+        "COLUMN_CLUSTERED": "xlColumnClustered",
+        "COLUMN_STACKED": "xlColumnStacked",
+        "BAR_CLUSTERED": "xlBarClustered",
+        "BAR_STACKED": "xlBarStacked",
+        "LINE": "xlLine",
+        "LINE_MARKERS": "xlLineMarkers",
+        "PIE": "xlPie",
+        "DOUGHNUT": "xlDoughnut",
+        "AREA": "xlArea",
+        "AREA_STACKED": "xlAreaStacked",
+        "XY_SCATTER": "xlXYScatter",
+        "RADAR": "xlRadar",
+    },
 }
 
 #: Enums deliberately NOT mapped, with the reason — so an unmapped enum is a
-#: recorded decision rather than an oversight.
-EXPECT_ABSENT: dict[str, str] = {
-    "MsoAutoShapeType": "large curated subset; spot-checked via MsoAutoShapeType tests",
-    "MsoShapeType": "large; only the handful we gate on matter",
-    "PpPlaceholderType": "large curated subset",
-    "PpEntryEffect": "large curated subset of transition effects",
-    "XlChartType": "large curated subset",
-    "MsoGradientStyle": "curated",
-    "MsoShadowStyle": "curated",
-    "MsoSmartArtNodePosition": "curated",
-    "MsoThemeColorSchemeIndex": "scheme-index enum, not a typelib constant family",
-    "PpParagraphAlignment": "curated",
-    "PpBulletType": "curated",
-    "PpShapeFormat": "curated",
-    "PpSlideShowState": "curated",
-    "PpSlideShowRangeType": "curated",
-    "PpMouseActivation": "curated",
-    "PpActionType": "curated",
-    "PpMediaTaskStatus": "curated",
-}
+#: recorded decision rather than an oversight. Empty since the 2026-07-17 audit
+#: promoted every curated enum into EXPECTED; keep it here so a future
+#: genuinely-unmappable enum (a synthetic/derived one) has a home with a reason.
+EXPECT_ABSENT: dict[str, str] = {}
 
 
 @pytest.fixture(scope="module")
