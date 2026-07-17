@@ -645,6 +645,7 @@ pptlive export-video pitch.mp4 --resolution 1080      # blocks until done
 # or: pptlive export-video pitch.mp4 --no-wait ; pptlive video-status
 ```
 
-Each shape read carries a `media` field (`{type, length_s, muted, volume,
-autoplay}`); `export_video` is a **read** — it renders the current state without
-rebinding your working `.pptx`.
+Each shape read carries a `media` field (`{type, length_s, start_s, end_s, muted,
+volume, autoplay}`, where `start_s`/`end_s` are the trim window in seconds);
+`export_video` is a **read** — it renders the current state without rebinding your
+working `.pptx`.
