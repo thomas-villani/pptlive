@@ -29,8 +29,10 @@ manifest's `compatibility.platforms` is `["win32"]`.
    then appear under the **"+" → Connectors** panel, ready to use on the deck you
    have open in PowerPoint.
 
-Requires a Claude Desktop build with MCPB extension support (late-2025 or newer)
-and `uv` available to the host. As an alternative to the bundle, `pptlive
+Requires a Claude Desktop build with MCPB `uv`-runtime support (late-2025 or
+newer — the host manages Python and dependencies itself; no separate Python or
+`uv` install needed) and network access on first launch (the runtime resolves
+`pptlive[mcp]` from PyPI). As an alternative to the bundle, `pptlive
 install-mcp` writes the same server entry straight into a client's config file.
 
 ## Rebuilding

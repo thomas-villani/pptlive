@@ -60,6 +60,9 @@ paragraph verbs), and always carries geometry (`move`, `resize`, `geometry()`)
 in **points**, plus `alt_text` / `set_alt_text` and per-shape
 `export_image(...)`. Every shape also carries a stable `shapeid` (`shapeid:S:ID`,
 the delete-proof handle) alongside its z-order `anchor_id`.
+[`ShapeById`](#pptlive.ShapeById) is the handle you get back from that
+`shapeid` — it resolves by `Shape.Id` on every access, so it keeps pointing at
+the same shape across a delete/restack that would shift a `shape:S:N` index.
 
 A shape can also animate: `Shape.animate(effect="fade", *, trigger="on_click",
 duration=None, delay=None, exit=False)` appends a whole-shape entrance (or, with
@@ -75,6 +78,8 @@ overlaps + off-slide flags).
 
 ::: pptlive.Shape
 
+::: pptlive.ShapeById
+
 ::: pptlive.PlaceholderShape
 
 ## Anchors
@@ -89,6 +94,10 @@ color). A paragraph read's `font` block also reports `color_source`
 (`"direct"` / `"theme"` / `"mixed"`) and `theme_color` (the inherited slot when
 themed), so you can tell a run color *set on the run* from one *cascaded from the
 theme* — the one place PowerPoint exposes that direct-vs-inherited distinction.
+`Shape.text_frame_status()` returns a [`TextFrameStatus`](#pptlive.TextFrameStatus)
+— autosize mode / word-wrap / margins / a coarse `overflow_risk` flag — so an
+agent can see a text box heading for a "formatting spiral" before it clips,
+without a render.
 
 ::: pptlive.Anchor
 
@@ -97,6 +106,8 @@ theme* — the one place PowerPoint exposes that direct-vs-inherited distinction
 ::: pptlive.ParagraphCollection
 
 ::: pptlive.Notes
+
+::: pptlive.TextFrameStatus
 
 ## Tables
 
@@ -158,6 +169,35 @@ only exposes the text on a visible element), and setting text auto-shows it.
 ::: pptlive.SectionCollection
 
 ::: pptlive.HeadersFooters
+
+## Review comments
+
+`slide.comments` is a per-slide [`CommentCollection`](#pptlive.CommentCollection)
+(1-based, `add` / `list` / iterate / index); `deck.comments()` is the deck-wide
+roll-up (`{total, slides: [...]}`). Comments attach to a **slide** at an
+`(x, y)` point (not a text range) and are **threaded** —
+[`Comment.replies`](#pptlive.Comment) / `Comment.reply(text)` walk and extend a
+thread. Adding a comment needs the signed-in Office-account identity: `add`
+lifts it off any existing comment via the modern `Comments.Add2`, falling back
+to the legacy identity-free `Comments.Add` on a comment-less deck; a reply
+lifts identity off its parent. Two honest caveats: `Add2` **binds to the
+signed-in account** (a passed `author` / `initials` is best-effort — even the
+legacy `Add` may ignore them on a modern build), and there is **no
+resolve/reopen verb** (`.Status` / `.Resolved` aren't COM-readable on current
+builds) — delete a thread once it's addressed instead.
+
+```python
+with pl.attach() as ppt:
+    deck = ppt.presentations.active
+    with deck.edit("Leave and answer review notes"):
+        note = deck.slides[2].comments.add("Tighten this headline", left=100, top=80)
+        note.reply("Done — shortened to five words")
+        deck.slides[2].comments[1].delete()      # resolve by deleting (takes its replies)
+```
+
+::: pptlive.Comment
+
+::: pptlive.CommentCollection
 
 ## Rendering
 
@@ -288,6 +328,8 @@ that map names to the right int the way an LLM would phrase them.
 ::: pptlive.SlideShowNotRunningError
 
 ::: pptlive.AmbiguousMatchError
+
+::: pptlive.ReplaceVerificationError
 
 ::: pptlive.PowerPointBusyError
 

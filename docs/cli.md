@@ -155,7 +155,8 @@ frame.
 when text looks clipped or overflowing — `autosize` (the autofit mode),
 `word_wrap`, the four `margins` (points), and an `overflow_risk` flag
 (`"possible"` when autosize is off so text can clip, `"low"` when an autofit mode
-is active). All reads; the view never moves.
+is active, `"unknown"` for an unrecognized autosize mode). All reads; the view
+never moves.
 
 ```json
 {"anchor_id": "shape:4:3", "autosize": "none", "word_wrap": true,
@@ -188,8 +189,12 @@ Never raises on a miss — zero matches is an **empty array** and exit `0`.
 ### `write --anchor-id ID --text "…"`
 
 Set the entire text of a text anchor. Preserves the viewed slide; one Ctrl-Z.
-Embed `\n` (or `\r`) to start a new paragraph — each line becomes its own
-addressable `para:S:N:P`. For a soft line break *within* a paragraph, embed `\v`.
+`--text` decodes literal `\n`, `\r`, `\t`, and `\\` backslash escape sequences
+into real characters, so you can type them straight in a shell: `\n`/`\r` (or
+`\r\n`) start a new paragraph — each line becomes its own addressable
+`para:S:N:P` — `\t` inserts a tab, and `\\` gives a literal backslash. For a
+soft line break *within* a paragraph, embed an actual vertical-tab character
+(`\v`) — it isn't part of the escape decode.
 
 ```bash
 pptlive write --anchor-id ph:2:title --text "Agenda"
@@ -206,12 +211,14 @@ pptlive write --anchor-id cell:4:5:1:1 --text "Metric"   # a cell is a text anch
 Two modes, mutually exclusive:
 
 - `replace --anchor-id ID --text "…"` overwrites a text anchor's whole contents
-  — identical in effect to `write`.
+  — identical in effect to `write` (including its `\n`/`\r`/`\t`/`\\` escape
+  decoding, above).
 - `replace --find OLD --text NEW` runs the same fuzzy traversal as `find` and
   rewrites just the **matched span**, so the rest of the frame keeps its run
   formatting. Scope it with `--in slide:S` (or any anchor). Matches are computed
   once up front and applied in reverse offset order, so a replacement that
-  re-contains the search text is safe.
+  re-contains the search text is safe. `--text`'s escape decoding applies here
+  too — a replacement can introduce a new paragraph break via `\n`/`\r`.
 
 ```bash
 pptlive replace --anchor-id shape:3:1 --text "New text"     # whole anchor
@@ -278,6 +285,51 @@ pptlive slide set-layout --slide 4 --layout title_and_content
 
 `duplicate` and `move` report the resulting slide's `index` and `id`; an
 out-of-range slide is exit `2`.
+
+### `slide set-transition`
+
+Set a slide's entrance transition — effect, animation duration, and
+auto-advance. At least one of `--effect` / `--duration` / `--advance-after` /
+`--on-click`/`--no-on-click` is required.
+
+```bash
+pptlive slide set-transition --slide 3 --effect fade --duration 0.75
+pptlive slide set-transition --slide 3 --advance-after 5      # auto-advance after 5s
+pptlive slide set-transition --slide 3 --no-on-click           # a click no longer advances
+```
+
+```json
+{"ok": true, "index": 3,
+ "transition": {"effect": "fade", "duration": 0.75, "advance_on_click": true,
+                "advance_on_time": false, "advance_time": 0.0}}
+```
+
+`--effect` is a friendly `PpEntryEffect` name (`fade`, `cut`, `dissolve`,
+`cover_left`, … — see `--help` for the full choice list) or omit it to leave
+the effect alone. `--duration` is the transition animation length in seconds.
+`--advance-after N` sets **both** the auto-advance flag and the timer (pass
+`0` to keep the timing but still require a click); `--on-click`/`--no-on-click`
+toggles click-to-advance independently. Echoes the resulting `transition` —
+the same shape `slide read` reports.
+
+### `slide set-background`
+
+Give a slide its own solid background color, overriding the deck's master
+background — or drop the override and revert to inheriting it. Exactly one of
+`--color` / `--follow-master` is required.
+
+```bash
+pptlive slide set-background --slide 3 --color "#1F1F1F"
+pptlive slide set-background --slide 3 --follow-master   # revert to the master's background
+```
+
+```json
+{"ok": true, "index": 3, "background": {"follows_master": false, "type": "solid", "color": "#1F1F1F"}}
+```
+
+`--color` is `#RRGGBB`. `background.follows_master` tells you which mode the
+slide is in; when it's `true`, `type`/`color` reflect the inherited master
+background (see the `master` group below for the deck-wide default).
 
 ### `slide export`
 
@@ -398,8 +450,11 @@ pptlive snapshot --slide 1 --width 1280 --height 720   # exact pixels (overrides
 
 ```json
 {"ok": true, "selector": "all slides", "count": 3, "format": "png",
- "max_dim": 1000, "images": [{"slide": 1, "bytes": 24, "base64": "iVBORw0KG…"}, …]}
+ "max_dim": 1000, "width": null, "height": null,
+ "images": [{"slide": 1, "bytes": 24, "base64": "iVBORw0KG…"}, …]}
 ```
+
+`width`/`height` echo whatever you passed (`null` when relying on `--max-dim`).
 
 ### Save & export — `save` · `save-as` · `export-pdf`
 
@@ -609,6 +664,28 @@ after z-order drift.
 pptlive shape set-alt --anchor-id shape:4:3 --alt-text "Acme logo (top-right)"
 ```
 
+### `shape set-link` · `shape remove-link`
+
+Make a whole shape a clickable hyperlink (fires on mouse click), or remove
+one — the shape-level companion to the run-level `link` group below (which
+links a *span of text inside* an anchor instead). A shape needs no text frame
+to carry a link. Target is exactly one of `--url` (external — URL, `mailto:`,
+or a file path) or `--slide` (an in-deck jump to a 1-based slide);
+`--screen-tip` is an optional hover tooltip.
+
+```bash
+pptlive shape set-link --anchor-id shape:4:3 --url "https://example.com/pricing" \
+    --screen-tip "Opens the pricing page"
+pptlive shape set-link --anchor-id shape:4:3 --slide 12      # jump to another slide
+pptlive shape remove-link --anchor-id shape:4:3               # no-op if it has none
+```
+
+```json
+{"ok": true, "anchor_id": "shape:4:3", "hyperlink": {"address": "https://example.com/pricing", "sub_address": null}}
+```
+
+`remove-link` echoes `"hyperlink": null`.
+
 ### `shape animate` · `shape clear-animations`
 
 Give a shape an entrance (or, with `--exit`, an exit) animation — the per-shape
@@ -709,7 +786,7 @@ pptlive shape connect --slide 4 --left 100 --top 200 --width 180 --height 0
 ## Links — the `link` group
 
 Hyperlinks on a **span of text inside** an anchor — the run-level companion to the
-whole-shape `shape set-hyperlink`. Works on any text anchor: a shape, a `para:`, a
+whole-shape `shape set-link` (above). Works on any text anchor: a shape, a `para:`, a
 table `cell:`, or `notes:`.
 
 Address the span either by literal substring (`--text`, the LLM-friendly form) or by
@@ -1239,3 +1316,70 @@ Each result entry carries its `index`, `tool`, `op`, `ok`, and either the op's
 A malformed script or unknown op is exit `1` (`invalid_args`). `shape:S:N` refs
 resolve **live** as each op runs, so address anything you didn't just create by
 `ph:S:KIND` / `.Name` / `shapeid:S:ID`.
+
+---
+
+## Agent setup — utility commands
+
+Offline bootstrapping for an LLM coding agent — none of these touch PowerPoint.
+
+### `llm-help [--python]`
+
+Print the full bundled agent guide (the SKILL.md content) straight to stdout —
+one-shot orientation covering the anchor model, every verb, and the exit-code
+taxonomy. Output is raw Markdown, unaffected by `--json`/`--text`, so it reads
+cleanly straight into a model's context (same idea as `--help`).
+
+```bash
+pptlive llm-help              # the CLI guide (default)
+pptlive llm-help --python     # the `import pptlive as pl` Python-API guide
+```
+
+### `install-skill [--cli] [--python] [--system] [--force]`
+
+Write pptlive's two agent skills (`pptlive-cli` and `pptlive-python`) to disk
+as `SKILL.md` files, so an LLM coding tool that reads skills from a folder
+picks them up. Writes both by default; pass `--cli` or `--python` for just
+one. Lands under `./.agents/skills/<name>/SKILL.md` (the current directory) by
+default, or `~/.agents/skills/<name>/SKILL.md` with `--system`. Refuses to
+clobber an existing `SKILL.md` unless `--force`.
+
+```bash
+pptlive install-skill                  # both skills, into ./.agents/skills/
+pptlive install-skill --python --system --force
+```
+
+```json
+{"ok": true, "scope": "local",
+ "installed": [{"kind": "cli", "name": "pptlive-cli",
+                "path": "C:\\...\\.agents\\skills\\pptlive-cli\\SKILL.md", "bytes": 12345},
+               {"kind": "python", "name": "pptlive-python",
+                "path": "C:\\...\\.agents\\skills\\pptlive-python\\SKILL.md", "bytes": 9876}]}
+```
+
+### `install-mcp [--client] [--name] [--directory] [--config] [--print] [--force]`
+
+Register the pptlive MCP server in an agent's config, so a client like Claude
+Desktop or Claude Code can launch it without hand-editing JSON. `--client` is
+`claude-desktop` (default, writes `claude_desktop_config.json`) or
+`claude-code` (writes a project-local `.mcp.json`); `--config PATH` overrides
+the target file for either. `--name` sets the `mcpServers` key (default
+`pptlive`). By default the registered entry launches the published package via
+`uvx --from "pptlive[mcp]" pptlive-mcp`; pass `--directory DIR` to point at a
+local checkout instead (`uv run --directory DIR pptlive-mcp`). `--print` emits
+the JSON snippet to stdout instead of writing any file — useful for a client
+this command doesn't know about. Refuses to overwrite an existing server entry
+of the same name unless `--force`. Restart the client to pick up the change.
+
+```bash
+pptlive install-mcp                                   # Claude Desktop, uvx-published server
+pptlive install-mcp --client claude-code --directory C:\repos\pptlive
+pptlive install-mcp --print                           # just print the snippet
+```
+
+```json
+{"ok": true, "client": "claude-desktop",
+ "path": "C:\\Users\\you\\AppData\\Roaming\\Claude\\claude_desktop_config.json",
+ "server": "pptlive", "action": "created",
+ "entry": {"command": "uvx", "args": ["--from", "pptlive[mcp]", "pptlive-mcp"]}}
+```

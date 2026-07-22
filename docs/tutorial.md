@@ -97,7 +97,7 @@ unsaved state, so you can *see* it and iterate.
 ```python
 with pl.attach() as ppt:
     deck = ppt.presentations.active
-    shots = deck.snapshot(max_dim=1000)            # one PNG per slide
+    shots = deck.snapshot("nimbus-check.png", max_dim=1000)   # one PNG per slide
     for shot in shots:
         print(f"slide {shot.slide} -> {shot.path}")
     # Hand the PNG paths to a vision model, or just open them.
@@ -105,7 +105,11 @@ with pl.attach() as ppt:
 
 `snapshot` is a **read** — it never moves the user's view. `max_dim` caps each
 slide's long edge in pixels, a predictable per-slide budget for a vision model.
-From the CLI: `pptlive snapshot --out check.png --max-dim 1000`.
+Pass `out=` to actually write files — with three slides you'll get
+`nimbus-check-s1.png`, `-s2.png`, `-s3.png` next to it (a single slide would
+write straight to `out`); skip `out=` and each `Snapshot.path` comes back
+`None` (you still get the bytes on `.image`). From the CLI:
+`pptlive snapshot --out check.png --max-dim 1000`.
 
 This is the loop that changes how you work: **build → look → revise.** If a title
 overflowed or a color came out wrong, you'd catch it here before narrating.

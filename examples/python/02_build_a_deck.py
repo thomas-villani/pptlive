@@ -39,19 +39,23 @@ def add_table_slide(deck: pl.Presentation) -> None:
         table.cell(1, 2).format_text(bold=True)
 
 
-def add_chart_slide(deck: pl.Presentation) -> None:
+def add_chart_slide(deck: pl.Presentation) -> pl.Shape:
     with deck.edit("Add a chart slide"):
         slide = deck.slides.add("title_and_content")
         deck.anchor_by_id(f"ph:{slide.index}:title").set_text("Quarterly revenue")
 
         # add_chart can take its data up front: categories + named series.
-        slide.shapes.add_chart(
+        chart_shape = slide.shapes.add_chart(
             "column",
             ["Q1", "Q2", "Q3", "Q4"],
             {"Revenue": [10, 14, 19, 23], "Profit": [3, 5, 8, 11]},
             left=inches(1),
             top=inches(1.8),
         )
+        # Return the shape rather than re-finding it: a new shape appends at the
+        # END of z-order, so re-indexing shape:S:N later would land on the wrong
+        # shape (e.g. the title placeholder, not the chart) — keep the handle.
+        return chart_shape
 
 
 def add_smartart_slide(deck: pl.Presentation) -> None:
@@ -73,11 +77,12 @@ def main() -> None:
     with pl.connect() as ppt:
         deck = fresh_presentation(ppt)
         add_table_slide(deck)
-        add_chart_slide(deck)
+        chart_shape = add_chart_slide(deck)
         add_smartart_slide(deck)
 
         # Read the chart back from its embedded data to confirm the round-trip.
-        chart_shape = deck.slides[2].shapes[1]
+        # Use the handle returned by add_chart_slide rather than re-indexing
+        # shape:S:N — see the comment there.
         if chart_shape.has_chart:
             data = chart_shape.chart.read()
             print(f"Chart type: {data['chart_type']}")

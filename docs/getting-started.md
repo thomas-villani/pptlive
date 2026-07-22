@@ -3,6 +3,10 @@
 This page takes you from zero to a first polite edit, both from Python and
 from the CLI.
 
+!!! tip "Just want Claude to drive your PowerPoint?"
+    You don't need Python or this page — the [MCP server](mcp.md) has a
+    one-click Claude Desktop install.
+
 ## Prerequisites
 
 - **Windows.** pptlive talks to PowerPoint over COM (`pywin32`); there is no
@@ -10,7 +14,8 @@ from the CLI.
 - **Microsoft PowerPoint**, installed and running, with a deck open. pptlive
   *attaches* to the running app — it never closes it, and it can't run
   PowerPoint hidden (`Application.Visible = False` is refused by the app).
-- **Python 3.10+**.
+- **Python 3.11+** — unless you only want the Claude Desktop one-click
+  install, which needs no separate Python at all (see [MCP server](mcp.md)).
 
 ## Install
 
