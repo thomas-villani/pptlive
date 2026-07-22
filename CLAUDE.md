@@ -478,7 +478,8 @@ directly so no edit needs to select anything.
 
 `PptliveError` base; reuse wordlive's COM-error decoding. Exit codes:
 `0` ok · `1` other · `2` anchor/slide/shape/presentation not found (incl. zero
-`find` matches) · `3` PowerPoint busy / slide show running · `4` PowerPoint not
+`find` matches) · `3` PowerPoint busy / modal dialog (a running slide show does
+*not* block edits — 2026-05-28 spike) · `4` PowerPoint not
 running · `5` ambiguous match · `6` shape has no text frame (`NoTextFrameError`,
 the one genuinely new code). `SlideNotFoundError` subclasses
 `AnchorNotFoundError` (so it reuses exit 2).

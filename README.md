@@ -20,7 +20,13 @@ want to edit it *live* — no close-the-file, let-the-agent-write, re-open dance
 | python-pptx | a `.pptx` file on disk    | OOXML I/O                |
 | **pptlive** | **a running POWERPNT.exe**| **COM automation (pywin32)** |
 
+**Just want Claude to drive your PowerPoint?** You don't need Python — jump to
+[MCP server](#mcp-server) for the one-click Claude Desktop install.
+
 ## Install
+
+Requires **Microsoft PowerPoint (desktop, Windows)** already installed —
+pptlive drives the *running* application, it doesn't render slides itself.
 
 ```
 pip install pptlive
@@ -32,13 +38,16 @@ pip install "pptlive[mcp]"
 uv add pptlive
 ```
 
-(Requires Python 3.11+ and `pywin32` on Windows.)
+Requires Python 3.11+ on Windows; `pywin32` is a regular dependency and installs
+automatically with the commands above — no separate step.
 
 ## Python
 
 ```python
 import pptlive as pl
 
+# attach() requires PowerPoint already running with a deck open; use
+# pl.connect(launch_if_missing=True) instead to launch PowerPoint if it isn't.
 with pl.attach() as ppt:
     deck = ppt.presentations.active
 
@@ -308,18 +317,16 @@ ambiguous match · `6` shape has no text frame.
 ## MCP server
 
 The same live-PowerPoint control, exposed to **Claude Desktop** (and any other
-MCP client) as a small set of tools. Install the extra and point your client at
-the `pptlive-mcp` stdio server:
+MCP client) as a small set of tools.
 
-```
-pip install "pptlive[mcp]"
-pptlive-mcp            # stdio MCP server (or: python -m pptlive.mcp)
-```
-
-**One-click install (Claude Desktop).** Download `pptlive.mcpb` from the
+**One-click install (Claude Desktop) — no Python needed.** Download
+`pptlive.mcpb` from the
 [latest release](https://github.com/thomas-villani/pptlive/releases/latest) and
 drag it onto **Settings → Extensions**. The bundle pulls in pptlive via `uv` on
-first run — no separate Python install. (Windows only; see [`mcpb/`](mcpb/).)
+first run — no separate Python install. Notes: requires a recent Claude Desktop
+build with MCPB `uv`-runtime support, and that first run fetches pptlive from
+PyPI, so it needs network access. Windows only; see
+[github.com/thomas-villani/pptlive/tree/main/mcpb](https://github.com/thomas-villani/pptlive/tree/main/mcpb).
 
 **Or let pptlive write the config for you:**
 
@@ -332,6 +339,13 @@ pptlive install-mcp --print               # just print the snippet for any clien
 It registers `uvx --from "pptlive[mcp]" pptlive-mcp` (resolves the published
 package — no PATH assumptions). For a local checkout, add `--directory .` to get
 `uv run --directory <dir> pptlive-mcp` instead. Restart the client afterward.
+
+**Or install the package and run the server yourself:**
+
+```
+pip install "pptlive[mcp]"
+pptlive-mcp            # stdio MCP server (or: python -m pptlive.mcp)
+```
 
 To wire it by hand instead, add to `claude_desktop_config.json` (Settings →
 Developer → Edit Config) and restart:

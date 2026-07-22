@@ -18,7 +18,10 @@ Exception
     ├── NoTextFrameError
     ├── SlideShowNotRunningError
     ├── UnsavedPresentationError
+    ├── VideoExportError
     ├── AmbiguousMatchError
+    ├── ReplaceVerificationError
+    ├── BatchOpError (internal-facing — not exported from `pptlive.__all__`)
     ├── PowerPointBusyError
     └── ComError
 ```
@@ -86,10 +89,35 @@ on a OneDrive/SharePoint build it silently uploads to the default cloud folder �
 so pptlive guards on the empty path and raises instead. Use `deck.save_as(path)`
 to give it a file first. A precondition failure, so it maps to exit **1**.
 
+### `VideoExportError`
+`deck.export_video()` failed or timed out — either a failed encode
+(`CreateVideoStatus == ppMediaTaskStatusFailed`) or a blocking `wait=True` call
+that exceeded its `timeout` before PowerPoint reported `Done`. Not a missing
+anchor or a transient busy state, so it maps to the generic exit code (**1**).
+Carries `.status`, the last-seen status token; on a timeout the encode may
+still be running in the background — poll `deck.video_status()` to check.
+
 ### `AmbiguousMatchError`
 A fuzzy match resolved to more than one target without disambiguation. The
 exception carries the candidates so an agent can pick one and retry.
 **Retryable** by narrowing the request. Maps to exit **5**.
+
+### `ReplaceVerificationError`
+`find_replace` re-reads its located span immediately before overwriting it, to
+confirm the text hasn't shifted since the locate pass; a mismatch raises this
+instead of silently editing the wrong characters. `.find`, `.expected`, and
+`.found` carry the requested text, what was expected, and what was actually
+there, plus `.anchor_id` when known. Not a missing anchor or ambiguity, so it
+maps to the generic exit code (**1**). **Retryable** — re-run `find` and retry
+the replace against the fresh result.
+
+### `BatchOpError`
+An internal-facing error, not exported from `pptlive.__all__` — you won't
+catch this by name from Python code. It's raised inside the shared op-dispatch
+seam (`_batch.py`) used by both the CLI `exec` verb and the MCP server, for a
+bad/missing argument or an unknown op/tool. The MCP server maps it to a
+`ToolError`; the CLI maps it to exit **1**, same as any other invalid-args
+failure.
 
 ### `PowerPointBusyError`
 PowerPoint rejected the COM RPC — usually a modal dialog is open (Save As,
@@ -111,17 +139,28 @@ a bug in your code or a PowerPoint-side problem. Maps to exit **1**.
 
 ## HRESULT mapping
 
-Only one HRESULT family is special-cased: the "PowerPoint is momentarily
-unavailable" codes that map to [`PowerPointBusyError`](#powerpointbusyerror).
-Everything else becomes a generic [`ComError`](#comerror) with the HRESULT
-preserved.
+A handful of HRESULT codes are special-cased as the "PowerPoint is momentarily
+unavailable" family that maps to [`PowerPointBusyError`](#powerpointbusyerror):
+three classic `RPC_E_*` busy/rejection codes, plus two `RPC_S_*` codes added
+for embedded-Excel chart automation (`AddChart2` / `ChartData` spin up and
+tear down an embedded Excel server per data write, which transiently rejects
+calls while it's not ready). Everything else becomes a generic
+[`ComError`](#comerror) with the HRESULT preserved.
 
 | HRESULT       | Mnemonic                         | pptlive exception     |
 | ------------- | -------------------------------- | --------------------- |
 | `0x80010001`  | `RPC_E_CALL_REJECTED`            | `PowerPointBusyError` |
 | `0x80010005`  | `RPC_E_SERVERCALL_REJECTED`      | `PowerPointBusyError` |
 | `0x8001010A`  | `RPC_E_SERVERCALL_RETRYLATER`    | `PowerPointBusyError` |
+| `0x800706B5`  | `RPC_S_UNKNOWN_IF`               | `PowerPointBusyError` |
+| `0x800706BE`  | `RPC_S_CALL_FAILED`              | `PowerPointBusyError` |
 | any other     | —                                | `ComError`            |
+
+`0x800706B5` and `0x800706BE` (and their signed forms) are the PowerPoint
+diff versus wordlive — see the `_BUSY_HRESULTS` comment in `exceptions.py` for
+the full story, including the deliberately-excluded `RPC_S_SERVER_UNAVAILABLE`
+(`0x800706BA`), which means the embedded server is actually gone rather than
+momentarily busy, so retrying it is futile.
 
 The classification logic lives in the `_BUSY_HRESULTS` set in
 [`src/pptlive/exceptions.py`](https://github.com/thomas-villani/pptlive/blob/main/src/pptlive/exceptions.py).
@@ -135,7 +174,7 @@ The CLI maps the exception hierarchy onto seven exit codes, defined in
 | Exit | Exception(s)                                          | Meaning                                       | Retry?                          |
 | ---- | ----------------------------------------------------- | --------------------------------------------- | ------------------------------- |
 | `0`  | —                                                     | success                                       | —                               |
-| `1`  | `PptliveError` (default), `SlideShowNotRunningError`, `UnsavedPresentationError`, `ComError` | other / unclassified / no show running / never-saved deck | depends on cause                |
+| `1`  | `PptliveError` (default), `SlideShowNotRunningError`, `UnsavedPresentationError`, `VideoExportError`, `ReplaceVerificationError`, `BatchOpError`, `ComError` | other / unclassified / no show running / never-saved deck / video export failed / replace target changed / bad batch op args | depends on cause                |
 | `2`  | `AnchorNotFoundError`, `SlideNotFoundError`, `LayoutNotFoundError`, `PresentationNotFoundError` | anchor / slide / shape / layout / deck missing | yes, after re-reading content   |
 | `3`  | `PowerPointBusyError`                                 | modal dialog or busy RPC                      | **yes**, with back-off          |
 | `4`  | `PowerPointNotRunningError`                           | no PowerPoint instance                        | only if the user launches PowerPoint |

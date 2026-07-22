@@ -129,24 +129,43 @@ unit-testable against a fake-COM fixture with no PowerPoint installed.
 
 ## What comes next
 
-The roadmap lives in
-[`IMPLEMENTATION.md`](https://github.com/thomas-villani/pptlive/blob/main/IMPLEMENTATION.md).
+The staged build log is
+[`IMPLEMENTATION.md`](https://github.com/thomas-villani/pptlive/blob/main/IMPLEMENTATION.md);
+the forward-looking work still open is
+[`roadmap.md`](https://github.com/thomas-villani/pptlive/blob/main/roadmap.md).
 The current release covers the politeness / anchors / `EditScope` core, the
-LLM-first CLI, the slide lifecycle, shapes & geometry (fill / border, z-order
-restacking, the delete-proof `shapeid:S:ID` anchor), text structure
-(paragraphs, font formatting, bullets), tables (cells as `cell:S:N:R:C`
-anchors), slide render + live selection (`here:`), pictures (alt text + per-shape
-export), charts (embedded-Excel data) and SmartArt diagrams (node-tree read /
-`set_nodes`) — both with coarse `recolor_text` for dark-theme labels, deck-wide
-styling via the theme and master (palette, heading/body fonts, master text
-styles, background), fuzzy [find / replace](python-api.md) across shapes / cells /
-notes, threaded review [comments](python-api.md), the whole-deck [snapshot](python-api.md)
-vision read, explicit [save / save_as / PDF export](python-api.md), and live
-slide-show control (`deck.show`). It also ships an optional [MCP server](mcp.md)
-for Claude Desktop and other MCP clients. Deferred: event sinks
-(`SlideShowNextSlide`, `WindowSelectionChange`), an async wrapper, transitions &
-animations, and custom slide-layout authoring (creating new layouts — distinct
-from the theme/master styling that already ships).
+LLM-first CLI, the slide lifecycle (incl. named [sections](python-api.md)),
+shapes & geometry (fill / border, z-order restacking, the delete-proof
+`shapeid:S:ID` anchor, [group / align / distribute / connectors](python-api.md)),
+text structure (paragraphs, font formatting, bullets, text-run
+[hyperlinks](python-api.md)), tables (cells as `cell:S:N:R:C` anchors, row/column
+add-delete, cell fill + borders), slide render + live selection (`here:`),
+pictures (alt text, per-shape export, in-place re-source), charts
+(embedded-Excel data) and SmartArt diagrams (node-tree read / `set_nodes` +
+per-node formatting) — both with coarse `recolor_text` for dark-theme labels,
+deck-wide styling via the theme and master (palette, heading/body fonts, master
+text styles, background), [headers/footers](python-api.md) (slide-number, date,
+footer text), slide transitions and whole-shape entrance/exit
+[animations](python-api.md), [media](python-api.md) (embedded audio/video,
+auto-pacing) and narrated-[video export](python-api.md) via the async
+`CreateVideo`, fuzzy [find / replace](python-api.md) across shapes / cells /
+notes, threaded review [comments](python-api.md), the whole-deck
+[snapshot](python-api.md) vision read, explicit
+[save / save_as / PDF export](python-api.md), and live slide-show control
+(`deck.show`). It also ships an optional [MCP server](mcp.md) for Claude Desktop
+and other MCP clients.
+
+Deferred, per `roadmap.md`: the consistency-audit linter/regularizer (the
+highest-leverage remaining feature); the animation long tail (per-paragraph
+levels, motion paths, effect-specific parameters, sequence reordering); media
+long tail (poster frames, bookmarks, native recorded narration); 3-D shape
+effects and non-solid backgrounds; deeper tables (merge/split, column width /
+row height, built-in styles), charts (title/legend/axis authoring, per-element
+targeting), and SmartArt (node-shape fill); durable file-persisted shape tags
+and document properties/metadata; event sinks (`SlideShowNextSlide`,
+`WindowSelectionChange`), an async wrapper, and full custom slide-layout
+authoring (creating new layouts — distinct from the theme/master styling that
+already ships).
 
 ## Full design document
 

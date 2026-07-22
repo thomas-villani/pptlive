@@ -98,6 +98,27 @@ CLI + MCP + both SKILL guides, and the shipped wrappers were re-verified live
   `media_add`, `ppt_render` ops `export_video` / `video_status` (mp4 is never
   mis-embedded as an image). Both flow through `ppt_batch` via the shared cores.
 
+**Non-coder onboarding round (2026-07-22 audit).** The docs funnel for "I just
+want Claude to drive my PowerPoint" users, rebuilt after a five-reviewer audit:
+
+- **`docs/mcp.md` restructured around three install options, easiest first** —
+  the one-click `.mcpb` bundle (drag into Claude Desktop → Extensions), then
+  `pptlive install-mcp` (PATH-independent `uvx` entry), then manual JSON — plus
+  explicit prerequisites up top and a plain-language **Troubleshooting** section
+  (tools don't appear / `not_running` / `uvx` not found / first-launch network /
+  Claude Desktop logs). The README's MCP section now leads with the bundle too.
+- **A "Use with Claude" card on the docs homepage** and early "you don't need
+  Python" pointers in the README and getting-started — the MCP path no longer
+  hides below ~250 lines of Python.
+- **`examples/python/04_finish_and_export.py`** — a finishing-pass example for
+  the output tier: `find_replace`, `snapshot(out=…)`, `save_as`, `export_pdf`.
+- **`docs/cli.md` gains the missing commands**: `slide set-transition` /
+  `set-background`, `shape set-link` / `remove-link`, and an "Agent setup"
+  section for `llm-help` / `install-skill` / `install-mcp`.
+- **`docs/python-api.md` gains the missing public symbols** — the whole review-
+  comments feature (`Comment` / `CommentCollection`) plus `ShapeById`,
+  `TextFrameStatus`, and `ReplaceVerificationError`.
+
 ### Fixed
 
 **Four wrong COM constants, found by a new typelib-parity test.** `constants.py` is
@@ -144,6 +165,32 @@ Office/PowerPoint/Excel **type libraries**, and found these on its first run:
   `FileNotFoundError` (an `OSError`), which the top-level CLI boundary didn't catch —
   it escaped as a raw traceback (exit code was still 1). It's now a clean `error: …`
   line, matching the MCP boundary.
+- **CLI `--text "Intro\nDemo\nQ&A"` now really makes three paragraphs.** The help
+  always promised "embed \n for paragraphs", but PowerShell/cmd pass a *literal*
+  backslash-n and the CLI never decoded it — the deck got one paragraph with a
+  visible `\n`. `write` / `replace` / `insert` `--text` now decode `\n` `\r` `\t`
+  (and `\\` for a literal backslash) in a single left-to-right pass; search
+  inputs (`find --text`, `replace --find`) stay verbatim. (wordlive has the same
+  latent bug — backport candidate.)
+- **`pptlive-mcp` without the `[mcp]` extra exits cleanly with the install hint**
+  (`pip install "pptlive[mcp]"`) instead of dumping a raw `ModuleNotFoundError` —
+  the import guard `pptlive.mcp`'s docstring always claimed. New
+  `tests/test_mcp_import_guard.py`.
+- **Docs accuracy sweep (audit findings).** `docs/mcp.md`'s `ppt_batch` example
+  was hard-broken (`"tool": "ppt_edit"` + args nested under `"params"` — the real
+  contract is flat with short tool names); the stated Python floor was 3.10+ in
+  `getting-started.md` and `mcpb/manifest.json` (real floor: 3.11); the tutorial's
+  snapshot step printed `None` paths (no `out=`); `design.md` claimed transitions
+  and animations were still deferred (both shipped) and its roadmap was rebuilt
+  from `roadmap.md`; `errors.md` was missing `VideoExportError` /
+  `ReplaceVerificationError` / `BatchOpError` and the two `RPC_S_*` busy
+  HRESULTs; `cli.md` named a nonexistent `shape set-hyperlink` (real: `shape
+  set-link`); the README's relative `mcpb/` link 404'd on the docs site;
+  `examples/02_build_a_deck.py` re-found its chart by z-order index (landing on
+  the title placeholder, silently skipping its own round-trip check) — it now
+  keeps the returned handle, per the library's own guidance. Exit-code 3 glosses
+  unified on "busy / modal dialog" (a running slide show does *not* block edits
+  — the 2026-05-28 spike; CLAUDE.md's taxonomy line was the stale one).
 
 ### Changed
 

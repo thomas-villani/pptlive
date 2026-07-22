@@ -8,9 +8,18 @@ hide:
 
 **Drive a running Microsoft PowerPoint instance from Python — `xlwings`, but for PowerPoint.**
 
-Built for both human scripting and LLM agents. Windows-only.
+Built for both human scripting and LLM agents, with a one-click Claude Desktop
+install. Windows-only.
 
 <div class="grid cards" markdown>
+
+-   :material-robot-outline:{ .lg .middle } **Use with Claude**
+
+    ---
+
+    One-click Claude Desktop install; no Python needed.
+
+    [:octicons-arrow-right-24: MCP server](mcp.md)
 
 -   :material-rocket-launch:{ .lg .middle } **New here?**
 
