@@ -4,8 +4,10 @@ Exposes pptlive's live-PowerPoint control to MCP clients (Claude Desktop and any
 other MCP-compatible agent) as a small, curated set of tools over stdio. Run it
 with the `pptlive-mcp` console script, or `python -m pptlive.mcp`.
 
-This package is import-guarded behind the `mcp` SDK: it is only importable when
-`pptlive[mcp]` (or the `mcp` package) is installed. CLI-only users never load it.
+This package needs the `mcp` SDK (the `pptlive[mcp]` extra): importing it
+without the extra raises an ImportError carrying the install hint, and the
+`pptlive-mcp` script turns that into a clean exit-1 message. CLI-only users
+never load it.
 
 The tools wrap the same public API as the CLI (`attach()` -> `deck` -> anchors),
 so the politeness model (preserve the viewed slide + Selection) and atomic-undo

@@ -52,9 +52,15 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Literal
 
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
-from mcp.types import CallToolResult, ImageContent, TextContent
+try:
+    from mcp.server.fastmcp import FastMCP
+    from mcp.server.fastmcp.exceptions import ToolError
+    from mcp.types import CallToolResult, ImageContent, TextContent
+except ImportError as exc:
+    raise ImportError(
+        "The pptlive MCP server needs the optional 'mcp' dependency. "
+        'Install it with:  pip install "pptlive[mcp]"  (or: uv add "pptlive[mcp]")'
+    ) from exc
 
 from .. import attach
 from .._batch import (
