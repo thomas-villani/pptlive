@@ -100,6 +100,44 @@ def _deck_command(fn: Callable[..., None]) -> Callable[..., None]:
     return click.pass_context(wrapper)
 
 
+#: The literal escape sequences a free-text `--text` option decodes into real
+#: control characters. A shell (PowerShell/cmd) passes `\n` through as a backslash
+#: + "n", so without this a `--text "a\nb"` sets one paragraph with a visible `\n`
+#: instead of two paragraphs. `\\` maps to a single backslash so `\\n` stays a
+#: literal `\n` (backslash + "n"), never a newline.
+_TEXT_ESCAPES = {"n": "\n", "r": "\r", "t": "\t", "\\": "\\"}
+
+
+def _decode_text_escapes(s: str) -> str:
+    r"""Decode `\n`/`\r`/`\t`/`\\` in a shell-supplied string to real characters.
+
+    A single left-to-right pass: on a backslash, the next char decides — `n`/`r`/`t`
+    become newline/carriage-return/tab and `\` collapses to one backslash (so `\\n`
+    yields a literal `\n`, not a newline). Any other escape (`\x`) or a trailing
+    backslash is left untouched, backslash included. Deliberately not
+    `codecs.decode(s, "unicode_escape")`, which mangles non-ASCII bytes and chokes
+    on unknown escapes.
+    """
+    out: list[str] = []
+    i, n = 0, len(s)
+    while i < n:
+        ch = s[i]
+        if ch == "\\" and i + 1 < n and (repl := _TEXT_ESCAPES.get(s[i + 1])) is not None:
+            out.append(repl)
+            i += 2
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
+def _decode_text_option(
+    ctx: click.Context, param: click.Parameter, value: str | None
+) -> str | None:
+    """Click callback: decode escape sequences on a free-text `--text` option."""
+    return None if value is None else _decode_text_escapes(value)
+
+
 # ---------------------------------------------------------------------------
 # Text formatters (used when --text is selected)
 # ---------------------------------------------------------------------------
@@ -2598,7 +2636,13 @@ def paragraphs_cmd(ctx: click.Context, deck: Presentation, anchor_id: str) -> No
 
 @click.command(name="insert")
 @click.option("--anchor-id", "anchor_id", required=True, help="Text anchor to insert relative to.")
-@click.option("--text", "text", required=True, help="Paragraph text to insert.")
+@click.option(
+    "--text",
+    "text",
+    required=True,
+    callback=_decode_text_option,
+    help="Paragraph text to insert (\\n starts a new paragraph; \\t tab; \\\\ for a literal backslash).",
+)
 @click.option(
     "--after/--before",
     "after",
@@ -3877,7 +3921,8 @@ def _set_text(ctx: click.Context, anchor_id: str, text: str, label: str) -> None
     "--text",
     "text",
     required=True,
-    help="New text (embed \\n or \\r for paragraphs; \\v for a soft line break).",
+    callback=_decode_text_option,
+    help="New text (\\n starts a new paragraph; \\t tab; \\\\ for a literal backslash).",
 )
 @click.pass_context
 def write(ctx: click.Context, anchor_id: str, text: str) -> None:
@@ -4085,7 +4130,8 @@ def find(ctx: click.Context, deck: Presentation, text: str, in_: str | None) -> 
     "--text",
     "text",
     required=True,
-    help="Replacement text (embed \\n or \\r for paragraphs; \\v for a soft line break).",
+    callback=_decode_text_option,
+    help="Replacement text (\\n starts a new paragraph; \\t tab; \\\\ for a literal backslash).",
 )
 @click.option(
     "--in", "in_", default=None, help="In fuzzy mode, scope the search (slide:S / an anchor id)."
