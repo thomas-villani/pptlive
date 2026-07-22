@@ -64,7 +64,7 @@ drift-proof forms.
 - `pptlive find --text "Q3 revenue" [--in slide:3|shape:3:2|notes:3]` — fuzzy, smart-quote/whitespace-tolerant search across the deck (shapes, table cells, notes). Emits `[{anchor_id, start, length, text, context}]` in document order; empty array (exit 0) on no match.
 
 ## Writing — each command is one atomic undo
-- `pptlive write --anchor-id ph:2:body --text "Intro\nDemo\nQ&A"` — set a text anchor (`\n`/`\r` = new paragraph, each separately addressable as `para:`; `\v` = soft line break within a paragraph).
+- `pptlive write --anchor-id ph:2:body --text "Intro\nDemo\nQ&A"` — set a text anchor. The CLI decodes the literal escapes `\n`/`\r` (new paragraph, each separately addressable as `para:`), `\t` (tab), and `\\` (a literal backslash) — so shell-quoted `\n` works as written on PowerShell/cmd.
 - `pptlive replace --anchor-id shape:3:1 --text "New text"` — overwrite a whole anchor.
 - `pptlive replace --find "old" --text "new" [--in slide:3] [--all|--occurrence N]` — fuzzy find/replace; rewrites just the matched span (keeps run formatting). One match auto-applies; several without `--all`/`--occurrence` is exit 5 (ambiguous, lists the matches); zero is exit 2.
 - `pptlive insert --anchor-id para:4:2:3 --text "New bullet" [--before|--after]` — new paragraph relative to an anchor.
@@ -79,7 +79,7 @@ drift-proof forms.
 ## PowerPoint text-model gotchas (read before formatting text)
 PowerPoint's text model has sharp edges that leak through. The big ones:
 - **Line spacing has two units.** `--line-spacing` is a **multiple** (1.0 single, 1.5, 2.0). For an exact *point* height use `--line-spacing-points 24`. Passing `--line-spacing 24` means 24× line height (text shoots off the slide) — so it's **rejected** unless `--force`. Same split for spacing before/after: `--space-before/--space-after` are points, `--space-before-lines/--space-after-lines` are multiples.
-- **`\n` is a paragraph, not a soft break.** In `write`, `\n`/`\r` start a new addressable `para:`; `\v` is a soft line break within one paragraph. To author a list reliably, prefer `set-paragraphs` (one item = one bullet) over embedding newlines.
+- **`\n` is a paragraph, not a soft break.** In `write`/`replace`/`insert`, the CLI decodes literal `\n`/`\r` (also `\t`, and `\\` for a real backslash) so each line starts a new addressable `para:`. A `\v` soft line break within one paragraph isn't a shell escape — to author a list reliably, prefer `set-paragraphs` (one item = one bullet) over embedding newlines.
 - **Paragraph formatting applies per paragraph, font formatting per run.** A `format-text --size` on a multi-run paragraph may hit only part of it; read `paragraphs` and check `run_sizes` to spot a stray small run.
 - **There's no "clear formatting" button.** Re-writing the text does *not* drop run overrides. `reset-format` resets paragraph *spacing* to clean defaults; `shape reset-to-layout` restores a placeholder's geometry + default font. Font size/typeface otherwise need an explicit `format-text`.
 - **When text overflows,** read `text-frame-status`: `overflow_risk: "possible"` means autosize is off (text can clip); `"low"` means an autofit mode is active.

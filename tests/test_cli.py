@@ -97,6 +97,41 @@ def test_replace_sets_text(fake_powerpoint) -> None:  # type: ignore[no-untyped-
     assert box.TextFrame.TextRange.Text == "Replaced"
 
 
+def test_decode_text_escapes_helper() -> None:
+    from pptlive.cli.commands import _decode_text_escapes
+
+    # `\n` -> a real newline (the headline shell-escape fix).
+    assert _decode_text_escapes("a\\nb") == "a\nb"
+    # `\\n` -> a literal backslash + "n", NOT a newline (single left-to-right pass).
+    assert _decode_text_escapes("a\\\\nb") == "a\\nb"
+    # A trailing backslash has nothing to escape: kept verbatim.
+    assert _decode_text_escapes("a\\") == "a\\"
+    assert _decode_text_escapes("a\\tb") == "a\tb"  # `\t` -> tab
+    assert _decode_text_escapes("a\\rb") == "a\rb"  # `\r` -> carriage return
+    # Unknown escape (`\x`) passes through untouched, backslash included.
+    assert _decode_text_escapes("a\\xb") == "a\\xb"
+    # No escapes at all -> unchanged.
+    assert _decode_text_escapes("hello world") == "hello world"
+
+
+def test_write_decodes_newline_escape(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    # Simulate the shell passing a LITERAL backslash-n (PowerShell/cmd don't
+    # interpret it): the CLI must decode it so the library sees a real newline,
+    # which set_text normalizes to `\r` (a new addressable paragraph).
+    result = CliRunner().invoke(main, ["write", "--anchor-id", "ph:2:title", "--text", "a\\nb"])
+    assert result.exit_code == 0
+    title = fake_powerpoint.ActivePresentation.Slides(2).Shapes(1)
+    assert title.TextFrame.TextRange.Text == "a\rb"
+
+
+def test_write_double_backslash_stays_literal(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    # `\\n` must stay a literal backslash + "n", never a paragraph break.
+    result = CliRunner().invoke(main, ["write", "--anchor-id", "ph:2:title", "--text", "a\\\\nb"])
+    assert result.exit_code == 0
+    title = fake_powerpoint.ActivePresentation.Slides(2).Shapes(1)
+    assert title.TextFrame.TextRange.Text == "a\\nb"
+
+
 def test_write_to_frameless_shape_exit_6(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     result = CliRunner().invoke(main, ["write", "--anchor-id", "shape:2:3", "--text", "x"])
     assert result.exit_code == 6
