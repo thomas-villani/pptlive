@@ -7,11 +7,20 @@ section for the Claude Desktop config snippet.
 
 from __future__ import annotations
 
-from .server import server
+import sys
 
 
 def main() -> None:
     """Run the stdio MCP server (blocks until the client disconnects)."""
+    # Import here, not at module top: a base `pip install pptlive` (no [mcp]
+    # extra) must exit with the install hint, not a traceback.
+    try:
+        from .server import server
+    except ImportError as exc:
+        if "pptlive[mcp]" not in str(exc):  # a genuine bug, not the missing extra
+            raise
+        sys.stderr.write(f"{exc}\n")
+        raise SystemExit(1) from exc
     server.run()
 
 
