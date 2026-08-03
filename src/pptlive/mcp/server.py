@@ -420,11 +420,18 @@ def ppt_edit(
       `para:S:N:P`), or `\\v` for a soft line break within one paragraph.
       "insert_after"/"insert_before" add a paragraph relative to the anchor instead.
     - "set_paragraphs": replace the anchor's text with `paragraphs` — a list whose
-      items are strings or `{"text", "list_type"?, "indent_level"?, "alignment"?,
-      "line_spacing"?/"line_spacing_points"?, "size"?, "bold"?, ...}` objects. Each
-      item becomes exactly one bullet/paragraph (a newline inside an item is a soft
-      break, never a split) with its formatting applied — the safe way to author a
-      list without relying on `\\n` inference. Returns the new `para:` anchor ids.
+      items are strings or objects with a required `"text"`. Each item becomes
+      exactly one bullet/paragraph (a newline inside an item is a soft break, never
+      a split) with its formatting applied — the safe way to author a list without
+      relying on `\\n` inference. Returns the new `para:` anchor ids. The item keys
+      are **exhaustive**, so one op does the whole job and a follow-up "format" pass
+      per paragraph is never needed (an unknown key errors rather than being
+      ignored): `"text"` (required) · `"list_type"` ("bulleted"/"numbered"/"none")
+      · `"bullet_char"` · `"alignment"` · `"indent_level"` (1-5) · `"space_before"` /
+      `"space_after"` (POINTS) · `"space_before_lines"` / `"space_after_lines"`
+      (MULTIPLES) · `"line_spacing"` (a MULTIPLE, 1.5) · `"line_spacing_points"`
+      (EXACT POINTS, 24) · `"force"` · `"bold"` / `"italic"` / `"underline"` ·
+      `"size"` · `"font"` · `"color"` (the FONT color).
     - "find_replace": fuzzy-locate `find` across the deck and rewrite the matched
       spans with `text` (only the span changes, so run formatting is preserved).
       Scope with `scope` (a `slide:S` / anchor id). One match auto-applies; for

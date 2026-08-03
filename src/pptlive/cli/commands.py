@@ -1620,6 +1620,7 @@ def shape_add(
         elif kind == "shape":
             new = shapes.add_shape(
                 shape_type,
+                text=text or "",
                 left=left,
                 top=top,
                 width=width,
@@ -1628,8 +1629,6 @@ def shape_add(
                 line=line,
                 line_width=line_width,
             )
-            if text:
-                new.set_text(text)
         elif kind == "table":
             assert rows is not None and cols is not None  # guarded above
             new = shapes.add_table(rows, cols, left=left, top=top, width=width, height=height)
@@ -3939,7 +3938,8 @@ def write(ctx: click.Context, anchor_id: str, text: str) -> None:
     "--json",  # back-compat alias; --paragraphs is preferred (avoids shadowing the global --json)
     "paragraphs_json",
     default=None,
-    help='Paragraphs as a JSON array: strings or {"text", "list_type", ...} objects.',
+    help='Paragraphs as a JSON array: strings or {"text", ...} objects (see the '
+    "command help for the full key list).",
 )
 @click.option(
     "--file",
@@ -3958,10 +3958,27 @@ def set_paragraphs(
 ) -> None:
     """Rewrite an anchor as a clean list of paragraphs (no newline inference).
 
-    Each array item is a string or an object with `text` plus optional per-paragraph
-    formatting (`list_type`, `indent_level`, `alignment`, `line_spacing` /
-    `line_spacing_points`, `size`, `bold`, ...). Each item becomes one addressable
-    `para:`.
+    Each array item is a string, or an object with a required `text` plus any of the
+    keys below. Each item becomes exactly one addressable `para:`. The list is
+    exhaustive — everything is settable in this one op, so a follow-up `format`
+    loop is never needed; an unknown key is an error, not a silent no-op.
+
+    \b
+      text                        required; the paragraph's text
+      list_type                   "bulleted" / "numbered" / "none" (strips)
+      bullet_char                 single character for a custom bullet
+      alignment                   "left" / "center" / "right" / "justify"
+      indent_level                1-5, the outline depth
+      space_before, space_after   POINTS
+      space_before_lines, space_after_lines
+                                  MULTIPLES (pass one of each pair)
+      line_spacing                a MULTIPLE (1.5) — not points
+      line_spacing_points         EXACT POINTS (24)
+      force                       allow a line_spacing multiple > 5
+      bold, italic, underline     true / false
+      size                        font size in points
+      font                        typeface name
+      color                       FONT color — "#RRGGBB"
     """
     if (paragraphs_json is None) == (json_file is None):
         raise click.UsageError("set-paragraphs needs exactly one of --json or --file")

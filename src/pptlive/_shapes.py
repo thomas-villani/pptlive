@@ -2283,6 +2283,7 @@ class ShapeCollection:
         self,
         shape_type: str | int,
         *,
+        text: str = "",
         left: float | None = None,
         top: float | None = None,
         width: float | None = None,
@@ -2295,6 +2296,9 @@ class ShapeCollection:
 
         `shape_type` is a friendly name (`"rectangle"`, `"oval"`, `"arrow"`, …;
         see `constants.AUTOSHAPE_CHOICES`) or a raw `MsoAutoShapeType` int.
+        `text`, if given, is written into the new shape's frame — the same
+        one-call convenience `add_textbox` has (the CLI's `shape add --kind shape
+        --text` used to be the only surface offering it).
         Geometry is in points; omitted values default to a 2×2 in box near the
         top-left. `fill`/`line` set a solid fill / border color (or `"none"` for
         transparent / no border) and `line_width` the border weight in points —
@@ -2310,6 +2314,8 @@ class ShapeCollection:
         height = _DEFAULT_SHAPE_HEIGHT if height is None else float(height)
         with _com.translate_com_errors():
             com_shape = self._com_collection.AddShape(type_int, left, top, width, height)
+            if text:
+                com_shape.TextFrame.TextRange.Text = text
             if fill is not None or line is not None or line_width is not None:
                 apply_shape_fill(com_shape, fill=fill, line=line, line_width=line_width)
             return self._added()

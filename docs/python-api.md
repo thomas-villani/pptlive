@@ -94,6 +94,14 @@ color). A paragraph read's `font` block also reports `color_source`
 (`"direct"` / `"theme"` / `"mixed"`) and `theme_color` (the inherited slot when
 themed), so you can tell a run color *set on the run* from one *cascaded from the
 theme* — the one place PowerPoint exposes that direct-vs-inherited distinction.
+`Anchor.set_paragraphs([...])` is the one-pass authoring path: each item is a
+string or a `{"text", ...}` dict that becomes exactly one addressable `para:`.
+Its item keys cover **both** paragraph and font formatting — the full table is in
+the [`set_paragraphs`](#pptlive.Anchor.set_paragraphs) docstring below — so
+following it with a per-paragraph `format_text` loop is pure extra COM
+round-trips. An unknown key raises `ValueError` naming the valid ones rather than
+being silently ignored.
+
 `Shape.text_frame_status()` returns a [`TextFrameStatus`](#pptlive.TextFrameStatus)
 — autosize mode / word-wrap / margins / a coarse `overflow_risk` flag — so an
 agent can see a text box heading for a "formatting spiral" before it clips,

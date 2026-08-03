@@ -86,6 +86,21 @@ _PARA_FORMAT_KEYS = (
 )
 #: Per-paragraph keys `set_paragraphs` forwards to `format_text`.
 _PARA_FONT_KEYS = ("bold", "italic", "underline", "size", "font", "color")
+#: Per-paragraph keys `set_paragraphs` forwards to `apply_list` / `remove_list`.
+_PARA_LIST_KEYS = ("list_type", "bullet_char")
+#: Every key a `set_paragraphs` item dict may carry — the exhaustive set.
+#:
+#: Published (not private) because the truncated "`{text, list_type, ...}`" key
+#: list in the docs was itself the reported footgun: an author couldn't tell
+#: whether `color`/`font` were supported, so they defensively looped
+#: `format_text` per paragraph at 2-3x the COM round-trips. They *are* supported —
+#: this tuple is the single source of truth the docs and the error message quote.
+PARAGRAPH_ITEM_KEYS: tuple[str, ...] = (
+    "text",
+    *_PARA_LIST_KEYS,
+    *_PARA_FORMAT_KEYS,
+    *_PARA_FONT_KEYS,
+)
 
 
 def _as_single_paragraph(text: str) -> str:
@@ -100,12 +115,24 @@ def _as_single_paragraph(text: str) -> str:
 
 
 def _coerce_paragraph_item(item: Any) -> dict[str, Any]:
-    """Normalise a `set_paragraphs` item (a `str` or a `{text, ...}` dict)."""
+    """Normalise a `set_paragraphs` item (a `str` or a `{text, ...}` dict).
+
+    An unknown key is a `ValueError` naming the valid ones, not a silent no-op:
+    a typo'd `"colour"` used to be dropped by `dict(item)` and the paragraph came
+    back unstyled with no signal at all — the worst failure mode for an agent that
+    can't see the slide.
+    """
     if isinstance(item, str):
         return {"text": item}
     if isinstance(item, dict):
         if "text" not in item or not isinstance(item["text"], str):
             raise ValueError("each paragraph dict needs a string 'text'")
+        unknown = [k for k in item if k not in PARAGRAPH_ITEM_KEYS]
+        if unknown:
+            raise ValueError(
+                f"unknown set_paragraphs key(s) {', '.join(map(repr, sorted(unknown)))}; "
+                f"valid keys are {', '.join(PARAGRAPH_ITEM_KEYS)}"
+            )
         return dict(item)
     raise ValueError(f"each paragraph must be a string or a dict, got {type(item).__name__}")
 
@@ -280,15 +307,32 @@ class Anchor(ABC):
         """Replace this anchor's text with a clean, per-paragraph list.
 
         The safe alternative to newline inference for list authoring (the gpt-5.4
-        review's ask): each item is a plain string **or** a dict
-        `{"text": ..., "list_type"?, "indent_level"?, "alignment"?, "line_spacing"?,
-        "size"?, ...}` and becomes exactly one addressable `para:` — a newline
-        inside an item is folded to a soft break, never a paragraph split. Per-item
-        keys are forwarded to `format_paragraph` (spacing/alignment/indent) and
-        `format_text` (font); `list_type` applies/removes the bullet
-        (`"none"` strips it), resetting list state cleanly. Returns the new
-        paragraphs' `anchor_id`s (empty for a text anchor with no paragraph view,
-        e.g. notes). Wrap in `deck.edit(...)`.
+        review's ask): each item is a plain string **or** a dict with a required
+        `"text"` plus any of the keys below, and becomes exactly one addressable
+        `para:` — a newline inside an item is folded to a soft break, never a
+        paragraph split. Returns the new paragraphs' `anchor_id`s (empty for a text
+        anchor with no paragraph view, e.g. notes). Wrap in `deck.edit(...)`.
+
+        The key list is **exhaustive** — anything here can be set in one pass, so
+        there is never a reason to follow up with a per-paragraph `format_text`
+        loop. An unknown key raises `ValueError` rather than being ignored.
+
+        | key | forwarded to | notes |
+        | --- | --- | --- |
+        | `text` | — | **required**; the paragraph's text |
+        | `list_type` | `apply_list` / `remove_list` | `"bulleted"` / `"numbered"` / `"none"` (strips) |
+        | `bullet_char` | `apply_list` | single-char str or int code point |
+        | `alignment` | `format_paragraph` | `"left"` / `"center"` / `"right"` / `"justify"` |
+        | `indent_level` | `format_paragraph` | 1-5, the outline depth |
+        | `space_before` / `space_after` | `format_paragraph` | **points** |
+        | `space_before_lines` / `space_after_lines` | `format_paragraph` | **multiples** |
+        | `line_spacing` | `format_paragraph` | a **multiple** (1.5), not points |
+        | `line_spacing_points` | `format_paragraph` | **exact points** (24) |
+        | `force` | `format_paragraph` | allow a `line_spacing` multiple > 5 |
+        | `bold` / `italic` / `underline` | `format_text` | bool |
+        | `size` | `format_text` | points |
+        | `font` | `format_text` | typeface name |
+        | `color` | `format_text` | **font** color — `"#RRGGBB"`, `(r, g, b)`, or an RGB int |
         """
         items = [_coerce_paragraph_item(p) for p in paragraphs]
         if not items:

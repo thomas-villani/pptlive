@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**`set_paragraphs` item keys are documented exhaustively — and validated.** A
+Claude Code authoring review reported the key list trailing off in `...` on both
+help pages, so it wasn't clear whether `color` and `font` were supported. They
+always were: the reviewer set structure via `set_paragraphs` and then looped
+`paragraph(i).format_text(...)` defensively, at 2–3× the COM round-trips, for
+nothing.
+
+- **The complete 16-key table** — `text` (required) · `list_type` · `bullet_char` ·
+  `alignment` · `indent_level` · `space_before`/`space_after` (points) ·
+  `space_before_lines`/`space_after_lines` (multiples) · `line_spacing` (a
+  multiple) · `line_spacing_points` (exact points) · `force` ·
+  `bold`/`italic`/`underline` · `size` · `font` · `color` — now ships in the
+  `Anchor.set_paragraphs` docstring, `docs/cli.md`, `docs/python-api.md`, the MCP
+  `ppt_edit` tool description, the `set-paragraphs --help` text, and **both** SKILL
+  guides. Exported as `pptlive.PARAGRAPH_ITEM_KEYS` (the single source of truth the
+  docs and the error message quote).
+- **An unknown key is now a `ValueError`** naming the valid ones, instead of being
+  silently dropped by `dict(item)`. A typo'd `"colour"` used to return an unstyled
+  paragraph with no signal at all — the worst failure mode for an agent that can't
+  see the slide. Clean exit 1 at the CLI / `invalid_args` at MCP, before any COM.
+- The Python SKILL guide's own example demonstrated the anti-pattern (a
+  `set_paragraphs` call followed by a `format_text` loop); it now sets font and
+  structure in the one pass.
+
+**`ShapeCollection.add_shape(..., text=...)`** — parity with `add_textbox`, which
+has taken `text` since v0.2. The CLI's `shape add --kind shape --text` and the
+batch `shape_add` op were both hand-rolling `add_shape(...)` + `set_text(...)`
+afterwards; both now just pass `text=` through. Reported as a CLI/Python surface
+asymmetry in the same review.
+
 **Shape arrangement + text-run-level hyperlinks.** Two roadmap items shipped
 together, each pre-proven live by a net-zero spike
 (`scripts/arrangement_spike.py`, `scripts/run_link_spike.py`) and re-verified

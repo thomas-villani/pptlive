@@ -164,17 +164,38 @@ also via `deck.slides[N].animations()`). Effect names: `fade`/`appear`/`fly_in`/
 with deck.edit("Polish the body copy"):
     body = deck.anchor_by_id("ph:4:body")
     # Safest list authoring: one item = one bullet, no newline inference.
+    # Set EVERYTHING per item in this one pass — font included. Don't follow up
+    # with a paragraph(i).format_text(...) loop; that's 2-3x the COM round-trips.
     body.set_paragraphs([
-        {"text": "Revenue up 12%", "list_type": "bulleted"},
+        {"text": "Revenue up 12%", "list_type": "bulleted",
+         "bold": True, "size": 24, "color": "#2E74B5", "line_spacing_points": 24},
         {"text": "Churn down 3%", "list_type": "bulleted", "indent_level": 2},
         {"text": "NPS +9", "list_type": "bulleted"},
     ])
-    body.paragraph(1).format_text(bold=True, size=24, color="#2E74B5")
-    # Line spacing is unit-explicit: line_spacing is a MULTIPLE, line_spacing_points
-    # is exact points. line_spacing=24 is rejected (24x!) unless force=True — the
-    # gpt-5.4 footgun. See the gotchas + field table below.
-    body.format_paragraph(line_spacing_points=24)
+```
 
+**`set_paragraphs` item keys — the complete list.** Every key is settable in the
+one call, so a per-paragraph `format_text` follow-up is never needed. An unknown
+key raises `ValueError` naming the valid ones (it is not silently ignored).
+
+| key | value | notes |
+| --- | --- | --- |
+| `text` | str | **required** |
+| `list_type` | `"bulleted"` / `"numbered"` / `"none"` | `"none"` strips the bullet |
+| `bullet_char` | single-char str or int code point | custom bullet glyph |
+| `alignment` | `"left"` / `"center"` / `"right"` / `"justify"` | |
+| `indent_level` | 1–5 | outline depth |
+| `space_before` / `space_after` | float | **POINTS** |
+| `space_before_lines` / `space_after_lines` | float | **MULTIPLES** (pass one of each pair) |
+| `line_spacing` | float | a **MULTIPLE** (1.5) — `>5` needs `force` |
+| `line_spacing_points` | float | **EXACT POINTS** (24) |
+| `force` | bool | allow a `line_spacing` multiple > 5 |
+| `bold` / `italic` / `underline` | bool | |
+| `size` | float | font size in points |
+| `font` | str | typeface name |
+| `color` | `"#RRGGBB"` / `(r, g, b)` / int | the **font** color |
+
+```python
 with deck.edit("Add a metrics table"):
     table = deck.slides[4].shapes.add_table(rows=3, columns=2).table
     table.cell(1, 1).set_text("Metric")

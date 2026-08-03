@@ -617,9 +617,9 @@ def _edit_shape_add(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
     if kind == "textbox":
         created = shapes.add_textbox(p.get("text") or "", **fill_kw, **geom)
     elif kind == "shape":
-        created = shapes.add_shape(p.get("shape_type") or "rectangle", **fill_kw, **geom)
-        if p.get("text"):
-            created.set_text(p["text"])
+        created = shapes.add_shape(
+            p.get("shape_type") or "rectangle", text=p.get("text") or "", **fill_kw, **geom
+        )
     elif kind == "table":
         _require(
             p.get("rows") is not None and p.get("cols") is not None,

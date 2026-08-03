@@ -177,6 +177,19 @@ def test_add_shape_raw_int_passthrough(deck) -> None:  # type: ignore[no-untyped
     assert deck.slides[3].shapes.add_shape(33).com.AutoShapeType == 33  # right arrow
 
 
+def test_add_shape_writes_text(deck) -> None:  # type: ignore[no-untyped-def]
+    # Parity with add_textbox: the CLI's `shape add --kind shape --text` used to
+    # be the only surface that could do this in one call.
+    rect = deck.slides[3].shapes.add_shape("rectangle", text="Label")
+    assert rect.com.TextFrame.TextRange.Text == "Label"
+    assert rect.text == "Label"
+
+
+def test_add_shape_text_defaults_empty(deck) -> None:  # type: ignore[no-untyped-def]
+    rect = deck.slides[3].shapes.add_shape("rectangle")
+    assert rect.com.TextFrame.TextRange.Text == ""
+
+
 def test_add_shape_unknown_raises(deck) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(ValueError, match="unknown autoshape"):
         deck.slides[3].shapes.add_shape("nonsense")

@@ -897,15 +897,37 @@ pptlive format-paragraph --anchor-id para:4:2:1 \
 ### `set-paragraphs --anchor-id ID --json '[...]'`
 
 Rewrite an anchor as a clean per-paragraph list — the **safe** way to author a
-bullet list. Each item is a plain string or an object
-`{text, list_type?, indent_level?, alignment?, line_spacing?/line_spacing_points?,
-size?, bold?, ...}`; one item becomes exactly one addressable `para:S:N:P` (a
-newline *inside* an item folds to a soft break), so there's no `\n`-inference and
-no separate `list apply` pass. `--file PATH` reads the JSON array from a file.
+bullet list. Each item is a plain string or an object with a required `text`; one
+item becomes exactly one addressable `para:S:N:P` (a newline *inside* an item folds
+to a soft break), so there's no `\n`-inference and no separate `list apply` pass.
+`--file PATH` reads the JSON array from a file.
+
+The item keys below are the **complete** set — font included. Set everything in
+this one call; a follow-up `format-text` per paragraph costs 2–3× the COM
+round-trips for no gain. An unknown key raises a `ValueError` naming the valid
+ones (exit 1) rather than being silently dropped.
+
+| key | value | notes |
+| --- | --- | --- |
+| `text` | string | **required** |
+| `list_type` | `"bulleted"` / `"numbered"` / `"none"` | `"none"` strips the bullet |
+| `bullet_char` | single-char string or int code point | custom bullet glyph |
+| `alignment` | `"left"` / `"center"` / `"right"` / `"justify"` | |
+| `indent_level` | 1–5 | outline depth |
+| `space_before` / `space_after` | number | **points** |
+| `space_before_lines` / `space_after_lines` | number | **multiples** (pass one of each pair) |
+| `line_spacing` | number | a **multiple** (1.5); `>5` needs `force` |
+| `line_spacing_points` | number | **exact points** (24) |
+| `force` | bool | allow a `line_spacing` multiple > 5 |
+| `bold` / `italic` / `underline` | bool | |
+| `size` | number | font size in points |
+| `font` | string | typeface name |
+| `color` | `"#RRGGBB"` | the **font** color |
 
 ```bash
-pptlive set-paragraphs --anchor-id ph:4:body --json \
-  '["Overview", {"text": "Revenue up 12%", "list_type": "bulleted", "indent_level": 1},
+pptlive set-paragraphs --anchor-id ph:4:body --paragraphs \
+  '["Overview", {"text": "Revenue up 12%", "list_type": "bulleted", "indent_level": 1,
+                  "bold": true, "color": "#2E74B5"},
                  {"text": "Churn down 3%",  "list_type": "bulleted", "indent_level": 1}]'
 ```
 
