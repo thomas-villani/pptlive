@@ -158,6 +158,108 @@ def autosize_name(value: Any) -> str:
         return "unknown"
 
 
+# Keys are pre-normalized by `_normalize_name` (lowercase, non-alphanumerics
+# stripped), so "shapetofittext" is what "shape_to_fit_text" / "Shape To Fit Text"
+# both collapse to. Writing the underscored spelling here would never match.
+_AUTOSIZE_VALUES: dict[str, MsoAutoSize] = {
+    "none": MsoAutoSize.NONE,
+    "off": MsoAutoSize.NONE,
+    "shapetofittext": MsoAutoSize.SHAPE_TO_FIT_TEXT,
+    "grow": MsoAutoSize.SHAPE_TO_FIT_TEXT,
+    "texttofitshape": MsoAutoSize.TEXT_TO_FIT_SHAPE,
+    "shrink": MsoAutoSize.TEXT_TO_FIT_SHAPE,
+}
+
+#: Canonical autosize names the CLI/MCP advertise (aliases coerce too).
+AUTOSIZE_CHOICES: tuple[str, ...] = ("none", "shape_to_fit_text", "text_to_fit_shape")
+
+
+def autosize_for(name: str | int) -> int:
+    """Friendly autosize name (or a raw `MsoAutoSize` int) -> the int.
+
+    `"none"`/`"off"` disables autofit (the precise-layout setting — a height you
+    pass is then honored), `"shape_to_fit_text"`/`"grow"` grows the shape, and
+    `"text_to_fit_shape"`/`"shrink"` shrinks the text. Raises `ValueError`
+    (listing the names) for an unknown name.
+    """
+    if isinstance(name, bool):
+        raise ValueError(f"invalid autosize: {name!r}")
+    if isinstance(name, int):
+        return int(name)
+    found = _AUTOSIZE_VALUES.get(_normalize_name(name))
+    if found is None:
+        choices = ", ".join(AUTOSIZE_CHOICES)
+        raise ValueError(f"unknown autosize {name!r}; expected one of: {choices}")
+    return int(found)
+
+
+class MsoVerticalAnchor(IntEnum):
+    """`TextFrame.VerticalAnchor` — where text sits vertically within its frame.
+
+    Read off the Office typelib's `MsoVerticalAnchor` record, **not** the merged
+    constant namespace: there `msoAnchorNone` (1) and `msoAnchorCenter` (2) — which
+    belong to a different Office enum entirely — collide with `msoAnchorTop` (1)
+    and `msoAnchorTopBaseline` (2). Transcribing from the flat namespace would have
+    silently aimed `"top"` at the wrong enum's member.
+    """
+
+    MIXED = -2
+    TOP = 1
+    TOP_BASELINE = 2
+    MIDDLE = 3
+    BOTTOM = 4
+    BOTTOM_BASELINE = 5
+
+
+# Pre-normalized keys — see the note on `_AUTOSIZE_VALUES`.
+_VERTICAL_ANCHOR_NAMES: dict[str, MsoVerticalAnchor] = {
+    "top": MsoVerticalAnchor.TOP,
+    "topbaseline": MsoVerticalAnchor.TOP_BASELINE,
+    "middle": MsoVerticalAnchor.MIDDLE,
+    "center": MsoVerticalAnchor.MIDDLE,
+    "centre": MsoVerticalAnchor.MIDDLE,
+    "bottom": MsoVerticalAnchor.BOTTOM,
+    "bottombaseline": MsoVerticalAnchor.BOTTOM_BASELINE,
+}
+
+_VERTICAL_ANCHOR_LABELS: dict[int, str] = {
+    MsoVerticalAnchor.MIXED: "mixed",
+    MsoVerticalAnchor.TOP: "top",
+    MsoVerticalAnchor.TOP_BASELINE: "top_baseline",
+    MsoVerticalAnchor.MIDDLE: "middle",
+    MsoVerticalAnchor.BOTTOM: "bottom",
+    MsoVerticalAnchor.BOTTOM_BASELINE: "bottom_baseline",
+}
+
+#: Canonical vertical-anchor names the CLI/MCP advertise.
+VERTICAL_ANCHOR_CHOICES: tuple[str, ...] = ("top", "middle", "bottom")
+
+
+def vertical_anchor_for(name: str | int) -> int:
+    """Friendly vertical-anchor name (or a raw `MsoVerticalAnchor` int) -> the int.
+
+    `"middle"` also answers to `"center"`/`"centre"`; the two baseline modes are
+    reachable by their full names. Raises `ValueError` for an unknown name.
+    """
+    if isinstance(name, bool):
+        raise ValueError(f"invalid vertical anchor: {name!r}")
+    if isinstance(name, int):
+        return int(name)
+    found = _VERTICAL_ANCHOR_NAMES.get(_normalize_name(name))
+    if found is None:
+        choices = ", ".join(VERTICAL_ANCHOR_CHOICES)
+        raise ValueError(f"unknown vertical anchor {name!r}; expected one of: {choices}")
+    return int(found)
+
+
+def vertical_anchor_name(value: Any) -> str:
+    """Friendly name for a `TextFrame.VerticalAnchor` int (e.g. 3 -> "middle")."""
+    try:
+        return _VERTICAL_ANCHOR_LABELS.get(int(value), f"anchor:{int(value)}")
+    except (TypeError, ValueError):
+        return "unknown"
+
+
 class PpPlaceholderType(IntEnum):
     """`PlaceholderFormat.Type` values — the semantic role of a placeholder.
 

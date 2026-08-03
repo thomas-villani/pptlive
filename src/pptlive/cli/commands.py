@@ -41,6 +41,7 @@ from ..constants import (
     ARROWHEAD_SIZE_CHOICES,
     ARROWHEAD_STYLE_CHOICES,
     AUTOSHAPE_CHOICES,
+    AUTOSIZE_CHOICES,
     CHART_TYPE_CHOICES,
     CONNECTOR_CHOICES,
     DASH_STYLE_CHOICES,
@@ -59,6 +60,7 @@ from ..constants import (
     THEME_COLOR_CHOICES,
     THEME_FONT_SCRIPT_CHOICES,
     THEME_FONT_SLOTS,
+    VERTICAL_ANCHOR_CHOICES,
     ZORDER_CHOICES,
 )
 from ..exceptions import EXIT_CODE_FOR, AnchorNotFoundError, PowerPointNotRunningError
@@ -1569,6 +1571,28 @@ def _resolve_shapes(deck: Presentation, anchors: str) -> list[Shape]:
     default=None,
     help="Alternative text for a picture (a drift-proof re-identification handle).",
 )
+@click.option(
+    "--autosize",
+    type=click.Choice(AUTOSIZE_CHOICES),
+    default=None,
+    help='textbox/shape: autofit mode. "none" makes --height binding.',
+)
+@click.option(
+    "--wrap/--no-wrap", "word_wrap", default=None, help="textbox/shape: word wrap on/off."
+)
+@click.option(
+    "--vertical-anchor",
+    "vertical_anchor",
+    type=click.Choice(VERTICAL_ANCHOR_CHOICES),
+    default=None,
+    help="textbox/shape: vertical text position in the frame.",
+)
+@click.option(
+    "--margins",
+    type=float,
+    default=None,
+    help="textbox/shape: all four inner margins in points (per-edge: shape set-text-frame).",
+)
 @_deck_command
 def shape_add(
     ctx: click.Context,
@@ -1593,6 +1617,10 @@ def shape_add(
     line: str | None,
     line_width: float | None,
     alt_text: str | None,
+    autosize: str | None,
+    word_wrap: bool | None,
+    vertical_anchor: str | None,
+    margins: float | None,
 ) -> None:
     """Add a shape to a slide; print its anchor_id, name, type, and geometry."""
     if kind == "picture" and not path:
@@ -1604,6 +1632,17 @@ def shape_add(
     if (cats is None) != (ser is None):
         raise click.UsageError("shape add --kind chart needs both --categories and --series")
     sa_nodes = _parse_nodes(nodes)
+    frame_kw: dict[str, Any] = {
+        "autosize": autosize,
+        "word_wrap": word_wrap,
+        "vertical_anchor": vertical_anchor,
+        "margins": margins,
+    }
+    if kind not in ("textbox", "shape") and any(v is not None for v in frame_kw.values()):
+        raise click.UsageError(
+            "--autosize/--wrap/--vertical-anchor/--margins apply to "
+            "--kind textbox or --kind shape only"
+        )
     shapes = deck.slides[slide_index].shapes  # exit 2 if slide out of range
     with deck.edit(f"CLI: add {kind} on slide {slide_index}"):
         if kind == "textbox":
@@ -1616,6 +1655,7 @@ def shape_add(
                 fill=fill,
                 line=line,
                 line_width=line_width,
+                **frame_kw,
             )
         elif kind == "shape":
             new = shapes.add_shape(
@@ -1628,6 +1668,7 @@ def shape_add(
                 fill=fill,
                 line=line,
                 line_width=line_width,
+                **frame_kw,
             )
         elif kind == "table":
             assert rows is not None and cols is not None  # guarded above
@@ -2520,6 +2561,83 @@ def shape_reset_to_layout(ctx: click.Context, deck: Presentation, anchor_id: str
         {"ok": True, "anchor_id": sh.anchor_id, "restored": restored},
         as_text=not ctx.obj["as_json"],
         text=f"reset {sh.anchor_id} to its layout placeholder",
+    )
+
+
+@shape.command(name="set-text-frame")
+@click.option(
+    "--anchor-id", "anchor_id", required=True, help="Shape to configure (shape:/ph:/shapeid:)."
+)
+@click.option(
+    "--autosize",
+    type=click.Choice(AUTOSIZE_CHOICES),
+    default=None,
+    help='Autofit mode. "none" pins the frame so a height you set is honored.',
+)
+@click.option("--wrap/--no-wrap", "word_wrap", default=None, help="Turn word wrap on or off.")
+@click.option(
+    "--vertical-anchor",
+    "vertical_anchor",
+    type=click.Choice(VERTICAL_ANCHOR_CHOICES),
+    default=None,
+    help="Where text sits vertically in the frame.",
+)
+@click.option(
+    "--margins",
+    type=float,
+    default=None,
+    help="All four inner margins, in points (0 kills the 7.2pt defaults).",
+)
+@click.option(
+    "--margin-left", "margin_left", type=float, default=None, help="Left margin (points)."
+)
+@click.option(
+    "--margin-right", "margin_right", type=float, default=None, help="Right margin (points)."
+)
+@click.option("--margin-top", "margin_top", type=float, default=None, help="Top margin (points).")
+@click.option(
+    "--margin-bottom", "margin_bottom", type=float, default=None, help="Bottom margin (points)."
+)
+@_deck_command
+def shape_set_text_frame(
+    ctx: click.Context,
+    deck: Presentation,
+    anchor_id: str,
+    autosize: str | None,
+    word_wrap: bool | None,
+    vertical_anchor: str | None,
+    margins: float | None,
+    margin_left: float | None,
+    margin_right: float | None,
+    margin_top: float | None,
+    margin_bottom: float | None,
+) -> None:
+    """Set a shape's text-frame container: autofit, wrap, vertical anchor, margins.
+
+    The setter half of `read text-frame-status`. A new text box autosizes to its
+    text, so a height you set drifts until you pass `--autosize none`; PowerPoint's
+    0.1in (7.2pt) inner margins silently eat padding math, so `--margins 0` is the
+    usual precise-layout opener. Prints the resulting frame status.
+    """
+    sh = _resolve_shape(deck, anchor_id)
+    with deck.edit(f"CLI: set text frame {anchor_id}"):
+        status = sh.set_text_frame(
+            autosize=autosize,
+            word_wrap=word_wrap,
+            vertical_anchor=vertical_anchor,
+            margins=margins,
+            margin_left=margin_left,
+            margin_right=margin_right,
+            margin_top=margin_top,
+            margin_bottom=margin_bottom,
+        )
+    emit(
+        {"ok": True, "anchor_id": sh.anchor_id, **status.to_dict()},
+        as_text=not ctx.obj["as_json"],
+        text=(
+            f"{sh.anchor_id}: autosize={status.autosize} wrap={status.word_wrap} "
+            f"anchor={status.vertical_anchor}"
+        ),
     )
 
 
