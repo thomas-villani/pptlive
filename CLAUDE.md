@@ -364,9 +364,37 @@ Wired library + CLI (`shape set-text-frame`; `--autosize`/`--wrap`/`--vertical-a
 + MCP (`ppt_edit` `shape_set_text_frame`, same fields on `shape_add`) + docs + both
 SKILL guides + tests. Also from that review: the exhaustive `set_paragraphs` key table
 (+ `PARAGRAPH_ITEM_KEYS`, unknown keys now raise) and `add_shape(text=)`. **Still open
-from it:** a `crop` verb (`PictureFormat.Crop*` — needs a live spike; the reviewer's
+from it:** the `crop` verb itself (spiked — see below) and an `exec --dry-run` (worth
+noting the ask doesn't fix the reported pain: the reviewer's errors were Python syntax
+errors in their own driver script, which a JSON op-script validator can't catch).
+
+**Picture crop — spiked, not yet built (`scripts/crop_spike.py`, 2026-08-03).** The
+review's one feature request. Its cost is subtle and worth restating: the
 oversize-and-bleed workaround permanently poisons `geometry_report`'s `off_slide`
-signal) and an `exec --dry-run`.
+flag, so the cheapest pre-render lint stops being trustworthy. The net-zero probe
+answered all five questions against live PowerPoint, with **pixel evidence** for the
+one that matters (four differently-coloured edge stripes, crop one edge, sample where
+its stripe was — a transposed mapping shows a different colour, so it cannot pass by
+echoing itself):
+
+1. `CropLeft/Right/Top/Bottom` exist, start at `0.0`, round-trip exactly.
+2. Each crops the edge its name claims (verified per-edge, not assumed).
+3. The unit is **points against the ORIGINAL picture** — not a fraction, not
+   points-of-the-current-shape.
+4. **Cropping shrinks `Shape.Width`/`Height`** (300 → 225 pt). A crop verb that means
+   to hold a layout must re-apply the target geometry *after* — the same shape of
+   gotcha as `set_picture`'s locked aspect ratio.
+5. The modern `PictureFormat.Crop` object **does** marshal here (unlike
+   `ExportAsFixedFormat`) and exposes `PictureWidth`/`PictureHeight`/`PictureOffsetX/Y`/
+   `ShapeWidth`/`ShapeHeight`, so **cover-fit is computable entirely from COM** — no
+   re-opening the source file to measure it.
+
+Design that follows: `Shape.crop(left=/right=/top=/bottom=)` as the raw 1:1 primitive,
+plus `Shape.crop_to_fit(left, top, width, height)` — the "cover" verb the review
+actually wants — which reads the source aspect off `Crop.PictureWidth/Height`, computes
+the symmetric centre-crop, applies it, then sets the box exactly. Validate
+`left+right < PictureWidth` (and the vertical pair) before any COM; non-picture shape
+→ `ValueError`, mirroring `set_picture`.
 
 **Media + narrated video (v1.7), arrangement, and run-level links — the v0.8.0
 round.** (1) **Media** — `Slide.add_audio(path, …)` / `add_video(…)` over
