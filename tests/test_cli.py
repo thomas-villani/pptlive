@@ -554,6 +554,74 @@ def test_shape_set_picture_non_picture_errors(fake_powerpoint, tmp_path) -> None
     assert result.exit_code == 1  # library ValueError -> clean exit 1
 
 
+def test_shape_crop_command(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["shape", "crop", "--anchor-id", "shape:2:3", "--left", "60"])
+    assert result.exit_code == 0
+    payload = _json(result)
+    assert payload["crop"] == {"left": 60.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
+    assert payload["geometry"]["width"] == 270.0  # cropping shrinks the box
+
+
+def test_shape_crop_requires_an_edge(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["shape", "crop", "--anchor-id", "shape:2:3"])
+    assert result.exit_code == 2  # click UsageError
+    assert "at least one of" in result.output
+
+
+def test_shape_crop_non_picture_errors(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["shape", "crop", "--anchor-id", "shape:2:1", "--left", "5"])
+    assert result.exit_code == 1  # library ValueError -> clean exit 1
+
+
+def test_shape_crop_to_fit_cover_command(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main,
+        ["shape", "crop-to-fit", "--anchor-id", "shape:2:3", "--width", "300", "--height", "300"],
+    )
+    assert result.exit_code == 0
+    payload = _json(result)
+    assert payload["fit"] == "cover"
+    assert payload["geometry"]["width"] == 300.0
+    assert payload["geometry"]["height"] == 300.0
+    assert payload["crop"]["left"] == payload["crop"]["right"] > 0.0
+
+
+def test_shape_crop_to_fit_contain_command(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main,
+        [
+            "shape",
+            "crop-to-fit",
+            "--anchor-id",
+            "shape:2:3",
+            "--left",
+            "0",
+            "--top",
+            "0",
+            "--width",
+            "300",
+            "--height",
+            "300",
+            "--fit",
+            "contain",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = _json(result)
+    assert payload["fit"] == "contain"
+    assert payload["crop"] == {"left": 0.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
+    assert payload["geometry"]["height"] == 200.0  # whole picture, letterboxed
+    assert payload["geometry"]["top"] == 50.0  # centred in the 300pt box
+
+
+def test_shape_crop_to_fit_rejects_unknown_fit(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main,
+        ["shape", "crop-to-fit", "--anchor-id", "shape:2:3", "--width", "100", "--fit", "stretch"],
+    )
+    assert result.exit_code == 2  # click.Choice rejects it before the library
+
+
 def test_shape_effect_command(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     result = CliRunner().invoke(
         main,

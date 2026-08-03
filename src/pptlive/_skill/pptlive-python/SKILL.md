@@ -114,6 +114,11 @@ with deck.edit("Build the results slide"):
     deck.slides[4].shapes["Picture 3"].move(top=140)  # by name; absolute, points
     logo = logo.set_picture("logo-v2.png")            # re-source a PICTURE in place (keeps box/name/alt/z); returns a NEW handle
     #   (set_picture_fill on a real picture only fills BEHIND it; animations/hyperlinks/crop are dropped on re-source)
+    logo.crop_to_fit(left=0, top=0, width=960, height=540)            # "cover": fill the box, centre-crop the overflow
+    logo.crop_to_fit(width=960, height=540, fit="contain")            # "contain": whole picture, shrunk + centred (letterboxed)
+    #   crop_to_fit is how you full-bleed a picture. DON'T oversize it and let it hang off the slide — that flags
+    #   off_slide in geometry_report() forever. Box args default to the current box; existing crops are cleared first.
+    logo.crop(left=36)                                # raw per-edge trim in points (0 un-crops); SHRINKS the shape box
 
     panel = shapes.add_shape("rectangle", left=60, top=60, width=840, height=400)
     panel.set_fill(fill="#102030", line="none")       # solid fill/border — NOT font color; "none" = transparent

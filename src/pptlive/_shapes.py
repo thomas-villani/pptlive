@@ -774,6 +774,274 @@ def replace_picture(
     return new_id
 
 
+# -- picture crop (v-next) --------------------------------------------------
+#
+# `PictureFormat.CropLeft/Right/Top/Bottom` trim points off each edge of the
+# picture; `scripts/crop_spike.py` pinned the four properties against live
+# PowerPoint (each cuts the edge its name claims — proved with pixel evidence,
+# not an echo) and `scripts/crop_fit_spike.py` settled the unit question the
+# first probe could not.
+
+#: The four croppable edges, in `PictureFormat.Crop*` spelling order.
+CROP_EDGES: tuple[str, ...] = ("left", "right", "top", "bottom")
+
+#: How `crop_to_fit` reconciles a picture's aspect ratio with the target box.
+FIT_MODES: tuple[str, ...] = ("cover", "contain")
+
+
+def fit_mode_for(name: str) -> str:
+    """Validate a `crop_to_fit` fit mode; returns the canonical name.
+
+    Raises `ValueError` for anything else — the caller runs this **before any
+    COM** so a typo never half-applies.
+    """
+    key = str(name).strip().lower()
+    if key not in FIT_MODES:
+        raise ValueError(f"unknown fit {name!r}; expected one of: {', '.join(FIT_MODES)}")
+    return key
+
+
+def cover_crop_fractions(
+    source_w: float, source_h: float, width: float, height: float
+) -> tuple[float, float]:
+    """Fraction of the source width / height a centred **cover** fit must remove.
+
+    Exactly one of the two is non-zero: a source wider than the target box loses
+    the sides, a taller one loses the top and bottom, an exact aspect match loses
+    nothing. Pure arithmetic (no COM) so the fit math is unit-testable on its own.
+    """
+    source_aspect = source_w / source_h
+    target_aspect = width / height
+    if source_aspect > target_aspect:  # too wide — trim the sides
+        return 1.0 - target_aspect / source_aspect, 0.0
+    if source_aspect < target_aspect:  # too tall — trim top and bottom
+        return 0.0, 1.0 - source_aspect / target_aspect
+    return 0.0, 0.0
+
+
+def contain_size(
+    source_w: float, source_h: float, width: float, height: float
+) -> tuple[float, float]:
+    """The largest `(width, height)` with the source's aspect that fits the box.
+
+    The **contain** counterpart of `cover_crop_fractions`: nothing is cropped, so
+    the picture instead shrinks until both dimensions fit. One dimension lands
+    exactly on the box, the other falls short — that shortfall is the letterbox,
+    which PowerPoint leaves as slide background (there are no matte bars to draw).
+    """
+    scale = min(width / source_w, height / source_h)
+    return source_w * scale, source_h * scale
+
+
+def _crop_prop(edge: str) -> str:
+    """`"left"` -> `"CropLeft"`."""
+    return f"Crop{edge.capitalize()}"
+
+
+def read_crop(com_shape: Any) -> dict[str, float] | None:
+    """`{left, right, top, bottom}` points trimmed off each edge, or None.
+
+    None when the shape has no readable `PictureFormat` (i.e. it isn't a picture).
+    """
+    try:
+        pf = com_shape.PictureFormat
+        return {edge: round(float(getattr(pf, _crop_prop(edge))), 4) for edge in CROP_EDGES}
+    except Exception:
+        return None
+
+
+def _crop_to_dict(com_shape: Any) -> dict[str, float] | None:
+    """The `crop` sub-dict for a shape read — only for a **cropped picture**.
+
+    Omitted (None) for a non-picture and for an uncropped one, so the common read
+    stays lean. It exists because a crop is otherwise invisible in a structured
+    read: cropping shrinks the shape box, so `geometry` alone shows a mysteriously
+    smaller picture with no explanation.
+    """
+    if not is_picture(com_shape):
+        return None
+    crop = read_crop(com_shape)
+    if crop is None or not any(v > 0.0 for v in crop.values()):
+        return None
+    return crop
+
+
+def clear_crop(com_shape: Any) -> None:
+    """Reset all four crops to zero. Caller wraps in `translate_com_errors()`."""
+    pf = com_shape.PictureFormat
+    for edge in CROP_EDGES:
+        setattr(pf, _crop_prop(edge), 0.0)
+
+
+def apply_crop(
+    com_shape: Any,
+    *,
+    left: float | None = None,
+    right: float | None = None,
+    top: float | None = None,
+    bottom: float | None = None,
+) -> None:
+    """Write the passed crops (points off each edge). Caller wraps in errors.
+
+    Only the edges actually passed are touched, so `crop(left=20)` leaves an
+    existing top crop alone.
+    """
+    pf = com_shape.PictureFormat
+    for edge, value in (("left", left), ("right", right), ("top", top), ("bottom", bottom)):
+        if value is not None:
+            setattr(pf, _crop_prop(edge), float(value))
+
+
+def _picture_extent(com_shape: Any) -> tuple[float, float] | None:
+    """The whole picture's `(width, height)` **in crop units**, or None.
+
+    `PictureFormat.Crop` does marshal under our late-bound dispatch (unlike
+    `ExportAsFixedFormat` — confirmed in `scripts/crop_spike.py`), but its
+    `PictureWidth`/`PictureHeight` are **display** points, while `Crop*` takes
+    points of the *original* picture — the two differ on any resized picture, and
+    `scripts/crop_fit_spike.py` caught exactly that (a half-scale picture reported
+    `PictureWidth = 150` for a 300 pt original). So the display extent is divided
+    by the measured scale to land back in crop units, which is what the over-crop
+    guard has to compare against. Returns None if the object is unavailable, in
+    which case the guard is skipped rather than guessed at.
+    """
+    try:
+        crop = com_shape.PictureFormat.Crop
+        display_w, display_h = float(crop.PictureWidth), float(crop.PictureHeight)
+    except Exception:
+        return None
+    scale_x, scale_y = _crop_axis_scale(com_shape, "x"), _crop_axis_scale(com_shape, "y")
+    if scale_x <= 0.0 or scale_y <= 0.0:
+        return None
+    return display_w / scale_x, display_h / scale_y
+
+
+def check_crop_extent(given: dict[str, float], extent: tuple[float, float]) -> None:
+    """Reject a crop that would leave nothing of the picture on one axis.
+
+    `given` is the subset of `{left, right, top, bottom}` actually passed;
+    `extent` is the uncropped `(width, height)` from `_picture_extent`. Raises
+    `ValueError` — run before any COM write.
+    """
+    picture_w, picture_h = extent
+    for axis, (first, second), size in (
+        ("width", ("left", "right"), picture_w),
+        ("height", ("top", "bottom"), picture_h),
+    ):
+        total = float(given.get(first, 0.0)) + float(given.get(second, 0.0))
+        if total > 0.0 and size > 0.0 and total >= size:
+            raise ValueError(
+                f"crop {first}+{second} of {total:g} pt consumes the picture's whole "
+                f"{axis} ({size:g} pt); crop less, or use crop_to_fit()"
+            )
+
+
+def _unlock_aspect(com_shape: Any) -> None:
+    """Best-effort clear of `LockAspectRatio` so an explicit box wins.
+
+    A picture defaults to locked aspect, and a cover-fit box deliberately has a
+    *different* aspect from the picture — without this the height would snap back
+    off the width (the same trap `replace_picture` handles).
+    """
+    try:
+        com_shape.LockAspectRatio = int(MsoTriState.FALSE)
+    except Exception:  # noqa: BLE001 — best-effort; the box is verified below
+        pass
+
+
+def _crop_axis_scale(com_shape: Any, axis: str) -> float:
+    """Display points removed per `1.0` of crop on one axis, **measured live**.
+
+    `Crop*` is in points of the **original picture** — pinned by
+    `scripts/crop_fit_spike.py`, which cropped a picture resized to half its
+    native size and watched `CropLeft = 75` remove only 37.5 display points.
+    (`scripts/crop_spike.py` couldn't settle this: it cropped a picture at native
+    size, where the two readings are numerically identical.) A picture is usually
+    resized, so display points and crop points usually differ, and every fit has
+    to convert between them.
+
+    This measures the ratio rather than deriving it from a native size COM won't
+    report. Two paths:
+
+    * **Already cropped** — solve it from the current state, no mutation at all:
+      `PictureWidth - ShapeWidth == (CropLeft + CropRight) * scale`.
+    * **Uncropped** — that equation is `0 / 0`, so probe: crop a quarter, see what
+      it removed, and put the previous value straight back.
+
+    Returns `1.0` (the naive 1:1 reading) if neither path yields a positive
+    measurement — a zero-extent shape, or a build where cropping doesn't move the
+    box — which keeps callers from dividing by zero.
+    """
+    dim = "Width" if axis == "x" else "Height"
+    edges = ("Left", "Right") if axis == "x" else ("Top", "Bottom")
+    pf = com_shape.PictureFormat
+    shown = float(getattr(com_shape, dim))
+    if shown <= 0.0:
+        return 1.0
+
+    existing = sum(float(getattr(pf, f"Crop{edge}")) for edge in edges)
+    if existing > 0.0:
+        try:
+            crop = pf.Crop
+            full_display = float(crop.PictureWidth if axis == "x" else crop.PictureHeight)
+        except Exception:
+            full_display = 0.0
+        if full_display > shown:
+            return (full_display - shown) / existing
+
+    prop = f"Crop{edges[0]}"
+    previous = float(getattr(pf, prop))
+    probe = shown / 4.0
+    setattr(pf, prop, previous + probe)
+    removed = shown - float(getattr(com_shape, dim))
+    setattr(pf, prop, previous)  # restore the caller's crop, not merely zero it
+    return removed / probe if removed > 0.0 else 1.0
+
+
+def fit_picture(
+    com_shape: Any,
+    *,
+    left: float,
+    top: float,
+    width: float,
+    height: float,
+    fit: str,
+) -> None:
+    """Cover- or contain-fit a picture into a box. Caller wraps in errors.
+
+    Existing crops are cleared first, so the operation is **idempotent** — fitting
+    twice gives the same result as fitting once, and a re-fit to a new box starts
+    from the whole picture rather than compounding.
+    """
+    _unlock_aspect(com_shape)
+    clear_crop(com_shape)
+    source_w, source_h = float(com_shape.Width), float(com_shape.Height)
+    if source_w <= 0.0 or source_h <= 0.0:
+        raise ValueError("crop_to_fit() needs a picture with a positive width and height")
+
+    if fit == "contain":
+        out_w, out_h = contain_size(source_w, source_h, width, height)
+        com_shape.Left = left + (width - out_w) / 2.0
+        com_shape.Top = top + (height - out_h) / 2.0
+        com_shape.Width = out_w
+        com_shape.Height = out_h
+        return
+
+    frac_x, frac_y = cover_crop_fractions(source_w, source_h, width, height)
+    if frac_x > 0.0:
+        cut = (frac_x * source_w) / _crop_axis_scale(com_shape, "x") / 2.0
+        apply_crop(com_shape, left=cut, right=cut)
+    elif frac_y > 0.0:
+        cut = (frac_y * source_h) / _crop_axis_scale(com_shape, "y") / 2.0
+        apply_crop(com_shape, top=cut, bottom=cut)
+    # Cropping SHRINKS the shape box (crop spike A4), so the target box is forced
+    # afterwards — the crop only had to get the *proportions* right.
+    com_shape.Left = left
+    com_shape.Top = top
+    com_shape.Width = width
+    com_shape.Height = height
+
+
 def apply_pattern_fill(
     com_shape: Any,
     *,
@@ -1157,7 +1425,9 @@ def shape_to_dict(com_shape: Any, slide_index: int, z_index: int) -> dict[str, A
     Emits the canonical `anchor_id` (`shape:S:N`) plus the drift-proof `shapeid`
     (`shapeid:S:ID`), `name`, and `id`, the friendly shape `type`, `geometry`
     (points), placeholder kind (or None), and `text` when the shape has a text
-    frame.
+    frame. A **cropped** picture also carries `crop` (`{left, right, top,
+    bottom}`), which is otherwise invisible — cropping shrinks the box, so
+    `geometry` alone would show an unexplained smaller picture.
     """
     d: dict[str, Any] = {
         "anchor_id": f"shape:{slide_index}:{z_index}",
@@ -1190,6 +1460,9 @@ def shape_to_dict(com_shape: Any, slide_index: int, z_index: int) -> dict[str, A
     d["has_media"] = is_media(com_shape)
     if d["has_media"]:
         d["media"] = _media_to_dict(com_shape)
+    cropped = _crop_to_dict(com_shape)
+    if cropped is not None:
+        d["crop"] = cropped
     if has_text_frame(com_shape):
         d["has_text_frame"] = True
         try:
@@ -1791,6 +2064,121 @@ class Shape(Anchor):
                 self._slide.com, com_old, abs_path, self._slide.index, alt_text=alt_text
             )
         return ShapeById(self._slide, new_id)
+
+    def _picture_com(self, verb: str) -> Any:
+        """Resolve this shape's COM object, refusing anything but a picture."""
+        com_shape = self._com_shape()
+        if not is_picture(com_shape):
+            raise ValueError(
+                f"{verb}() needs a picture shape, got "
+                f"{shape_type_name(com_shape.Type)} ({self.anchor_id})"
+            )
+        return com_shape
+
+    def crop(
+        self,
+        *,
+        left: float | None = None,
+        right: float | None = None,
+        top: float | None = None,
+        bottom: float | None = None,
+    ) -> dict[str, Any]:
+        """Trim points off this **picture's** edges. Returns `{crop, geometry}`.
+
+        The raw primitive, 1:1 with PowerPoint's `PictureFormat.CropLeft/Right/
+        Top/Bottom` — each argument is points trimmed off that edge of the
+        picture, and only the edges you pass are touched (so `crop(left=20)`
+        leaves an existing top crop alone). Pass `0` to un-crop an edge.
+
+        **Cropping shrinks the shape box** (pinned live in
+        `scripts/crop_spike.py`: a 300 pt picture cropped 75 pt became 225 pt) —
+        it does not keep the box and letterbox inside it. So if the picture has to
+        hold a layout slot, follow with `resize(...)`, or use `crop_to_fit()`,
+        which does the arithmetic and forces the box for you.
+
+        Raises `ValueError` if this shape isn't a picture, for a negative crop, or
+        for a crop that would consume the whole picture — all **before any COM
+        mutation**. A mutation: wrap in `deck.edit(...)`.
+        """
+        passed = {"left": left, "right": right, "top": top, "bottom": bottom}
+        given = {k: v for k, v in passed.items() if v is not None}
+        if not given:
+            raise ValueError("crop() requires at least one of left=, right=, top=, or bottom=")
+        negative = sorted(k for k, v in given.items() if float(v) < 0.0)
+        if negative:
+            raise ValueError(
+                f"crop() values must be >= 0 points; got a negative "
+                f"{', '.join(negative)} (a crop trims inward from the edge)"
+            )
+        with _com.translate_com_errors():
+            com_shape = self._picture_com("crop")
+            extent = _picture_extent(com_shape)
+            if extent is not None:
+                check_crop_extent(given, extent)
+            apply_crop(com_shape, **given)
+            return {"crop": read_crop(com_shape), "geometry": _geometry_of(com_shape)}
+
+    def crop_to_fit(
+        self,
+        *,
+        left: float | None = None,
+        top: float | None = None,
+        width: float | None = None,
+        height: float | None = None,
+        fit: str = "cover",
+    ) -> dict[str, Any]:
+        """Fit this **picture** to a box, reconciling the aspect mismatch for you.
+
+        The verb the 2026-08-03 Claude Code review asked for: a 2.08:1 panorama
+        into a 16:9 panel used to mean oversizing the picture and letting it hang
+        off the slide, which permanently poisons `geometry_report`'s `off_slide`
+        flag — the cheapest pre-render lint stops being trustworthy. This lands the
+        picture *inside* the box instead, so that signal stays clean.
+
+        `left`/`top`/`width`/`height` are points; each defaults to the picture's
+        current geometry, so `pic.crop_to_fit(width=480, height=270)` re-fits in
+        place. `fit` picks how the aspect mismatch is resolved:
+
+        - `"cover"` (default) — **fill the box completely**, centre-cropping the
+          overflow. The box is honored exactly; some of the picture is hidden.
+        - `"contain"` — **show the whole picture**, shrunk to fit and centred
+          inside the box. Nothing is cropped; the box is honored on one axis and
+          the other falls short (that shortfall is the letterbox — PowerPoint has
+          no matte bars, so the slide background shows through).
+
+        Existing crops are cleared first, so this is **idempotent**: re-fitting to
+        a new box starts from the whole picture instead of compounding. The
+        picture's aspect ratio is never stretched — a picture that was previously
+        cropped *and* manually resized is fitted at the aspect it currently
+        displays, not its original one.
+
+        Returns `{fit, crop, geometry}`. Raises `ValueError` if this shape isn't a
+        picture, for an unknown `fit`, or for a non-positive `width`/`height` —
+        all **before any COM mutation**. A mutation: wrap in `deck.edit(...)`.
+        """
+        mode = fit_mode_for(fit)
+        for name, value in (("width", width), ("height", height)):
+            if value is not None and float(value) <= 0.0:
+                raise ValueError(f"crop_to_fit() {name} must be > 0 points, got {value!r}")
+        with _com.translate_com_errors():
+            com_shape = self._picture_com("crop_to_fit")
+            box_left = float(com_shape.Left) if left is None else float(left)
+            box_top = float(com_shape.Top) if top is None else float(top)
+            box_w = float(com_shape.Width) if width is None else float(width)
+            box_h = float(com_shape.Height) if height is None else float(height)
+            fit_picture(
+                com_shape,
+                left=box_left,
+                top=box_top,
+                width=box_w,
+                height=box_h,
+                fit=mode,
+            )
+            return {
+                "fit": mode,
+                "crop": read_crop(com_shape),
+                "geometry": _geometry_of(com_shape),
+            }
 
     def set_pattern_fill(
         self,

@@ -627,6 +627,42 @@ pptlive shape picture-fill  --anchor-id shape:4:3 --path background.png
 pptlive shape pattern-fill  --anchor-id shape:4:3 --pattern percent_50 --fore "#1E74B5" --back "#fff"
 ```
 
+### `shape crop` / `shape crop-to-fit`
+
+Crop a **picture**. `crop` is the raw primitive — points off each named edge
+(`0` un-crops one), and only the edges you pass change. Note that **cropping
+shrinks the shape box** (a 300 pt picture cropped 75 pt becomes 225 pt), so it
+alone won't hold a layout slot.
+
+`crop-to-fit` is the verb you usually want: give it a box and it reconciles the
+aspect mismatch for you.
+
+- `--fit cover` (default) — **fill the box exactly**, centre-cropping the
+  overflow. This is the full-bleed move, and it lands the picture *inside* the
+  slide instead of oversizing it and letting it hang off the edge — which would
+  permanently poison `slide geometry`'s `off_slide` flag.
+- `--fit contain` — **show the whole picture**, shrunk to fit and centred in the
+  box. Nothing is cropped; the box is met on one axis and the other falls short
+  (that shortfall is the letterbox — the slide background shows through).
+
+`--left`/`--top`/`--width`/`--height` each default to the picture's current
+geometry, and any existing crop is cleared first, so re-fitting never compounds.
+
+```bash
+# A 2.08:1 panorama, full-bleed into a 16:9 title panel
+pptlive shape crop-to-fit --anchor-id shape:4:3 --left 0 --top 0 --width 960 --height 540
+
+# The whole picture, letterboxed into the same panel instead
+pptlive shape crop-to-fit --anchor-id shape:4:3 --width 960 --height 540 --fit contain
+
+# Raw: shave 36 pt off the left, then restore the box yourself
+pptlive shape crop   --anchor-id shape:4:3 --left 36
+pptlive shape resize --anchor-id shape:4:3 --width 480
+```
+
+A cropped picture reports its `crop` (`{left, right, top, bottom}`) in `slide
+read` / `shapes`; an uncropped one omits the key.
+
 ### `shape effect`
 
 Set a shape's **shadow / glow / soft-edge / reflection** (the read reports an

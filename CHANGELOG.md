@@ -9,6 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Picture crop — `Shape.crop` + `Shape.crop_to_fit`.** The Claude Code authoring
+review's one feature request. Without it, a full-bleed picture meant oversizing
+the image and letting it hang off the slide edge — which permanently poisons
+`geometry_report`'s `off_slide` flag, so the cheapest pre-render lint stops being
+trustworthy. That was the real cost, not the pixels.
+
+- **`Shape.crop(*, left=, right=, top=, bottom=)`** — the raw primitive, 1:1 with
+  `PictureFormat.Crop*`: points off each named edge (`0` un-crops one), and only
+  the edges passed are touched. Returns `{crop, geometry}`. Documented footgun:
+  **cropping shrinks the shape box** (300 pt cropped 75 pt → 225 pt) rather than
+  letterboxing inside it, so it alone won't hold a layout slot.
+- **`Shape.crop_to_fit(*, left=, top=, width=, height=, fit="cover")`** — the verb
+  the review actually wanted. `fit="cover"` fills the box **exactly** and
+  centre-crops the overflow (the full-bleed move, with the picture staying *on*
+  the slide); `fit="contain"` shrinks the whole picture to fit and centres it,
+  letterboxed. Each box argument defaults to the picture's current geometry, and
+  existing crops are cleared first, so re-fitting never compounds. The picture's
+  aspect is never stretched.
+- **Shape reads carry `crop`** for a cropped picture (omitted otherwise) — a crop
+  is invisible in a structured read without it, since it shrinks the box and
+  `geometry` alone would show an unexplained smaller picture.
+- Wired **library + CLI (`shape crop`, `shape crop-to-fit --fit`) + MCP
+  (`shape_crop` / `shape_crop_to_fit`) + docs + both SKILL guides + tests**.
+
+**The crop unit was the whole problem, and a second spike settled it.**
+`scripts/crop_spike.py` had cropped a picture at its *native* size, where "points
+of the original picture" and "points of the displayed shape" are numerically
+identical — so it could not tell them apart, the same blind spot as validating a
+constant against its own echo. `scripts/crop_fit_spike.py` resizes the picture
+first, making a wrong answer produce a *different* number, and found:
+
+- A crop point is a point of the **original picture** (`CropLeft = 75` on a
+  half-scale picture removed **37.5** display points). `crop_to_fit` therefore
+  *measures* the display-to-crop ratio at runtime rather than assuming it.
+- **`Crop.PictureWidth` is a different unit — display points** (150.00 for that
+  same 300 pt original). This spike's first run asserted otherwise and **failed,
+  catching a real bug**: `crop`'s over-crop guard compared the requested crop
+  (original points) against `PictureWidth` (display points), so it would have
+  rejected valid crops on a shrunk picture and allowed a shape-destroying one on
+  an enlarged picture. The guard now converts through the measured scale, and the
+  probe it uses restores the caller's existing crop instead of zeroing the edge it
+  borrowed. The fake COM was corrected to reproduce the mismatch, so the unit
+  tests now pin it too.
+- Cover-fit was verified with **pixel evidence**, not an echo: a four-stripe
+  square source into a 2:1 box lost the top and bottom stripes and kept the left
+  and right ones — a transposed axis shows the opposite pair.
+
 **Text-frame control — the setter half of `text_frame_status`.** The one real API
 gap in the Claude Code authoring review: `text_frame_status()` reported
 `overflow_risk: "possible"`, autofit mode, wrap, and margins, but nothing could

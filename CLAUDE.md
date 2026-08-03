@@ -56,7 +56,8 @@ src/pptlive/
   _shapes.py         ShapeCollection / Shape / ShapeById  (a Shape IS an Anchor when it has a text frame; geometry + fill/line + z-order + animate() + set_picture() re-source verbs;
                      group()/ungroup()/align()/distribute()/add_connector() arrangement;
                      has_media/media + set_media_playback() [v1.7];
-                     text_frame_status()/set_text_frame() autofit+wrap+anchor+margins [v-next])
+                     text_frame_status()/set_text_frame() autofit+wrap+anchor+margins;
+                     crop()/crop_to_fit(fit="cover"|"contain") picture crop [v-next])
   _anchors.py        Anchor base + Paragraph, Cell, Notes  (set_paragraphs / reset_format + line-spacing unit knobs [v1.6]; set_link()/remove_link()/links() text-run hyperlinks)
   _tables.py         Table / Cell  (a table is a shape; cell:S:N:R:C anchors; cell fill + borders, row/column-wise; add/delete row+column)  [v0.5/v-next]
   _charts.py         Chart       (a chart is a shape; data via embedded Excel)         [v0.7]
@@ -368,7 +369,7 @@ from it:** the `crop` verb itself (spiked — see below) and an `exec --dry-run`
 noting the ask doesn't fix the reported pain: the reviewer's errors were Python syntax
 errors in their own driver script, which a JSON op-script validator can't catch).
 
-**Picture crop — spiked, not yet built (`scripts/crop_spike.py`, 2026-08-03).** The
+**Picture crop — the COM semantics (`scripts/crop_spike.py`, 2026-08-03).** The
 review's one feature request. Its cost is subtle and worth restating: the
 oversize-and-bleed workaround permanently poisons `geometry_report`'s `off_slide`
 flag, so the cheapest pre-render lint stops being trustworthy. The net-zero probe
@@ -387,14 +388,46 @@ echoing itself):
 5. The modern `PictureFormat.Crop` object **does** marshal here (unlike
    `ExportAsFixedFormat`) and exposes `PictureWidth`/`PictureHeight`/`PictureOffsetX/Y`/
    `ShapeWidth`/`ShapeHeight`, so **cover-fit is computable entirely from COM** — no
-   re-opening the source file to measure it.
+   re-opening the source file to measure it. (But `PictureWidth` is in *display*
+   points, not crop points — see the follow-up spike below.)
 
-Design that follows: `Shape.crop(left=/right=/top=/bottom=)` as the raw 1:1 primitive,
-plus `Shape.crop_to_fit(left, top, width, height)` — the "cover" verb the review
-actually wants — which reads the source aspect off `Crop.PictureWidth/Height`, computes
-the symmetric centre-crop, applies it, then sets the box exactly. Validate
-`left+right < PictureWidth` (and the vertical pair) before any COM; non-picture shape
-→ `ValueError`, mirroring `set_picture`.
+**Picture crop — shipped (v-next), and the second spike is the story.**
+`Shape.crop(*, left=/right=/top=/bottom=)` is the raw 1:1 primitive (points off each
+named edge, `0` un-crops one, only the edges passed are touched);
+`Shape.crop_to_fit(*, left=, top=, width=, height=, fit="cover")` is the verb the
+review wanted — `"cover"` fills the box **exactly** and centre-crops the overflow,
+`"contain"` shrinks the whole picture to fit and centres it (letterboxed; PowerPoint
+has no matte bars, so the slide background shows through). Box args default to the
+picture's current geometry, existing crops are cleared first (so re-fitting never
+compounds), and the aspect is never stretched. Both return `{crop, geometry}`
+(`crop_to_fit` adds `fit`); a **cropped** picture now echoes `crop` in shape reads,
+since a crop is otherwise invisible — it shrinks the box, so `geometry` alone shows
+an unexplained smaller picture. Non-picture → `ValueError`, mirroring `set_picture`.
+
+*The unit question the first spike could not answer is what mattered.*
+`crop_spike.py` cropped a picture at its **native size**, where "points of the
+original picture" and "points of the displayed shape" are numerically identical —
+the same blind spot as validating a constant against its own echo.
+`scripts/crop_fit_spike.py` **resizes the picture first**, so a wrong answer produces
+a different number, and it found: (a) a crop point is a point of the **original
+picture** (`CropLeft = 75` on a half-scale picture removed **37.5** display points),
+so `_crop_axis_scale` *measures* the display↔crop ratio at runtime instead of
+assuming it; and (b) **`Crop.PictureWidth` is a different unit — display points**
+(150.00 for that 300 pt original). (b) **caught a real bug**: the over-crop guard
+compared the requested crop (original points) against `PictureWidth` (display
+points), so it would have rejected valid crops on a shrunk picture and allowed a
+shape-destroying one on an enlarged picture. `_picture_extent` now divides through
+the measured scale, and the scale probe **restores the caller's existing crop**
+rather than zeroing the edge it borrowed. The fake COM (`_FakePictureFormat`) was
+corrected to reproduce the unit mismatch at a deliberate 0.5 display scale, so a
+1:1 confusion fails in unit tests too. Cover-fit is verified with **pixel
+evidence** — a four-stripe square source into a 2:1 box loses the top and bottom
+stripes and keeps the left and right ones; a transposed axis shows the opposite
+pair. Wired library + CLI (`shape crop`, `shape crop-to-fit --fit`) + MCP
+(`shape_crop` with `crop_left/right/top/bottom` — deliberately **not** the
+positional `left`/`top` — and `shape_crop_to_fit`) + docs + both SKILL guides +
+tests. Still open on the edit surface: shape-type swap, table cell merge, SmartArt
+node fill / structural add-delete.
 
 **Media + narrated video (v1.7), arrangement, and run-level links — the v0.8.0
 round.** (1) **Media** — `Slide.add_audio(path, …)` / `add_video(…)` over
