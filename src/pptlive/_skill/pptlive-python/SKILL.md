@@ -237,7 +237,16 @@ PowerPoint's text model leaks sharp edges through the API. The high-value ones:
 - **Line spacing has two units.** `format_paragraph(line_spacing=1.5)` is a **multiple**; `format_paragraph(line_spacing_points=24)` is **exact points**. `line_spacing=24` (a 24× multiple) is rejected with `ValueError` unless `force=True`. Spacing before/after mirrors this: `space_before`/`space_after` are points, `space_before_lines`/`space_after_lines` are multiples.
 - **`\n` is a paragraph break, `\v` a soft one.** `set_text("a\nb")` makes two addressable `para:`s. To author a list without relying on that inference, use `set_paragraphs([...])` (one item = one paragraph; a newline *inside* an item becomes a soft break).
 - **No "clear formatting" primitive.** Re-setting text doesn't drop run overrides. Recover with `anchor.reset_format()` (paragraph spacing → single/0/0) and, for a placeholder, `shape.reset_to_layout()` (geometry + default font size from the layout).
-- **Diagnostics:** `shape.paragraphs.list()` now carries `space_before`/`space_after`/`line_spacing` as `{value, mode}` plus `run_sizes` (distinct per-run sizes — spot a stray 5 pt run). `shape.text_frame_status()` → `TextFrameStatus(autosize, word_wrap, margins, overflow_risk)` when text looks clipped.
+- **Diagnostics:** `shape.paragraphs.list()` now carries `space_before`/`space_after`/`line_spacing` as `{value, mode}` plus `run_sizes` (distinct per-run sizes — spot a stray 5 pt run). `shape.text_frame_status()` → `TextFrameStatus(autosize, word_wrap, vertical_anchor, margins, overflow_risk)` when text looks clipped.
+- **Precise layout — `shape.set_text_frame(...)`** is the setter half of that read, taking the same knobs: `autosize` (`"none"`/`"shape_to_fit_text"`/`"text_to_fit_shape"`), `word_wrap`, `vertical_anchor` (`"top"`/`"middle"`/`"bottom"`), `margins` (all four, points) and `margin_left`/`margin_right`/`margin_top`/`margin_bottom`. It returns the resulting status. Two knobs carry the weight: **`autosize="none"`** — a new text box grows to fit its text, so a `height=` you pass is advisory until autofit is off — and **`margins=0`**, because PowerPoint's 0.1in (7.2pt) inner margins silently eat padding math. `add_textbox(...)` / `add_shape(...)` accept the same arguments, so a box can be created already pinned:
+
+```python
+with deck.edit("Pinned callout"):
+    box = deck.slides[4].shapes.add_textbox(
+        "Q3 revenue", left=60, top=40, width=300, height=44,
+        autosize="none", margins=0, vertical_anchor="middle",   # geometry is now exact
+    )
+```
 
 ```python
 # Field reference — exact COM mapping per formatting kwarg:

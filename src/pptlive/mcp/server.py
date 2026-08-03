@@ -376,6 +376,14 @@ def ppt_edit(
     width: float | None = None,
     height: float | None = None,
     alt_text: str | None = None,
+    autosize: Literal["none", "shape_to_fit_text", "text_to_fit_shape"] | None = None,
+    word_wrap: bool | None = None,
+    vertical_anchor: Literal["top", "middle", "bottom"] | None = None,
+    margins: float | None = None,
+    margin_left: float | None = None,
+    margin_right: float | None = None,
+    margin_top: float | None = None,
+    margin_bottom: float | None = None,
     link: bool = False,
     autoplay: bool = True,
     hide_icon: bool = True,
@@ -503,7 +511,21 @@ def ppt_edit(
       `alt_text`), "table" (`rows`+`cols`), "chart" (`chart_type`, optional
       `categories`+`series`), or "smartart" (`smartart_kind` e.g. "process"/
       "cycle"/"orgchart", optional `nodes`). Optional `left`/`top`/`width`/`height`;
-      textbox/shape also take `fill_color`/`line_color` (hex or "none") + `line_width`.
+      textbox/shape also take `fill_color`/`line_color` (hex or "none") + `line_width`,
+      plus the text-frame knobs listed under "shape_set_text_frame" below. **A new
+      textbox autosizes to its text, so a `height` you pass is advisory until you
+      also pass `autosize="none"`** — that plus `margins=0` is the precise-layout
+      opener.
+    - "shape_set_text_frame": set the text-frame container on an existing shape —
+      `autosize` ("none" pins the frame so a set height is honored; "shape_to_fit_text"
+      grows the shape; "text_to_fit_shape" shrinks the text), `word_wrap` (bool),
+      `vertical_anchor` ("top"/"middle"/"bottom"), and the inner margins in points:
+      `margins` sets all four at once, `margin_left`/`margin_right`/`margin_top`/
+      `margin_bottom` set or override one edge. At least one is required. This is the
+      setter half of read op="text_frame_status" — when that reports
+      `overflow_risk: "possible"`, this is what acts on it. PowerPoint's default
+      0.1in (7.2pt) margins silently eat padding math, so `margins=0` is the usual
+      first move for precise layout. Returns the resulting frame status.
     - "media_add": insert audio/video narration on `slide` from `path` (embedded;
       `link=true` keeps it on disk). `kind`="audio"|"video". Defaults: `autoplay`
       plays on entry, `hide_icon` hides the audio icon while idle, `pace_slide`
@@ -747,6 +769,14 @@ def ppt_edit(
         "width": width,
         "height": height,
         "alt_text": alt_text,
+        "autosize": autosize,
+        "word_wrap": word_wrap,
+        "vertical_anchor": vertical_anchor,
+        "margins": margins,
+        "margin_left": margin_left,
+        "margin_right": margin_right,
+        "margin_top": margin_top,
+        "margin_bottom": margin_bottom,
         "link": link,
         "autoplay": autoplay,
         "hide_icon": hide_icon,

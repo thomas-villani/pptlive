@@ -194,6 +194,60 @@ def test_read_text_frame_status(fake_powerpoint: Any) -> None:
     assert out["margins"]["top"] == 3.6
 
 
+def test_read_text_frame_status_reports_vertical_anchor(fake_powerpoint: Any) -> None:
+    assert ppt_read("text_frame_status", anchor_id="ph:2:body")["vertical_anchor"] == "top"
+
+
+def test_edit_shape_set_text_frame(fake_powerpoint: Any) -> None:
+    out = ppt_edit(
+        "shape_set_text_frame",
+        anchor_id="ph:2:body",
+        autosize="none",
+        word_wrap=False,
+        vertical_anchor="middle",
+        margins=0.0,
+    )
+    assert out["ok"] is True
+    assert out["autosize"] == "none"
+    assert out["word_wrap"] is False
+    assert out["vertical_anchor"] == "middle"
+    assert out["margins"] == {"left": 0.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
+    assert out["overflow_risk"] == "possible"  # autofit off — text can clip now
+    assert out["shapeid"].startswith("shapeid:2:")  # drift-proof handle echoed
+
+
+def test_edit_shape_set_text_frame_needs_an_option(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError, match="at least one"):
+        ppt_edit("shape_set_text_frame", anchor_id="ph:2:body")
+
+
+def test_edit_shape_set_text_frame_rejects_bad_value(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError, match="invalid_args"):
+        ppt_edit("shape_set_text_frame", anchor_id="ph:2:body", margins=-5.0)
+
+
+def test_edit_shape_add_takes_text_frame_options(fake_powerpoint: Any) -> None:
+    out = ppt_edit(
+        "shape_add",
+        slide=2,
+        kind="textbox",
+        text="Pinned",
+        height=40.0,
+        autosize="none",
+        margins=0.0,
+    )
+    status = ppt_read("text_frame_status", anchor_id=out["anchor_id"])
+    assert status["autosize"] == "none"  # the passed height is now binding
+    assert status["margins"]["left"] == 0.0
+
+
+def test_edit_shape_add_rejects_frame_options_on_a_picture(fake_powerpoint: Any, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    img = tmp_path / "x.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    with pytest.raises(ToolError, match="textbox"):
+        ppt_edit("shape_add", slide=2, kind="picture", path=str(img), autosize="none")
+
+
 def test_read_notes_has_no_paragraphs_key(fake_powerpoint: Any) -> None:
     out = ppt_read("anchor", anchor_id="notes:1")
     assert out["text"] == "Lead with the vision."

@@ -126,6 +126,7 @@ class EditOp(StrEnum):
     SHAPE_CLEAR_ANIMATIONS = "shape_clear_animations"
     SLIDE_CLEAR_ANIMATIONS = "slide_clear_animations"
     SHAPE_RESET_LAYOUT = "shape_reset_layout"
+    SHAPE_SET_TEXT_FRAME = "shape_set_text_frame"
     SHAPE_GRADIENT_FILL = "shape_gradient_fill"
     SHAPE_PICTURE_FILL = "shape_picture_fill"
     SHAPE_SET_PICTURE = "shape_set_picture"
@@ -614,11 +615,21 @@ def _edit_shape_add(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
         "line": p.get("line_color"),
         "line_width": p.get("line_width"),
     }
+    frame_kw = _text_frame_kwargs(p)
+    if frame_kw and kind not in ("textbox", "shape"):
+        raise BatchOpError(
+            f"invalid_args: the text-frame options ({', '.join(sorted(frame_kw))}) apply to "
+            f"kind='textbox' or kind='shape' only, got {kind!r}"
+        )
     if kind == "textbox":
-        created = shapes.add_textbox(p.get("text") or "", **fill_kw, **geom)
+        created = shapes.add_textbox(p.get("text") or "", **fill_kw, **geom, **frame_kw)
     elif kind == "shape":
         created = shapes.add_shape(
-            p.get("shape_type") or "rectangle", text=p.get("text") or "", **fill_kw, **geom
+            p.get("shape_type") or "rectangle",
+            text=p.get("text") or "",
+            **fill_kw,
+            **geom,
+            **frame_kw,
         )
     elif kind == "table":
         _require(
@@ -770,6 +781,38 @@ def _edit_shape_reset_layout(deck: Presentation, p: dict[str, Any]) -> dict[str,
     sh = _resolve_shape(deck, p.get("anchor_id"))
     restored = sh.reset_to_layout()
     return {"ok": True, "anchor_id": sh.anchor_id, "shapeid": sh.shapeid, "restored": restored}
+
+
+#: `shape_set_text_frame` params -> `Shape.set_text_frame` kwargs. Also reused by
+#: `shape_add`, where the same knobs configure the frame at creation time.
+_TEXT_FRAME_PARAMS: tuple[str, ...] = (
+    "autosize",
+    "word_wrap",
+    "vertical_anchor",
+    "margins",
+    "margin_left",
+    "margin_right",
+    "margin_top",
+    "margin_bottom",
+)
+
+
+def _text_frame_kwargs(p: dict[str, Any]) -> dict[str, Any]:
+    """The text-frame knobs present in an op's params (absent keys stay unset)."""
+    return {k: p[k] for k in _TEXT_FRAME_PARAMS if p.get(k) is not None}
+
+
+@edit_op(EditOp.SHAPE_SET_TEXT_FRAME)
+def _edit_shape_set_text_frame(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    sh = _resolve_shape(deck, p.get("anchor_id"))
+    kwargs = _text_frame_kwargs(p)
+    _require(
+        bool(kwargs),
+        "edit op='shape_set_text_frame' needs at least one of autosize, word_wrap, "
+        "vertical_anchor, margins, margin_left/right/top/bottom",
+    )
+    status = sh.set_text_frame(**kwargs)
+    return {"ok": True, "anchor_id": sh.anchor_id, "shapeid": sh.shapeid, **status.to_dict()}
 
 
 @edit_op(EditOp.SHAPE_GRADIENT_FILL)

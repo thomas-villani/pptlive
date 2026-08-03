@@ -153,13 +153,14 @@ frame.
 
 `read text-frame-status --anchor-id shape:4:3` reports a shape's autofit state
 when text looks clipped or overflowing — `autosize` (the autofit mode),
-`word_wrap`, the four `margins` (points), and an `overflow_risk` flag
-(`"possible"` when autosize is off so text can clip, `"low"` when an autofit mode
-is active, `"unknown"` for an unrecognized autosize mode). All reads; the view
-never moves.
+`word_wrap`, `vertical_anchor`, the four `margins` (points), and an
+`overflow_risk` flag (`"possible"` when autosize is off so text can clip, `"low"`
+when an autofit mode is active, `"unknown"` for an unrecognized autosize mode).
+All reads; the view never moves. To *act* on what it reports, see
+[`shape set-text-frame`](#shape-set-text-frame---anchor-id-id).
 
 ```json
-{"anchor_id": "shape:4:3", "autosize": "none", "word_wrap": true,
+{"anchor_id": "shape:4:3", "autosize": "none", "word_wrap": true, "vertical_anchor": "top",
  "margins": {"left": 7.2, "right": 7.2, "top": 3.6, "bottom": 3.6}, "overflow_risk": "possible"}
 ```
 
@@ -954,6 +955,46 @@ pptlive shape reset-to-layout --anchor-id ph:4:body
 
 The reliable repair sequence is **`read anchor` → `reset-format` → `shape
 reset-to-layout` → `set-paragraphs` → `slide export`** (render and check).
+
+### `shape set-text-frame --anchor-id ID`
+
+The setter half of [`read text-frame-status`](#read-anchor---anchor-id-id) — the
+verbs for **precise layout**, and the reason you no longer need the `.com` escape
+hatch to get it. At least one option is required; the resulting frame status is
+printed.
+
+| option | effect |
+| --- | --- |
+| `--autosize none\|shape_to_fit_text\|text_to_fit_shape` | Autofit mode. **`none` is the important one** — a new text box grows to fit its text, so a `--height` you pass is advisory until you turn autofit off. |
+| `--wrap` / `--no-wrap` | Word wrap on/off. |
+| `--vertical-anchor top\|middle\|bottom` | Where text sits vertically in the frame. |
+| `--margins N` | All four inner margins at once, in points. |
+| `--margin-left/-right/-top/-bottom N` | One edge; set *after* `--margins`, so `--margins 0 --margin-left 12` is a well-defined "flush except the left gutter". |
+
+PowerPoint's inner margins default to 0.1 in (**7.2 pt** left/right, 3.6 pt
+top/bottom), which silently eats padding math — `--margins 0` is the usual first
+move when you're positioning to the point.
+
+```bash
+# Pin a box so its geometry is honored exactly, with no internal padding.
+pptlive shape add --slide 4 --kind textbox --text "Q3" --left 60 --top 40 \
+  --width 300 --height 44 --autosize none --margins 0 --vertical-anchor middle
+
+# Or fix one after the fact.
+pptlive shape set-text-frame --anchor-id shape:4:3 --autosize none --margins 0
+```
+
+```json
+{"ok": true, "anchor_id": "shape:4:3", "autosize": "none", "word_wrap": true,
+ "vertical_anchor": "middle", "margins": {"left": 0.0, "right": 0.0, "top": 0.0, "bottom": 0.0},
+ "overflow_risk": "possible"}
+```
+
+`shape add --kind textbox|shape` takes `--autosize`, `--wrap/--no-wrap`,
+`--vertical-anchor`, and `--margins` directly, so a box can be created already
+pinned; per-edge margins live on `set-text-frame`. Passing them with another
+`--kind` is a usage error (exit 2). An unknown autosize/anchor name or a negative
+margin is rejected **before any COM call**, so a bad request never half-applies.
 
 ### `format-text --anchor-id ID [...]`
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from pptlive import constants as K
 from pptlive.exceptions import AnchorNotFoundError, NoTextFrameError
 
 
@@ -128,9 +129,168 @@ def test_text_frame_status(deck) -> None:  # type: ignore[no-untyped-def]
     assert st.to_dict()["autosize"] == "text_to_fit_shape"
 
 
+def test_text_frame_status_reports_vertical_anchor(deck) -> None:  # type: ignore[no-untyped-def]
+    st = deck.slides[2].shapes[2].text_frame_status()
+    assert st.vertical_anchor == "top"  # msoAnchorTop, the default
+    assert st.to_dict()["vertical_anchor"] == "top"
+
+
 def test_text_frame_status_no_frame_raises(deck) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(NoTextFrameError):
         deck.slides[3].shapes[2].text_frame_status()  # "Line 2" has no text frame
+
+
+# -- set_text_frame (the setter half of the diagnostic) ---------------------
+
+
+def test_set_text_frame_sets_every_knob(deck) -> None:  # type: ignore[no-untyped-def]
+    shape = deck.slides[2].shapes[2]
+    st = shape.set_text_frame(
+        autosize="none", word_wrap=False, vertical_anchor="middle", margins=0.0
+    )
+    tf = shape.com.TextFrame
+    assert int(shape.com.TextFrame2.AutoSize) == 0  # msoAutoSizeNone
+    assert int(tf.WordWrap) == 0
+    assert int(tf.VerticalAnchor) == 3  # msoAnchorMiddle
+    assert (tf.MarginLeft, tf.MarginRight, tf.MarginTop, tf.MarginBottom) == (0.0, 0.0, 0.0, 0.0)
+    # The return value is the resulting status, so a caller sees the effect.
+    assert st.autosize == "none"
+    assert st.word_wrap is False
+    assert st.vertical_anchor == "middle"
+    assert st.overflow_risk == "possible"  # autosize off — text can now clip
+
+
+def test_set_text_frame_margins_scalar_then_per_edge_override(deck) -> None:  # type: ignore[no-untyped-def]
+    # margins= sets all four; a specific margin_* then overrides that one edge.
+    st = deck.slides[2].shapes[2].set_text_frame(margins=0.0, margin_left=12.0)
+    assert st.margins == {"left": 12.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
+
+
+def test_set_text_frame_partial_leaves_others_alone(deck) -> None:  # type: ignore[no-untyped-def]
+    st = deck.slides[2].shapes[2].set_text_frame(word_wrap=False)
+    assert st.word_wrap is False
+    assert st.autosize == "text_to_fit_shape"  # untouched
+    assert st.margins["left"] == 7.2  # untouched
+
+
+def test_set_text_frame_autosize_aliases(deck) -> None:  # type: ignore[no-untyped-def]
+    shape = deck.slides[2].shapes[2]
+    assert shape.set_text_frame(autosize="off").autosize == "none"
+    assert shape.set_text_frame(autosize="grow").autosize == "shape_to_fit_text"
+    assert shape.set_text_frame(autosize="shrink").autosize == "text_to_fit_shape"
+
+
+def test_set_text_frame_accepts_its_own_canonical_names(deck) -> None:  # type: ignore[no-untyped-def]
+    # Regression: the multi-word canonical names round-trip. They were initially
+    # written into the lookup with underscores, but `_normalize_name` strips
+    # non-alphanumerics — so every name the CHOICES list advertised was rejected
+    # while the single-word aliases worked. The live spike caught it; the earlier
+    # unit tests only exercised aliases, which is exactly why they missed it.
+    shape = deck.slides[2].shapes[2]
+    for name in K.AUTOSIZE_CHOICES:
+        assert shape.set_text_frame(autosize=name).autosize == name
+    for name in K.VERTICAL_ANCHOR_CHOICES:
+        assert shape.set_text_frame(vertical_anchor=name).vertical_anchor == name
+
+
+def test_every_advertised_choice_coerces() -> None:
+    # The same trap, guarded at the constants layer for both new enums.
+    for name in K.AUTOSIZE_CHOICES:
+        assert K.autosize_name(K.autosize_for(name)) == name
+    for name in K.VERTICAL_ANCHOR_CHOICES:
+        assert K.vertical_anchor_name(K.vertical_anchor_for(name)) == name
+
+
+def test_set_text_frame_anchor_aliases(deck) -> None:  # type: ignore[no-untyped-def]
+    shape = deck.slides[2].shapes[2]
+    assert shape.set_text_frame(vertical_anchor="center").vertical_anchor == "middle"
+    assert shape.set_text_frame(vertical_anchor="Top Baseline").vertical_anchor == "top_baseline"
+
+
+def test_set_text_frame_requires_an_argument(deck) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError, match="at least one"):
+        deck.slides[2].shapes[2].set_text_frame()
+
+
+def test_set_text_frame_rejects_bad_values_before_com(deck) -> None:  # type: ignore[no-untyped-def]
+    shape = deck.slides[2].shapes[2]
+    for kwargs in (
+        {"autosize": "enormous"},
+        {"vertical_anchor": "sideways"},
+        {"margins": -1.0},
+        {"margin_top": -0.5},
+    ):
+        with pytest.raises(ValueError):
+            shape.set_text_frame(**kwargs)  # type: ignore[arg-type]
+    # Nothing was written — the whole point of validating before COM.
+    assert int(shape.com.TextFrame.WordWrap) == -1
+    assert shape.com.TextFrame.MarginLeft == 7.2
+
+
+def test_set_text_frame_no_frame_raises(deck) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(NoTextFrameError):
+        deck.slides[3].shapes[2].set_text_frame(autosize="none")
+
+
+def test_add_textbox_accepts_text_frame_kwargs(deck) -> None:  # type: ignore[no-untyped-def]
+    # The reported gap: a new text box autosizes, so a passed height drifts.
+    # autosize="none" + margins=0 is the precise-layout opener.
+    box = deck.slides[3].shapes.add_textbox(
+        "Tight", height=40.0, autosize="none", margins=0.0, vertical_anchor="middle"
+    )
+    st = box.text_frame_status()
+    assert st.autosize == "none"
+    assert st.vertical_anchor == "middle"
+    assert st.margins == {"left": 0.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
+
+
+def test_add_shape_accepts_text_frame_kwargs(deck) -> None:  # type: ignore[no-untyped-def]
+    rect = deck.slides[3].shapes.add_shape(
+        "rectangle", text="Centered", vertical_anchor="middle", word_wrap=False
+    )
+    st = rect.text_frame_status()
+    assert st.vertical_anchor == "middle"
+    assert st.word_wrap is False
+
+
+@pytest.mark.parametrize(
+    ("verb", "args"),
+    [("add_textbox", ("Pinned",)), ("add_shape", ("rectangle",))],
+)
+def test_creation_applies_text_frame_before_text(deck, monkeypatch, verb, args) -> None:  # type: ignore[no-untyped-def]
+    # Regression, found by scripts/text_frame_setter_spike.py against live
+    # PowerPoint: a new text box autofits, so text written FIRST resizes the box
+    # and a later autosize="none" merely pins the already-wrong height (a 40pt box
+    # arrived at 29.1pt). The frame must be configured before any text lands.
+    #
+    # Asserted by capturing the shape's text at the moment apply_text_frame runs:
+    # if the order is right, there is nothing in the frame yet.
+    from pptlive import _shapes
+
+    seen: list[str] = []
+    real = _shapes.apply_text_frame
+
+    def spy(com_shape, **kwargs):  # type: ignore[no-untyped-def]
+        seen.append(str(com_shape.TextFrame.TextRange.Text))
+        return real(com_shape, **kwargs)
+
+    monkeypatch.setattr(_shapes, "apply_text_frame", spy)
+    shapes = deck.slides[3].shapes
+    box = (
+        getattr(shapes, verb)(*args, text="Pinned", autosize="none")
+        if verb == "add_shape"
+        else shapes.add_textbox(*args, autosize="none")
+    )
+    assert seen == [""]  # the frame was configured while the box was still empty
+    assert box.text == "Pinned"
+    assert box.text_frame_status().autosize == "none"
+
+
+def test_add_textbox_rejects_bad_frame_kwargs_before_com(deck) -> None:  # type: ignore[no-untyped-def]
+    before = len(deck.slides[3].shapes)
+    with pytest.raises(ValueError, match="unknown autosize"):
+        deck.slides[3].shapes.add_textbox("x", autosize="nope")
+    assert len(deck.slides[3].shapes) == before  # no half-created shape
 
 
 def test_shape_type_names(deck) -> None:  # type: ignore[no-untyped-def]

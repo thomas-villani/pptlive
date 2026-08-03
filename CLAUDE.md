@@ -55,7 +55,8 @@ src/pptlive/
   _slides.py         SlideCollection / Slide  (add [+placeholder geometry]/delete/duplicate/move_to/set_layout, notes, read(), geometry_report(), animations()/clear_animations(), add_audio()/add_video() [v1.7])
   _shapes.py         ShapeCollection / Shape / ShapeById  (a Shape IS an Anchor when it has a text frame; geometry + fill/line + z-order + animate() + set_picture() re-source verbs;
                      group()/ungroup()/align()/distribute()/add_connector() arrangement;
-                     has_media/media + set_media_playback() [v1.7])
+                     has_media/media + set_media_playback() [v1.7];
+                     text_frame_status()/set_text_frame() autofit+wrap+anchor+margins [v-next])
   _anchors.py        Anchor base + Paragraph, Cell, Notes  (set_paragraphs / reset_format + line-spacing unit knobs [v1.6]; set_link()/remove_link()/links() text-run hyperlinks)
   _tables.py         Table / Cell  (a table is a shape; cell:S:N:R:C anchors; cell fill + borders, row/column-wise; add/delete row+column)  [v0.5/v-next]
   _charts.py         Chart       (a chart is a shape; data via embedded Excel)         [v0.7]
@@ -313,6 +314,59 @@ node with a 1-based `node_index` (its depth-first / `AllNodes` position) that
 `table_delete_column`/`smartart_format_node`) + both SKILL guides. Still open on the
 edit surface: shape-type swap, table cell merge, SmartArt node *fill* / structural
 node add-delete.
+
+**Text-frame control (v-next) — closing the diagnostic-without-a-setter gap.** From
+the 2026-08-03 Claude Code authoring review
+(`docs/reviews/claude-code-python-review-03Aug2026.md`), whose verdict on the rest
+was that the read → render → look → fix loop is the right abstraction. Its **one
+real API gap**: `text_frame_status()` reported autofit / wrap / margins /
+`overflow_risk` with **no supported way to act on any of it**, so the reviewer
+dropped to `.com` on their very first helper (`tf.AutoSize = 0; tf.WordWrap = -1;
+tf.VerticalAnchor = …; tf.Margin* = 0`). We had shipped the reader half of a
+feature. `Shape.set_text_frame(autosize=, word_wrap=, vertical_anchor=, margins=,
+margin_left/right/top/bottom=)` is the setter, returning the resulting status; the
+same knobs ride on `add_textbox()`/`add_shape()` so a box is created already pinned.
+The headline footgun the docs now lead with: **a new text box autosizes to its
+text, so a `height` you pass is advisory** until `autosize="none"` — and PowerPoint's
+0.1 in (7.2 pt) inner margins silently eat padding math, so `margins=0` is the
+companion move. `TextFrameStatus` gained `vertical_anchor` so the read covers every
+field the setter writes. Naming note: the kwarg is `vertical_anchor`, **not** the
+reviewer's `anchor=` — "anchor" already means `anchor_id` throughout this library.
+
+*A net-zero live spike (`scripts/text_frame_setter_spike.py`) earned its keep.* It
+caught **two** bugs the 1002-test unit suite could not, and both are instructive:
+(1) **every canonical name was rejected** — the lookup keys were spelled
+`"shape_to_fit_text"`, but `_normalize_name` strips non-alphanumerics, so only the
+single-word aliases (`"off"`/`"grow"`/`"shrink"`) matched and `autosize="shape_to_fit_text"`
+raised *"unknown autosize; expected one of: none, shape_to_fit_text, …"*, listing the
+name it had just refused. The unit tests missed it because they only exercised the
+aliases — **when a coercer has a CHOICES tuple, assert every member of it round-trips**
+(`test_every_advertised_choice_coerces`). Pre-normalized keys are the convention here
+(`_AUTOSHAPE_NAMES` has `"roundedrectangle"`). (2) **`add_textbox` applied the text
+before the frame**, so the default autofit resized the box and the later
+`autosize="none"` pinned the already-wrong height — a 40 pt box arrived at 29.1 pt.
+Creation now configures the frame first. The spike also pinned an honest caveat:
+**autofit does not re-fit retroactively** — a frame laid out while autofit was off
+keeps its size even after you turn autofit on *and* rewrite the text, so set the mode
+before the text lands. Measured drift it prevents: 40 pt → **312.6 pt**.
+
+*The constant is the part worth remembering.* `MsoVerticalAnchor` had to be read off
+the **typelib's enum record**, not the merged `constants.__dicts__` namespace the
+parity test uses: there `msoAnchorNone` (1) and `msoAnchorCenter` (2) — members of an
+unrelated Office enum — **collide** with `msoAnchorTop` (1) and `msoAnchorTopBaseline`
+(2). A hand-transcription from the flat dump would have aimed `"top"` at the wrong
+enum's member, and (per the standing lesson) a round-trip spike could not have caught
+it. `scripts/`-free: `pythoncom.LoadRegTypeLib` + `GetVarDesc` over the type info
+disambiguates. All six members are pinned in `EXPECTED`.
+
+Wired library + CLI (`shape set-text-frame`; `--autosize`/`--wrap`/`--vertical-anchor`/
+`--margins` on `shape add --kind textbox|shape`, per-edge margins on `set-text-frame`)
++ MCP (`ppt_edit` `shape_set_text_frame`, same fields on `shape_add`) + docs + both
+SKILL guides + tests. Also from that review: the exhaustive `set_paragraphs` key table
+(+ `PARAGRAPH_ITEM_KEYS`, unknown keys now raise) and `add_shape(text=)`. **Still open
+from it:** a `crop` verb (`PictureFormat.Crop*` — needs a live spike; the reviewer's
+oversize-and-bleed workaround permanently poisons `geometry_report`'s `off_slide`
+signal) and an `exec --dry-run`.
 
 **Media + narrated video (v1.7), arrangement, and run-level links — the v0.8.0
 round.** (1) **Media** — `Slide.add_audio(path, …)` / `add_video(…)` over

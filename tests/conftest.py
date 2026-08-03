@@ -468,6 +468,11 @@ class _FakeTextFrame:
         # points mirror PowerPoint's defaults.
         self.AutoSize = -2
         self.WordWrap = _MSO_TRUE
+        # msoAnchorTop (1) — PowerPoint's default for a new frame. Read/written by
+        # text_frame_status / set_text_frame. NB the Office typelib's flat namespace
+        # also has an msoAnchorNone=1 from an unrelated enum; 1 here is the
+        # MsoVerticalAnchor member (see tests/test_typelib_parity.py).
+        self.VerticalAnchor = 1
         self.MarginLeft = 7.2
         self.MarginRight = 7.2
         self.MarginTop = 3.6
