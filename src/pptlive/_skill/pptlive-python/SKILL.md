@@ -164,17 +164,38 @@ also via `deck.slides[N].animations()`). Effect names: `fade`/`appear`/`fly_in`/
 with deck.edit("Polish the body copy"):
     body = deck.anchor_by_id("ph:4:body")
     # Safest list authoring: one item = one bullet, no newline inference.
+    # Set EVERYTHING per item in this one pass — font included. Don't follow up
+    # with a paragraph(i).format_text(...) loop; that's 2-3x the COM round-trips.
     body.set_paragraphs([
-        {"text": "Revenue up 12%", "list_type": "bulleted"},
+        {"text": "Revenue up 12%", "list_type": "bulleted",
+         "bold": True, "size": 24, "color": "#2E74B5", "line_spacing_points": 24},
         {"text": "Churn down 3%", "list_type": "bulleted", "indent_level": 2},
         {"text": "NPS +9", "list_type": "bulleted"},
     ])
-    body.paragraph(1).format_text(bold=True, size=24, color="#2E74B5")
-    # Line spacing is unit-explicit: line_spacing is a MULTIPLE, line_spacing_points
-    # is exact points. line_spacing=24 is rejected (24x!) unless force=True — the
-    # gpt-5.4 footgun. See the gotchas + field table below.
-    body.format_paragraph(line_spacing_points=24)
+```
 
+**`set_paragraphs` item keys — the complete list.** Every key is settable in the
+one call, so a per-paragraph `format_text` follow-up is never needed. An unknown
+key raises `ValueError` naming the valid ones (it is not silently ignored).
+
+| key | value | notes |
+| --- | --- | --- |
+| `text` | str | **required** |
+| `list_type` | `"bulleted"` / `"numbered"` / `"none"` | `"none"` strips the bullet |
+| `bullet_char` | single-char str or int code point | custom bullet glyph |
+| `alignment` | `"left"` / `"center"` / `"right"` / `"justify"` | |
+| `indent_level` | 1–5 | outline depth |
+| `space_before` / `space_after` | float | **POINTS** |
+| `space_before_lines` / `space_after_lines` | float | **MULTIPLES** (pass one of each pair) |
+| `line_spacing` | float | a **MULTIPLE** (1.5) — `>5` needs `force` |
+| `line_spacing_points` | float | **EXACT POINTS** (24) |
+| `force` | bool | allow a `line_spacing` multiple > 5 |
+| `bold` / `italic` / `underline` | bool | |
+| `size` | float | font size in points |
+| `font` | str | typeface name |
+| `color` | `"#RRGGBB"` / `(r, g, b)` / int | the **font** color |
+
+```python
 with deck.edit("Add a metrics table"):
     table = deck.slides[4].shapes.add_table(rows=3, columns=2).table
     table.cell(1, 1).set_text("Metric")
@@ -216,7 +237,16 @@ PowerPoint's text model leaks sharp edges through the API. The high-value ones:
 - **Line spacing has two units.** `format_paragraph(line_spacing=1.5)` is a **multiple**; `format_paragraph(line_spacing_points=24)` is **exact points**. `line_spacing=24` (a 24× multiple) is rejected with `ValueError` unless `force=True`. Spacing before/after mirrors this: `space_before`/`space_after` are points, `space_before_lines`/`space_after_lines` are multiples.
 - **`\n` is a paragraph break, `\v` a soft one.** `set_text("a\nb")` makes two addressable `para:`s. To author a list without relying on that inference, use `set_paragraphs([...])` (one item = one paragraph; a newline *inside* an item becomes a soft break).
 - **No "clear formatting" primitive.** Re-setting text doesn't drop run overrides. Recover with `anchor.reset_format()` (paragraph spacing → single/0/0) and, for a placeholder, `shape.reset_to_layout()` (geometry + default font size from the layout).
-- **Diagnostics:** `shape.paragraphs.list()` now carries `space_before`/`space_after`/`line_spacing` as `{value, mode}` plus `run_sizes` (distinct per-run sizes — spot a stray 5 pt run). `shape.text_frame_status()` → `TextFrameStatus(autosize, word_wrap, margins, overflow_risk)` when text looks clipped.
+- **Diagnostics:** `shape.paragraphs.list()` now carries `space_before`/`space_after`/`line_spacing` as `{value, mode}` plus `run_sizes` (distinct per-run sizes — spot a stray 5 pt run). `shape.text_frame_status()` → `TextFrameStatus(autosize, word_wrap, vertical_anchor, margins, overflow_risk)` when text looks clipped.
+- **Precise layout — `shape.set_text_frame(...)`** is the setter half of that read, taking the same knobs: `autosize` (`"none"`/`"shape_to_fit_text"`/`"text_to_fit_shape"`), `word_wrap`, `vertical_anchor` (`"top"`/`"middle"`/`"bottom"`), `margins` (all four, points) and `margin_left`/`margin_right`/`margin_top`/`margin_bottom`. It returns the resulting status. Two knobs carry the weight: **`autosize="none"`** — a new text box grows to fit its text, so a `height=` you pass is advisory until autofit is off — and **`margins=0`**, because PowerPoint's 0.1in (7.2pt) inner margins silently eat padding math. `add_textbox(...)` / `add_shape(...)` accept the same arguments, so a box can be created already pinned:
+
+```python
+with deck.edit("Pinned callout"):
+    box = deck.slides[4].shapes.add_textbox(
+        "Q3 revenue", left=60, top=40, width=300, height=44,
+        autosize="none", margins=0, vertical_anchor="middle",   # geometry is now exact
+    )
+```
 
 ```python
 # Field reference — exact COM mapping per formatting kwarg:

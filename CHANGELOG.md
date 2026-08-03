@@ -9,6 +9,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Text-frame control — the setter half of `text_frame_status`.** The one real API
+gap in the Claude Code authoring review: `text_frame_status()` reported
+`overflow_risk: "possible"`, autofit mode, wrap, and margins, but nothing could
+*act* on any of it, so precise layout meant dropping to the `.com` escape hatch on
+the very first helper. Now:
+
+- **`Shape.set_text_frame(autosize=, word_wrap=, vertical_anchor=, margins=,
+  margin_left=, margin_right=, margin_top=, margin_bottom=)`** — returns the
+  resulting `TextFrameStatus`. `margins` sets all four edges; a per-edge
+  `margin_*` then overrides that edge, so `margins=0, margin_left=12` is a
+  well-defined "flush except the left gutter". An unknown autosize/anchor name, a
+  negative margin, or an empty call is a `ValueError` **before any COM**, so a bad
+  request never half-applies.
+- **The same knobs on `add_textbox()` and `add_shape()`**, so a box can be created
+  already pinned. This is the headline footgun: **a new text box autosizes to its
+  text, so a `height` you pass is advisory** until you also pass `autosize="none"`
+   — the reported cause of drifting layouts. `margins=0` is the companion move,
+  since PowerPoint's 0.1 in (7.2 pt) inner margins silently eat padding math.
+- **`TextFrameStatus` gained `vertical_anchor`**, so the read reports every field
+  the setter writes.
+- **Constants: `MsoVerticalAnchor` + `vertical_anchor_for`/`vertical_anchor_name`/
+  `VERTICAL_ANCHOR_CHOICES`, and `autosize_for`/`AUTOSIZE_CHOICES`** (`MsoAutoSize`
+  had a name-reader but no coercer). Aliases: `"off"`→none, `"grow"`→
+  shape_to_fit_text, `"shrink"`→text_to_fit_shape, `"center"`→middle.
+  `MsoVerticalAnchor` was read **off the typelib's enum record**, not the merged
+  constant namespace — there `msoAnchorNone` (1) and `msoAnchorCenter` (2) belong
+  to an unrelated Office enum and collide with `msoAnchorTop` /
+  `msoAnchorTopBaseline`. Transcribing from the flat namespace would have aimed
+  `"top"` at the wrong enum's member; all six members are pinned in
+  `test_typelib_parity.py`.
+- **Creation applies the frame *before* the text.** A new box autofits, so text
+  written first resizes it and a later `autosize="none"` merely pins the
+  already-wrong height. `scripts/text_frame_setter_spike.py` caught this live: a
+  40 pt box arrived at **29.1 pt**.
+- **Documented caveat:** turning autofit back *on* does **not** retroactively
+  re-fit an existing frame — PowerPoint applies autofit as text is laid out, so a
+  frame written while autofit was off keeps its size even after the mode changes
+  and the text is rewritten. Set the mode before the text lands. The same spike
+  measured the drift `autosize="none"` prevents: a 40 pt box holding a long
+  paragraph grows to **312.6 pt** under the default autofit.
+- Wired CLI (`shape set-text-frame`, plus `--autosize`/`--wrap`/
+  `--vertical-anchor`/`--margins` on `shape add --kind textbox|shape`) + MCP
+  (`ppt_edit` op `shape_set_text_frame`, and the same fields on `shape_add`) +
+  `docs/cli.md` / `docs/python-api.md` / `docs/mcp.md` / README + both SKILL guides
+  + tests.
+
+### Fixed
+
+- **Every canonical autosize / vertical-anchor name was rejected** on first
+  implementation: the lookup keys were spelled with underscores, but
+  `_normalize_name` strips non-alphanumerics, so `autosize="shape_to_fit_text"`
+  raised *"unknown autosize; expected one of: none, shape_to_fit_text, …"* —
+  listing the very name it had just refused. Only the single-word aliases
+  (`"off"`/`"grow"`/`"shrink"`) worked. Caught by the live spike, not the unit
+  suite, which had only exercised aliases; `test_every_advertised_choice_coerces`
+  now asserts every advertised name round-trips through its coercer.
+
+**`set_paragraphs` item keys are documented exhaustively — and validated.** A
+Claude Code authoring review reported the key list trailing off in `...` on both
+help pages, so it wasn't clear whether `color` and `font` were supported. They
+always were: the reviewer set structure via `set_paragraphs` and then looped
+`paragraph(i).format_text(...)` defensively, at 2–3× the COM round-trips, for
+nothing.
+
+- **The complete 16-key table** — `text` (required) · `list_type` · `bullet_char` ·
+  `alignment` · `indent_level` · `space_before`/`space_after` (points) ·
+  `space_before_lines`/`space_after_lines` (multiples) · `line_spacing` (a
+  multiple) · `line_spacing_points` (exact points) · `force` ·
+  `bold`/`italic`/`underline` · `size` · `font` · `color` — now ships in the
+  `Anchor.set_paragraphs` docstring, `docs/cli.md`, `docs/python-api.md`, the MCP
+  `ppt_edit` tool description, the `set-paragraphs --help` text, and **both** SKILL
+  guides. Exported as `pptlive.PARAGRAPH_ITEM_KEYS` (the single source of truth the
+  docs and the error message quote).
+- **An unknown key is now a `ValueError`** naming the valid ones, instead of being
+  silently dropped by `dict(item)`. A typo'd `"colour"` used to return an unstyled
+  paragraph with no signal at all — the worst failure mode for an agent that can't
+  see the slide. Clean exit 1 at the CLI / `invalid_args` at MCP, before any COM.
+- The Python SKILL guide's own example demonstrated the anti-pattern (a
+  `set_paragraphs` call followed by a `format_text` loop); it now sets font and
+  structure in the one pass.
+
+**`ShapeCollection.add_shape(..., text=...)`** — parity with `add_textbox`, which
+has taken `text` since v0.2. The CLI's `shape add --kind shape --text` and the
+batch `shape_add` op were both hand-rolling `add_shape(...)` + `set_text(...)`
+afterwards; both now just pass `text=` through. Reported as a CLI/Python surface
+asymmetry in the same review.
+
 **Shape arrangement + text-run-level hyperlinks.** Two roadmap items shipped
 together, each pre-proven live by a net-zero spike
 (`scripts/arrangement_spike.py`, `scripts/run_link_spike.py`) and re-verified

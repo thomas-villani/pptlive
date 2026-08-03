@@ -94,10 +94,24 @@ color). A paragraph read's `font` block also reports `color_source`
 (`"direct"` / `"theme"` / `"mixed"`) and `theme_color` (the inherited slot when
 themed), so you can tell a run color *set on the run* from one *cascaded from the
 theme* — the one place PowerPoint exposes that direct-vs-inherited distinction.
+`Anchor.set_paragraphs([...])` is the one-pass authoring path: each item is a
+string or a `{"text", ...}` dict that becomes exactly one addressable `para:`.
+Its item keys cover **both** paragraph and font formatting — the full table is in
+the [`set_paragraphs`](#pptlive.Anchor.set_paragraphs) docstring below — so
+following it with a per-paragraph `format_text` loop is pure extra COM
+round-trips. An unknown key raises `ValueError` naming the valid ones rather than
+being silently ignored.
+
 `Shape.text_frame_status()` returns a [`TextFrameStatus`](#pptlive.TextFrameStatus)
-— autosize mode / word-wrap / margins / a coarse `overflow_risk` flag — so an
-agent can see a text box heading for a "formatting spiral" before it clips,
-without a render.
+— autosize mode / word-wrap / vertical anchor / margins / a coarse `overflow_risk`
+flag — so an agent can see a text box heading for a "formatting spiral" before it
+clips, without a render. `Shape.set_text_frame(autosize=, word_wrap=,
+vertical_anchor=, margins=, margin_left=, …)` is the **setter** half: it takes the
+same knobs and returns the resulting status. The two that matter most for precise
+layout are `autosize="none"` — a new text box grows to fit its text, so a `height`
+you set is advisory until autofit is off — and `margins=0`, since PowerPoint's
+0.1 in (7.2 pt) inner margins silently eat padding math. `add_textbox` and
+`add_shape` accept the same arguments, so a box can be created already pinned.
 
 ::: pptlive.Anchor
 

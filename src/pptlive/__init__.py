@@ -30,7 +30,7 @@ except PackageNotFoundError:  # not installed (e.g. running from a source tree)
     __version__ = "0.0.0+unknown"
 
 from . import constants, units
-from ._anchors import Anchor, Notes, Paragraph, ParagraphCollection
+from ._anchors import PARAGRAPH_ITEM_KEYS, Anchor, Notes, Paragraph, ParagraphCollection
 from ._app import PowerPoint, attach, connect
 from ._charts import Chart
 from ._comments import Comment, CommentCollection
@@ -78,6 +78,7 @@ __all__ = [
     "Master",
     "NoTextFrameError",
     "Notes",
+    "PARAGRAPH_ITEM_KEYS",
     "Paragraph",
     "ParagraphCollection",
     "PlaceholderShape",

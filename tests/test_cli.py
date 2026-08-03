@@ -234,6 +234,114 @@ def test_shape_add_textbox(fake_powerpoint) -> None:  # type: ignore[no-untyped-
     assert fake_powerpoint.ActivePresentation.Slides(3).Shapes.Count == 3  # was 2
 
 
+def test_shape_set_text_frame(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main,
+        [
+            "shape",
+            "set-text-frame",
+            "--anchor-id",
+            "ph:2:body",
+            "--autosize",
+            "none",
+            "--no-wrap",
+            "--vertical-anchor",
+            "middle",
+            "--margins",
+            "0",
+        ],
+    )
+    assert result.exit_code == 0
+    payload = _json(result)
+    assert payload["ok"] is True
+    assert payload["autosize"] == "none"
+    assert payload["word_wrap"] is False
+    assert payload["vertical_anchor"] == "middle"
+    assert payload["margins"] == {"left": 0.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
+    assert payload["overflow_risk"] == "possible"
+
+
+def test_shape_set_text_frame_per_edge_margin(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main,
+        [
+            "shape",
+            "set-text-frame",
+            "--anchor-id",
+            "ph:2:body",
+            "--margins",
+            "0",
+            "--margin-left",
+            "12",
+        ],
+    )
+    assert result.exit_code == 0
+    assert _json(result)["margins"] == {"left": 12.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
+
+
+def test_shape_set_text_frame_needs_an_option(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["shape", "set-text-frame", "--anchor-id", "ph:2:body"])
+    assert result.exit_code == 1  # a library ValueError, not a traceback
+
+
+def test_shape_set_text_frame_rejects_bad_autosize(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main, ["shape", "set-text-frame", "--anchor-id", "ph:2:body", "--autosize", "huge"]
+    )
+    assert result.exit_code == 2  # click rejects it against the Choice list
+
+
+def test_shape_add_textbox_with_text_frame_options(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main,
+        [
+            "shape",
+            "add",
+            "--slide",
+            "3",
+            "--kind",
+            "textbox",
+            "--text",
+            "Pinned",
+            "--height",
+            "40",
+            "--autosize",
+            "none",
+            "--margins",
+            "0",
+        ],
+    )
+    assert result.exit_code == 0
+    anchor_id = _json(result)["anchor_id"]
+    status = CliRunner().invoke(main, ["read", "text-frame-status", "--anchor-id", anchor_id])
+    assert status.exit_code == 0
+    assert _json(status)["autosize"] == "none"  # the passed height is now binding
+
+
+def test_shape_add_rejects_text_frame_options_on_a_table(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main,
+        # fmt: off
+        [
+            "shape",
+            "add",
+            "--slide",
+            "3",
+            "--kind",
+            "table",
+            "--rows",
+            "2",
+            "--cols",
+            "2",
+            "--autosize",
+            "none",
+        ],
+        # fmt: on
+    )
+    assert result.exit_code == 2  # click UsageError
+    assert "textbox" in result.output
+
+
 def test_shape_add_autoshape(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
     result = CliRunner().invoke(
         main, ["shape", "add", "--slide", "3", "--kind", "shape", "--shape-type", "oval"]

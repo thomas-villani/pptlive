@@ -1,6 +1,6 @@
 """Pin every hand-transcribed constant against the live Office type libraries.
 
-`constants.py` is 36 hand-transcribed `IntEnum`s, and the fake COM mirrors whatever
+`constants.py` is 37 hand-transcribed `IntEnum`s, and the fake COM mirrors whatever
 they say — so a wrong value is invisible to the unit suite *and* to a round-trip
 spike (the wrong id round-trips perfectly). That blind spot shipped four real bugs:
 
@@ -26,7 +26,7 @@ Two things worth knowing before editing the map below:
    despite the `mso` prefix; looking it up in the Office one silently finds nothing.
    All three are loaded and merged here, mirroring how `constants` resolves.
 
-All 36 enums are mapped (a 2026-07-17 audit promoted the last 17 "curated subset"
+All 37 enums are mapped (a 2026-07-17 audit promoted the last 17 "curated subset"
 enums into `EXPECTED` after confirming every member — mapping a partial enum
 asserts only that the members we transcribed are right, not that we have all of
 them). `EXPECT_ABSENT` is the escape hatch for a future genuinely-unmappable enum
@@ -83,6 +83,18 @@ EXPECTED: dict[str, dict[str, str]] = {
         "NONE": "msoAutoSizeNone",
         "SHAPE_TO_FIT_TEXT": "msoAutoSizeShapeToFitText",
         "TEXT_TO_FIT_SHAPE": "msoAutoSizeTextToFitShape",
+    },
+    # NB: the merged namespace is *lossy* here — msoAnchorNone (1) and
+    # msoAnchorCenter (2) belong to a different Office enum and collide with
+    # msoAnchorTop / msoAnchorTopBaseline. These six were read off the typelib's
+    # MsoVerticalAnchor record directly, so the names below are the right ones.
+    "MsoVerticalAnchor": {
+        "MIXED": "msoVerticalAnchorMixed",
+        "TOP": "msoAnchorTop",
+        "TOP_BASELINE": "msoAnchorTopBaseline",
+        "MIDDLE": "msoAnchorMiddle",
+        "BOTTOM": "msoAnchorBottom",
+        "BOTTOM_BASELINE": "msoAnchorBottomBaseLine",
     },
     "MsoAnimEffect": {
         "APPEAR": "msoAnimEffectAppear",

@@ -237,6 +237,50 @@ def test_set_paragraphs_rejects_bad_item(deck) -> None:  # type: ignore[no-untyp
         _body(deck).set_paragraphs([{"no_text": "oops"}])
 
 
+def test_set_paragraphs_applies_font_keys_in_one_pass(deck) -> None:  # type: ignore[no-untyped-def]
+    # The whole point of the exhaustive key table: `color`/`font`/`bold` land in
+    # the same call as the structure, so no per-paragraph format_text loop is
+    # needed. (The reviewer looped defensively because the docs trailed off.)
+    body = _body(deck)
+    body.set_paragraphs(
+        [
+            {
+                "text": "Styled",
+                "list_type": "bulleted",
+                "bold": True,
+                "italic": True,
+                "underline": True,
+                "size": 24.0,
+                "font": "Georgia",
+                "color": "#2E74B5",
+            }
+        ]
+    )
+    font = _body_com(deck).Paragraphs(1, 1).Font
+    assert int(font.Bold) == -1
+    assert int(font.Italic) == -1
+    assert int(font.Underline) == -1
+    assert float(font.Size) == 24.0
+    assert font.Name == "Georgia"
+    assert int(font.Color.RGB) == 0xB5742E  # BGR, as PowerPoint stores it
+
+
+def test_set_paragraphs_rejects_unknown_key(deck) -> None:  # type: ignore[no-untyped-def]
+    # A typo'd key used to be silently dropped by `dict(item)` — the paragraph
+    # came back unstyled with no signal, the worst outcome for a blind agent.
+    with pytest.raises(ValueError, match="unknown set_paragraphs key"):
+        _body(deck).set_paragraphs([{"text": "x", "colour": "#ff0000"}])
+    assert _body(deck).text == "Intro\rDemo\rQ&A"  # nothing was written
+
+
+def test_set_paragraphs_unknown_key_error_lists_valid_keys(deck) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError) as exc:
+        _body(deck).set_paragraphs([{"text": "x", "bogus": 1}])
+    message = str(exc.value)
+    for key in ("text", "list_type", "line_spacing_points", "color", "font"):
+        assert key in message
+
+
 def test_set_paragraphs_on_single_paragraph_anchor_raises(deck) -> None:  # type: ignore[no-untyped-def]
     # A `para:` anchor is a single paragraph; set_paragraphs replaces a whole
     # frame's list and would corrupt it / silently drop formatting. Reject it,

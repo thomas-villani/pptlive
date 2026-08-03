@@ -42,6 +42,7 @@ from .constants import (
     arrowhead_style_for,
     arrowhead_style_name,
     autoshape_type_for,
+    autosize_for,
     autosize_name,
     chart_type_for,
     color_hex_or_none,
@@ -65,6 +66,8 @@ from .constants import (
     shape_image_filter_for,
     shape_type_name,
     smartart_layout_for,
+    vertical_anchor_for,
+    vertical_anchor_name,
     zorder_cmd_for,
 )
 from .exceptions import AmbiguousMatchError, AnchorNotFoundError, NoTextFrameError
@@ -143,22 +146,27 @@ class TextFrameStatus:
 
     Surfaces the state that makes a "formatting spiral" visible *before* it bites
     (the gpt-5.4 review's ask). `autosize` is the friendly `TextFrame2.AutoSize`
-    mode; `word_wrap` is on/off; `margins` is the four inner margins in points;
+    mode; `word_wrap` is on/off; `vertical_anchor` is where text sits in the frame
+    (`"top"`/`"middle"`/`"bottom"`); `margins` is the four inner margins in points;
     `overflow_risk` is a **coarse, mode-derived** flag (PowerPoint exposes no
     shrink-% on this build, so it reads the autofit *mode*, not a measured extent):
     `"possible"` (autosize off — text can clip), `"low"` (an autofit mode is
     active), or `"unknown"`.
+
+    Every field except `overflow_risk` is writable via `Shape.set_text_frame()`.
     """
 
     autosize: str
     word_wrap: bool
     margins: dict[str, float]
     overflow_risk: str
+    vertical_anchor: str = "unknown"
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "autosize": self.autosize,
             "word_wrap": self.word_wrap,
+            "vertical_anchor": self.vertical_anchor,
             "margins": self.margins,
             "overflow_risk": self.overflow_risk,
         }
@@ -186,6 +194,98 @@ def _safe_autosize_classic(com_shape: Any) -> str:
         return autosize_name(com_shape.TextFrame.AutoSize)
     except Exception:
         return "unknown"
+
+
+#: The four inner-margin names, in the order `set_text_frame` reports them.
+_MARGIN_EDGES: tuple[str, ...] = ("left", "right", "top", "bottom")
+
+
+def _set_autosize(com_shape: Any, value: int) -> None:
+    """Write the autofit mode, preferring `TextFrame2` exactly as the reader does.
+
+    `_autosize_of` reads `TextFrame2.AutoSize` and falls back to the classic
+    `TextFrame.AutoSize`; the write mirrors that pairing so a value we set is a
+    value we can read back. (The classic property returns the mixed sentinel on
+    current builds — see `scripts/text_model_spike.py` — so `TextFrame2` first.)
+    """
+    try:
+        com_shape.TextFrame2.AutoSize = value
+    except Exception:
+        com_shape.TextFrame.AutoSize = value
+
+
+def apply_text_frame(
+    com_shape: Any,
+    *,
+    autosize: int | None = None,
+    word_wrap: bool | None = None,
+    vertical_anchor: int | None = None,
+    margins: dict[str, float] | None = None,
+) -> None:
+    """Write text-frame container properties onto a COM shape — only what's passed.
+
+    Shared by `Shape.set_text_frame` and the `add_textbox` / `add_shape` creation
+    kwargs so both surfaces configure a frame identically. Values are already
+    validated and coerced to ints/points by the caller, who also wraps this in
+    `translate_com_errors()`.
+    """
+    if autosize is not None:
+        _set_autosize(com_shape, autosize)
+    tf = com_shape.TextFrame
+    if word_wrap is not None:
+        tf.WordWrap = int(MsoTriState.TRUE if word_wrap else MsoTriState.FALSE)
+    if vertical_anchor is not None:
+        tf.VerticalAnchor = vertical_anchor
+    if margins:
+        for edge, value in margins.items():
+            setattr(tf, f"Margin{edge.capitalize()}", float(value))
+
+
+def resolve_text_frame_kwargs(
+    *,
+    autosize: str | int | None = None,
+    word_wrap: bool | None = None,
+    vertical_anchor: str | int | None = None,
+    margins: float | None = None,
+    margin_left: float | None = None,
+    margin_right: float | None = None,
+    margin_top: float | None = None,
+    margin_bottom: float | None = None,
+) -> dict[str, Any]:
+    """Validate text-frame kwargs and coerce them for `apply_text_frame`.
+
+    Raises `ValueError` for an unknown autosize / anchor name or a negative margin
+    **before any COM call**, so a bad request never half-applies. `margins` sets
+    all four edges; a specific `margin_*` then overrides that edge (so
+    `margins=0, margin_left=12` is a well-defined "flush except the left gutter",
+    not an ambiguity). Returns `{}` when nothing was passed — the caller decides
+    whether that's an error.
+    """
+    resolved: dict[str, Any] = {}
+    if autosize is not None:
+        resolved["autosize"] = autosize_for(autosize)  # ValueError before COM
+    if word_wrap is not None:
+        resolved["word_wrap"] = bool(word_wrap)
+    if vertical_anchor is not None:
+        resolved["vertical_anchor"] = vertical_anchor_for(vertical_anchor)  # ValueError
+    edge_values = {
+        "left": margin_left,
+        "right": margin_right,
+        "top": margin_top,
+        "bottom": margin_bottom,
+    }
+    resolved_margins: dict[str, float] = {}
+    if margins is not None:
+        resolved_margins = dict.fromkeys(_MARGIN_EDGES, float(margins))
+    for edge, value in edge_values.items():
+        if value is not None:
+            resolved_margins[edge] = float(value)
+    for edge, value in resolved_margins.items():
+        if value < 0:
+            raise ValueError(f"margin_{edge} must be >= 0 points, got {value}")
+    if resolved_margins:
+        resolved["margins"] = resolved_margins
+    return resolved
 
 
 def is_placeholder(com_shape: Any) -> bool:
@@ -1339,12 +1439,82 @@ class Shape(Anchor):
                 "bottom": _safe(lambda: float(tf.MarginBottom), 0.0),
             }
             word_wrap = _safe(lambda: is_true(tf.WordWrap), True)
+            anchor = _safe(lambda: vertical_anchor_name(tf.VerticalAnchor), "unknown")
         return TextFrameStatus(
             autosize=autosize,
             word_wrap=word_wrap,
             margins=margins,
             overflow_risk=_overflow_risk(autosize),
+            vertical_anchor=anchor,
         )
+
+    def set_text_frame(
+        self,
+        *,
+        autosize: str | int | None = None,
+        word_wrap: bool | None = None,
+        vertical_anchor: str | int | None = None,
+        margins: float | None = None,
+        margin_left: float | None = None,
+        margin_right: float | None = None,
+        margin_top: float | None = None,
+        margin_bottom: float | None = None,
+    ) -> TextFrameStatus:
+        """Set this shape's text-frame container properties; returns the new status.
+
+        The setter half of `text_frame_status()` — until this existed the
+        diagnostic reported `overflow_risk: "possible"` with no supported way to
+        act on it, and precise layout meant dropping to the `.com` escape hatch
+        (the Claude Code review's one real gap).
+
+        - `autosize` — `"none"` (or `"off"`) pins the frame so a `height` you set
+          is **honored**; `"shape_to_fit_text"` grows the shape; `"text_to_fit_shape"`
+          shrinks the text. A new text box defaults to growing, which is why a
+          passed height otherwise drifts.
+        - `word_wrap` — `True`/`False`.
+        - `vertical_anchor` — `"top"` / `"middle"` / `"bottom"` (named in full to
+          stay distinct from this library's `anchor_id` sense of "anchor").
+        - `margins` — all four inner margins in points at once; `margin_left` /
+          `margin_right` / `margin_top` / `margin_bottom` set or override one edge.
+          PowerPoint's 0.1 in (7.2 pt) defaults silently eat padding math, so
+          `margins=0` is the usual precise-layout opener.
+
+        One honest caveat, pinned live by `scripts/text_frame_setter_spike.py`:
+        **turning autofit back *on* does not retroactively re-fit an existing
+        frame.** PowerPoint applies autofit as text is laid out, so a frame that
+        was written while autofit was off keeps its size even after you set
+        `autosize="shape_to_fit_text"` and rewrite the text. Set the mode you want
+        *before* the text lands (which is why `add_textbox`/`add_shape` take these
+        arguments and apply them first). The same spike measured the drift this
+        prevents: a 40 pt box asked to hold a long paragraph grew to **312.6 pt**
+        with the default autofit, and stayed at 40 pt with `autosize="none"`.
+
+        Raises `ValueError` if nothing was passed, for an unknown autosize/anchor
+        name, or for a negative margin — all **before any COM call**, so a bad
+        request never half-applies. Raises `NoTextFrameError` if the shape holds no
+        text frame. Wrap in `deck.edit(...)`.
+        """
+        resolved = resolve_text_frame_kwargs(
+            autosize=autosize,
+            word_wrap=word_wrap,
+            vertical_anchor=vertical_anchor,
+            margins=margins,
+            margin_left=margin_left,
+            margin_right=margin_right,
+            margin_top=margin_top,
+            margin_bottom=margin_bottom,
+        )
+        if not resolved:
+            raise ValueError(
+                "set_text_frame() requires at least one of autosize=, word_wrap=, "
+                "vertical_anchor=, margins=, or margin_left/right/top/bottom="
+            )
+        with _com.translate_com_errors():
+            sh = self._com_shape()
+            if not has_text_frame(sh):
+                raise NoTextFrameError(self.anchor_id)
+            apply_text_frame(sh, **resolved)
+        return self.text_frame_status()
 
     # -- paragraphs (v0.3) -------------------------------------------------
 
@@ -2254,6 +2424,14 @@ class ShapeCollection:
         fill: str | int | tuple[int, int, int] | None = None,
         line: str | int | tuple[int, int, int] | None = None,
         line_width: float | None = None,
+        autosize: str | int | None = None,
+        word_wrap: bool | None = None,
+        vertical_anchor: str | int | None = None,
+        margins: float | None = None,
+        margin_left: float | None = None,
+        margin_right: float | None = None,
+        margin_top: float | None = None,
+        margin_bottom: float | None = None,
     ) -> Shape:
         """Add a horizontal text box and return it (`Shapes.AddTextbox`).
 
@@ -2261,10 +2439,27 @@ class ShapeCollection:
         top-left. `text`, if given, is written into the new frame. `fill`/`line`
         set a solid fill / border color (or `"none"` for transparent / no border)
         and `line_width` the border weight in points — see `Shape.set_fill`. A
-        text box defaults to no fill and no line. Raises `ValueError` for a bad
-        color before any COM.
+        text box defaults to no fill and no line.
+
+        `autosize` / `word_wrap` / `vertical_anchor` / `margins` (and the per-edge
+        `margin_*`) configure the text frame in the same call — see
+        `Shape.set_text_frame`, which takes the same arguments. **A new text box
+        autosizes to its text**, so a `height` you pass here is advisory until you
+        also pass `autosize="none"`; that plus `margins=0` is the precise-layout
+        opener. Raises `ValueError` for a bad color, autosize/anchor name, or
+        negative margin before any COM.
         """
         _precheck_fill(fill, line)  # ValueError before any COM
+        frame_kwargs = resolve_text_frame_kwargs(  # ValueError before any COM
+            autosize=autosize,
+            word_wrap=word_wrap,
+            vertical_anchor=vertical_anchor,
+            margins=margins,
+            margin_left=margin_left,
+            margin_right=margin_right,
+            margin_top=margin_top,
+            margin_bottom=margin_bottom,
+        )
         left = _DEFAULT_LEFT if left is None else float(left)
         top = _DEFAULT_TOP if top is None else float(top)
         width = _DEFAULT_TEXTBOX_WIDTH if width is None else float(width)
@@ -2273,6 +2468,12 @@ class ShapeCollection:
             com_shape = self._com_collection.AddTextbox(
                 int(MsoTextOrientation.HORIZONTAL), left, top, width, height
             )
+            # Configure the frame BEFORE writing the text. A new text box autofits,
+            # so text written first resizes the box, and a later autosize="none"
+            # then pins the already-wrong height — the live spike caught exactly
+            # that (a 40pt box arrived at 29.1pt). Frame first, text second.
+            if frame_kwargs:
+                apply_text_frame(com_shape, **frame_kwargs)
             if text:
                 com_shape.TextFrame.TextRange.Text = text
             if fill is not None or line is not None or line_width is not None:
@@ -2283,6 +2484,7 @@ class ShapeCollection:
         self,
         shape_type: str | int,
         *,
+        text: str = "",
         left: float | None = None,
         top: float | None = None,
         width: float | None = None,
@@ -2290,26 +2492,55 @@ class ShapeCollection:
         fill: str | int | tuple[int, int, int] | None = None,
         line: str | int | tuple[int, int, int] | None = None,
         line_width: float | None = None,
+        autosize: str | int | None = None,
+        word_wrap: bool | None = None,
+        vertical_anchor: str | int | None = None,
+        margins: float | None = None,
+        margin_left: float | None = None,
+        margin_right: float | None = None,
+        margin_top: float | None = None,
+        margin_bottom: float | None = None,
     ) -> Shape:
         """Add an autoshape and return it (`Shapes.AddShape`).
 
         `shape_type` is a friendly name (`"rectangle"`, `"oval"`, `"arrow"`, …;
         see `constants.AUTOSHAPE_CHOICES`) or a raw `MsoAutoShapeType` int.
+        `text`, if given, is written into the new shape's frame — the same
+        one-call convenience `add_textbox` has (the CLI's `shape add --kind shape
+        --text` used to be the only surface offering it).
         Geometry is in points; omitted values default to a 2×2 in box near the
         top-left. `fill`/`line` set a solid fill / border color (or `"none"` for
         transparent / no border) and `line_width` the border weight in points —
         see `Shape.set_fill`; omitted, the shape takes the theme's default accent
-        fill. Raises `ValueError` for an unknown shape name or bad color (before
-        any COM).
+        fill. `autosize` / `word_wrap` / `vertical_anchor` / `margins` (and the
+        per-edge `margin_*`) configure the shape's text frame in the same call —
+        see `Shape.set_text_frame`, which takes the same arguments. Raises
+        `ValueError` for an unknown shape name, bad color, unknown autosize/anchor
+        name, or negative margin (all before any COM).
         """
         type_int = autoshape_type_for(shape_type)  # ValueError before COM
         _precheck_fill(fill, line)  # ValueError before COM
+        frame_kwargs = resolve_text_frame_kwargs(  # ValueError before COM
+            autosize=autosize,
+            word_wrap=word_wrap,
+            vertical_anchor=vertical_anchor,
+            margins=margins,
+            margin_left=margin_left,
+            margin_right=margin_right,
+            margin_top=margin_top,
+            margin_bottom=margin_bottom,
+        )
         left = _DEFAULT_LEFT if left is None else float(left)
         top = _DEFAULT_TOP if top is None else float(top)
         width = _DEFAULT_SHAPE_WIDTH if width is None else float(width)
         height = _DEFAULT_SHAPE_HEIGHT if height is None else float(height)
         with _com.translate_com_errors():
             com_shape = self._com_collection.AddShape(type_int, left, top, width, height)
+            # Frame before text — see the note in `add_textbox`.
+            if frame_kwargs:
+                apply_text_frame(com_shape, **frame_kwargs)
+            if text:
+                com_shape.TextFrame.TextRange.Text = text
             if fill is not None or line is not None or line_width is not None:
                 apply_shape_fill(com_shape, fill=fill, line=line, line_width=line_width)
             return self._added()
