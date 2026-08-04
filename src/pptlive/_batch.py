@@ -675,6 +675,10 @@ def _edit_media_add(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
             p["path"], hide_icon=bool(p.get("hide_icon", True)), **common, **geom
         )
     else:  # video
+        # A video has no icon to hide, so the flag has nothing to act on — say so
+        # instead of accepting it and doing nothing (mirrors the CLI's UsageError).
+        if p.get("hide_icon") is not None:
+            raise BatchOpError("hide_icon applies to kind='audio' only")
         created = slide.add_video(p["path"], **common, **geom)
     return {"ok": True, **created.to_dict()}
 
@@ -1609,7 +1613,9 @@ def _render_export_video(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
     result = deck.export_video(
         p["out"],
         use_timings=bool(p.get("use_timings", True)),
-        default_slide_duration=float(p.get("default_slide_duration", 5.0)),
+        # Not coerced with int() — that would re-introduce the silent 2.5 -> 2
+        # truncation the library now rejects outright.
+        default_slide_duration=p.get("default_slide_duration", 5),
         resolution=int(p.get("resolution", 720)),
         fps=int(p.get("fps", 30)),
         quality=int(p.get("quality", 85)),

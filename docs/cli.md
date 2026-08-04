@@ -157,7 +157,7 @@ when text looks clipped or overflowing — `autosize` (the autofit mode),
 `overflow_risk` flag (`"possible"` when autosize is off so text can clip, `"low"`
 when an autofit mode is active, `"unknown"` for an unrecognized autosize mode).
 All reads; the view never moves. To *act* on what it reports, see
-[`shape set-text-frame`](#shape-set-text-frame---anchor-id-id).
+[`shape set-text-frame`](#shape-set-text-frame-anchor-id-id).
 
 ```json
 {"anchor_id": "shape:4:3", "autosize": "none", "word_wrap": true, "vertical_anchor": "top",
@@ -493,10 +493,13 @@ The "build a deck, narrate it, export a video" path.
 
 - **`media add --slide N --kind audio|video --path FILE`** — insert an audio/video
   clip (embedded; `--link` keeps the file on disk). Defaults: `--autoplay` plays on
-  slide entry, `--hide-icon` hides the speaker icon while idle (audio only), and
+  slide entry, `--hide-icon` hides the speaker icon while idle, and
   `--pace-slide` auto-advances the slide to the clip's length so an exported video
   paces itself to the narration. Turn any off with `--no-autoplay` /
-  `--no-hide-icon` / `--no-pace-slide`. Optional `--left/--top/--width/--height`
+  `--no-hide-icon` / `--no-pace-slide`. `--hide-icon`/`--no-hide-icon` is
+  **audio-only** — a video has no icon to hide, so passing it with `--kind video`
+  is a usage error rather than a flag that quietly does nothing. Optional
+  `--left/--top/--width/--height`
   (points), `--alt-text`. Reads carry a `media` field (`{type, length_s, start_s,
   end_s, muted, volume, autoplay}`); `type` is `sound`/`movie`, and `start_s`/`end_s`
   are the trim window in seconds.
@@ -509,7 +512,9 @@ The "build a deck, narrate it, export a video" path.
   [--default-slide-duration 5] [--no-use-timings]`** — export the deck to an MP4. A
   **read** (no rebind). Wraps PowerPoint's async `CreateVideo`: **blocks until done
   by default** (raises after `--timeout` seconds, default 600). `--use-timings`
-  (default on) honors per-slide timings + narration.
+  (default on) honors per-slide timings + narration; `--default-slide-duration` is
+  **whole seconds** (`CreateVideo`'s parameter is an integer, so a fractional value
+  is rejected rather than silently truncated).
 - **`export-video PATH --no-wait`** returns the in-flight status immediately; poll
   **`video-status`** until `status` is `done` (then the file is ready). A failed
   encode exits 1.
@@ -994,7 +999,7 @@ reset-to-layout` → `set-paragraphs` → `slide export`** (render and check).
 
 ### `shape set-text-frame --anchor-id ID`
 
-The setter half of [`read text-frame-status`](#read-anchor---anchor-id-id) — the
+The setter half of [`read text-frame-status`](#reading-text-read) — the
 verbs for **precise layout**, and the reason you no longer need the `.com` escape
 hatch to get it. At least one option is required; the resulting frame status is
 printed.

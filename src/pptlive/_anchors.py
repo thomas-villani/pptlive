@@ -627,24 +627,37 @@ class Anchor(ABC):
         """Remove text-run hyperlinks from this anchor; return how many were cleared.
 
         With no span (`text`/`start`/`length` all omitted) clears **all** links in
-        the anchor; otherwise clears just the addressed span (same addressing as
-        `set_link`). `Hyperlink.Delete()` per span. A mutation: wrap in
-        `deck.edit(...)`.
+        the anchor; otherwise clears every link **overlapping** the addressed span
+        (same addressing as `set_link`). A mutation: wrap in `deck.edit(...)`.
+
+        The count is how many links were actually **there** — not a fixed `1` per
+        call. An addressed span carrying no link returns `0` and issues no
+        `Delete`, so a caller can tell "removed it" from "nothing was there"
+        (a typo'd `text=` used to report success). A link is removed whole even
+        when the span covers only part of it: a hyperlink is a property of a text
+        run, so there is no half-link to leave behind.
         """
         with _com.translate_com_errors():
             tr = self._text_range()
-            if text is None and start is None and length is None:
-                rows = links_in_range(tr)
-                # Delete back-to-front: a cleared link re-merges its run, shifting
-                # later runs — reverse order keeps each span's offsets valid.
-                for row in reversed(rows):
-                    tr.Characters(int(row["start"]) + 1, int(row["length"])).ActionSettings(
-                        _MOUSE_CLICK
-                    ).Hyperlink.Delete()
-                return len(rows)
-            span_start, span_len, _ = _resolve_span(tr, text, start, length)
-            tr.Characters(span_start + 1, span_len).ActionSettings(_MOUSE_CLICK).Hyperlink.Delete()
-            return 1
+            rows = links_in_range(tr)
+            if not (text is None and start is None and length is None):
+                span_start, span_len, _ = _resolve_span(tr, text, start, length)
+                span_end = span_start + span_len
+                rows = [
+                    row
+                    for row in rows
+                    if int(row["start"]) < span_end
+                    and int(row["start"]) + int(row["length"]) > span_start
+                ]
+            # Delete back-to-front: a cleared link re-merges its run, shifting
+            # later runs — reverse order keeps each span's offsets valid. Deleting
+            # per *link* (rather than one Delete over the caller's whole span)
+            # makes the returned count provably equal to what was removed.
+            for row in reversed(rows):
+                tr.Characters(int(row["start"]) + 1, int(row["length"])).ActionSettings(
+                    _MOUSE_CLICK
+                ).Hyperlink.Delete()
+            return len(rows)
 
     def links(self) -> list[dict[str, Any]]:
         """Every text-run hyperlink in this anchor — `[{text, start, length, address,

@@ -207,7 +207,7 @@ class Presentation:
         path: str | os.PathLike[str],
         *,
         use_timings: bool = True,
-        default_slide_duration: float = 5.0,
+        default_slide_duration: int = 5,
         resolution: int = 720,
         fps: int = 30,
         quality: int = 85,
@@ -222,9 +222,13 @@ class Presentation:
         fence is needed. Overwrites an existing file.
 
         `use_timings` honors per-slide auto-advance timings + narration (set
-        `pace_slide=True` on `add_audio`/`add_video`); `default_slide_duration` (s)
+        `pace_slide=True` on `add_audio`/`add_video`); `default_slide_duration`
         paces any slide *without* a timing. `resolution` is the vertical pixel
         height (e.g. 720, 1080), `fps` frames/second, `quality` 0–100.
+
+        `default_slide_duration` is **whole seconds** — `CreateVideo`'s parameter is
+        an integer, so a fractional value was silently truncated (`2.5` → `2`); it is
+        typed `int` and rejected outright rather than quietly rounded.
 
         `CreateVideo` is **async**. By default (`wait=True`) this blocks, polling
         `CreateVideoStatus` until the encode finishes (or `timeout` seconds elapse,
@@ -239,6 +243,17 @@ class Presentation:
         # confusing raw CreateVideo COM error (the project's validate-first pattern).
         if int(resolution) <= 0:
             raise ValueError(f"resolution must be a positive pixel height, got {resolution!r}")
+        # Annotated `int`, but the CLI/MCP/batch layers hand through whatever JSON
+        # carried, so check at runtime rather than trusting the annotation.
+        if float(default_slide_duration) != int(default_slide_duration):
+            raise ValueError(
+                "default_slide_duration must be whole seconds (CreateVideo takes an "
+                f"integer), got {default_slide_duration!r}"
+            )
+        if int(default_slide_duration) <= 0:
+            raise ValueError(
+                f"default_slide_duration must be positive, got {default_slide_duration!r}"
+            )
         if int(fps) <= 0:
             raise ValueError(f"fps must be positive, got {fps!r}")
         if not 0 <= int(quality) <= 100:

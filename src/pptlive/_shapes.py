@@ -376,7 +376,10 @@ def _media_to_dict(com_shape: Any) -> dict[str, Any]:
     end_ms = _safe(lambda: float(com_shape.MediaFormat.EndPoint), None)
     return {
         "type": media_type_name(_safe(lambda: int(com_shape.MediaType), None)),
-        "length_s": round(length_ms / 1000.0, 3) if length_ms else None,
+        # `is not None`, not a truthiness test: a 0-length clip is a real reading
+        # ("we asked and it is zero"), while None means "the property didn't read".
+        # Matches how start_s/end_s below already guard.
+        "length_s": round(length_ms / 1000.0, 3) if length_ms is not None else None,
         "start_s": round(start_ms / 1000.0, 3) if start_ms is not None else None,
         "end_s": round(end_ms / 1000.0, 3) if end_ms is not None else None,
         # Muted is a plain boolean property (COM returns a native bool, NOT a

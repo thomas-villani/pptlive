@@ -128,6 +128,31 @@ def test_remove_link_span(deck) -> None:  # type: ignore[no-untyped-def]
     assert sh.links() == []
 
 
+def test_remove_link_on_an_unlinked_span_reports_zero(deck) -> None:  # type: ignore[no-untyped-def]
+    """The count is what was actually cleared, not a fixed 1 per call.
+
+    Previously `remove_link(text=...)` returned 1 unconditionally, so a caller
+    could not tell "removed the link" from "there was nothing there" — and a
+    typo'd span reported success.
+    """
+    sh = deck.slides[3].shapes[1]  # "Free text", no links set
+    with deck.edit("t"):
+        n = sh.remove_link(text="Free")
+    assert n == 0
+    assert sh.links() == []
+
+
+def test_remove_link_span_covering_two_links_counts_both(deck) -> None:  # type: ignore[no-untyped-def]
+    sh = deck.slides[3].shapes[1]  # "Free text"
+    with deck.edit("t"):
+        sh.set_link(start=0, length=4, url="https://a")  # "Free"
+        sh.set_link(start=5, length=4, url="https://b")  # "text"
+    with deck.edit("t"):
+        n = sh.remove_link(start=0, length=9)  # the whole string
+    assert n == 2
+    assert sh.links() == []
+
+
 def test_remove_all_links(deck) -> None:  # type: ignore[no-untyped-def]
     sh = deck.slides[3].shapes[1]  # "Free text"
     with deck.edit("t"):

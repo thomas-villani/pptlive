@@ -78,6 +78,21 @@ crop is cleared first, so re-fitting never compounds. Both return
 `{crop, geometry}` (plus `fit`), and a cropped picture carries its `crop` in
 shape reads.
 
+**Arranging several shapes at once** lives on the collection:
+`ShapeCollection.group(shapes)` returns a new group handle (members keep their
+own ids, echoed as `group_item_ids`) and `Shape.ungroup()` frees them again with
+those same ids — no identity churn either way. `align(shapes, how, *,
+relative_to="slide")` and `distribute(shapes, how, *, relative_to=)` do the
+mechanical tidying, and `add_connector(connector_type, *, begin=, end=, ...)`
+draws a line that *glues* to two shapes (so it follows them when they move);
+omit `begin`/`end` and pass geometry instead for a free-floating line.
+
+A text-bearing shape's frame is readable *and* settable —
+`text_frame_status()` / `set_text_frame(...)`, with the same knobs available on
+`add_textbox` / `add_shape` at creation time. See
+[Anchors](#anchors) for what those do and the autofit footgun they exist to
+solve.
+
 A shape can also animate: `Shape.animate(effect="fade", *, trigger="on_click",
 duration=None, delay=None, exit=False)` appends a whole-shape entrance (or, with
 `exit=True`, exit) effect to the slide's main sequence, and
@@ -126,6 +141,15 @@ layout are `autosize="none"` — a new text box grows to fit its text, so a `hei
 you set is advisory until autofit is off — and `margins=0`, since PowerPoint's
 0.1 in (7.2 pt) inner margins silently eat padding math. `add_textbox` and
 `add_shape` accept the same arguments, so a box can be created already pinned.
+
+Hyperlinks come at two scales. `Shape.set_hyperlink(...)` makes the *whole*
+shape clickable; `Anchor.set_link(text=|start=/length=, url=|slide=,
+screen_tip=)` links a **span of text inside** it — and because it lives on the
+`Anchor` base, it works identically on a shape, one `Paragraph`, a table `Cell`,
+or a slide's `Notes`. Address the span by literal substring (an ambiguous match
+raises `AmbiguousMatchError` rather than guessing) or by explicit 0-based
+offsets. `remove_link(...)` clears one span or, with no span, every link in the
+anchor, returning how many actually existed; `links()` lists them.
 
 ::: pptlive.Anchor
 

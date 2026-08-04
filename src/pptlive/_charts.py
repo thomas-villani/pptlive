@@ -44,6 +44,24 @@ if TYPE_CHECKING:
 SeriesInput = Mapping[str, Sequence[float]] | Sequence[tuple[str, Sequence[float]]]
 
 
+def _safe_close(wb: Any) -> None:
+    """Close an embedded-Excel workbook, tolerating a server that already went away.
+
+    `Workbook.Close()` is the last step of a chart data write, after the cells and
+    `SetSourceData` have already landed. PowerPoint's embedded-Excel server is
+    fragile on teardown and can vanish mid-call (`0x800706BA`
+    RPC_S_SERVER_UNAVAILABLE), which is deliberately *not* in `_BUSY_HRESULTS` (it
+    is unrecoverable in-process, not busy) and so would otherwise surface as a hard
+    `ComError` on an otherwise-successful write. There is nothing left to close in
+    that case, so the failure is swallowed here; `Chart._reflects_data` remains the
+    authority on whether the write actually committed.
+    """
+    try:
+        wb.Close()
+    except Exception:  # noqa: BLE001 - deliberately broad; see docstring
+        pass
+
+
 def _col_letter(n: int) -> str:
     """1 -> A, 2 -> B, ... 27 -> AA (Excel column letters)."""
     s = ""
@@ -240,7 +258,17 @@ class Chart:
                     target = f"{_sheet_ref(ws.Name)}!$A$1:${_col_letter(ncols)}${nrows}"
                     chart.SetSourceData(target)
                 finally:
-                    wb.Close()
+                    # Best-effort: by this point the cells are written and
+                    # SetSourceData has run, so a Close that fails because the
+                    # embedded-Excel server already went away (0x800706BA
+                    # RPC_S_SERVER_UNAVAILABLE — deliberately NOT a busy HRESULT,
+                    # so it would surface as a hard ComError) has nothing left to
+                    # close. Swallowing it here does not hide a failed write: the
+                    # _reflects_data check below is the authority on whether the
+                    # data actually landed, and raises a retryable busy if it
+                    # didn't. Observed as an intermittent red on the chart smoke
+                    # test; the write itself had succeeded every time.
+                    _safe_close(wb)
             # The embedded-Excel commit can SILENTLY race: a first-chance
             # RPC_S_CALL_FAILED (0x800706BE) during the workbook teardown leaves
             # SetSourceData bound to an empty range with *no* Python exception, so
