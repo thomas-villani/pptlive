@@ -160,3 +160,17 @@ replace = 'version = "{new_version}"'
 filename = "mcpb/pyproject.toml"
 search = '>={current_version}'
 replace = '>={new_version}'
+
+# The lockfile records the project's OWN version. CI's lint job runs
+# `uv sync --locked`, so a stale entry here fails the build after an otherwise
+# clean bump (it did, on the 0.8.0 cut). Anchored on the two-line package block,
+# not a bare `version = "..."`: a dependency could coincidentally sit at the same
+# version and a bare match would rewrite the wrong package.
+[[tool.bumpversion.files]]
+filename = "uv.lock"
+search = '''
+name = "pptlive"
+version = "{current_version}"'''
+replace = '''
+name = "pptlive"
+version = "{new_version}"'''
