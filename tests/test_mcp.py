@@ -226,6 +226,42 @@ def test_edit_shape_set_text_frame_rejects_bad_value(fake_powerpoint: Any) -> No
         ppt_edit("shape_set_text_frame", anchor_id="ph:2:body", margins=-5.0)
 
 
+def test_edit_shape_crop(fake_powerpoint: Any) -> None:
+    out = ppt_edit("shape_crop", anchor_id="shape:2:3", crop_left=60.0)
+    assert out["ok"] is True
+    assert out["crop"] == {"left": 60.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
+    assert out["geometry"]["width"] == 270.0  # cropping shrinks the box
+    assert out["shapeid"].startswith("shapeid:2:")
+
+
+def test_edit_shape_crop_ignores_the_positional_left_param(fake_powerpoint: Any) -> None:
+    # `left` means *position* everywhere else, so shape_crop deliberately reads
+    # `crop_left` — passing `left` must not silently crop.
+    with pytest.raises(ToolError, match="at least one of crop_left"):
+        ppt_edit("shape_crop", anchor_id="shape:2:3", left=60.0)
+
+
+def test_edit_shape_crop_non_picture_is_invalid_args(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError, match="invalid_args"):
+        ppt_edit("shape_crop", anchor_id="shape:2:1", crop_left=10.0)
+
+
+def test_edit_shape_crop_to_fit_cover(fake_powerpoint: Any) -> None:
+    out = ppt_edit("shape_crop_to_fit", anchor_id="shape:2:3", width=300.0, height=300.0)
+    assert out["fit"] == "cover"
+    assert (out["geometry"]["width"], out["geometry"]["height"]) == (300.0, 300.0)
+    assert out["crop"]["left"] == out["crop"]["right"] > 0.0
+
+
+def test_edit_shape_crop_to_fit_contain(fake_powerpoint: Any) -> None:
+    out = ppt_edit(
+        "shape_crop_to_fit", anchor_id="shape:2:3", width=300.0, height=300.0, fit="contain"
+    )
+    assert out["fit"] == "contain"
+    assert out["crop"] == {"left": 0.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
+    assert out["geometry"]["height"] == 200.0  # the whole picture, letterboxed
+
+
 def test_edit_shape_add_takes_text_frame_options(fake_powerpoint: Any) -> None:
     out = ppt_edit(
         "shape_add",

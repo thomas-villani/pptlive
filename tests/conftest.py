@@ -37,6 +37,7 @@ _MSO_AUTO_SHAPE = 1
 _MSO_LINE = 9
 _MSO_GROUP = 6
 _MSO_PICTURE = 13
+_MSO_LINKED_PICTURE = 11
 _MSO_PLACEHOLDER = 14
 _MSO_MEDIA = 16
 _MSO_TEXT_BOX = 17
@@ -558,6 +559,129 @@ class _FakeGradientStops:
         self._stops.append(_FakeGradientStop(rgb, position))
 
 
+class _FakeCrop:
+    """`PictureFormat.Crop` — the modern crop object (Office 2010+).
+
+    Only the members `scripts/crop_spike.py` proved readable under our late-bound
+    dispatch are modelled. The unit trap `scripts/crop_fit_spike.py` caught is
+    reproduced faithfully: `PictureWidth`/`PictureHeight` are the uncropped
+    picture in **display** points, while `Crop*` takes points of the *original*
+    picture — so on this half-scale fake they read 300/200 for a 600x400
+    picture-point image. Code that treats them as interchangeable fails here, as
+    it did live.
+    """
+
+    def __init__(self, pf: _FakePictureFormat) -> None:
+        self._pf = pf
+
+    @property
+    def PictureWidth(self) -> float:
+        return self._pf._pic_w * self._pf._scales()[0]
+
+    @property
+    def PictureHeight(self) -> float:
+        return self._pf._pic_h * self._pf._scales()[1]
+
+    @property
+    def ShapeWidth(self) -> float:
+        return float(self._pf._shape.Width)
+
+    @property
+    def ShapeHeight(self) -> float:
+        return float(self._pf._shape.Height)
+
+    @property
+    def PictureOffsetX(self) -> float:
+        return 0.0
+
+    @property
+    def PictureOffsetY(self) -> float:
+        return 0.0
+
+
+class _FakePictureFormat:
+    """`Shape.PictureFormat` — the four crops, modelling what the crop spike pinned.
+
+    Two live behaviours matter and are both reproduced here:
+
+    * **Cropping shrinks the shape box** (spike finding A4) — it does not keep the
+      box and letterbox inside it.
+    * The crop unit is points **of the picture**, which equals display points only
+      while the picture sits at its native size. This fake deliberately puts the
+      picture at a **0.5 display scale** (`_pic_w = 2 * shape.Width`), so display
+      points and picture points differ. That is the point: a 1:1 fake would let a
+      wrapper that confuses the two units pass every unit test, and the live
+      picture is usually resized. `_shapes._crop_axis_scale` measures the ratio
+      rather than assuming it, and this fake is what proves it.
+
+    The display scale is *inferred* from the current shape size before each crop
+    change and then held, so resizing the shape and cropping compose the way they
+    do in PowerPoint.
+    """
+
+    _EDGES = ("Left", "Right", "Top", "Bottom")
+
+    def __init__(self, shape: _FakeShape) -> None:
+        self._shape = shape
+        self._pic_w = float(shape.Width) * 2.0
+        self._pic_h = float(shape.Height) * 2.0
+        self._crop = dict.fromkeys(self._EDGES, 0.0)
+        self.Crop = _FakeCrop(self)
+
+    def _remaining(self) -> tuple[float, float]:
+        return (
+            self._pic_w - self._crop["Left"] - self._crop["Right"],
+            self._pic_h - self._crop["Top"] - self._crop["Bottom"],
+        )
+
+    def _scales(self) -> tuple[float, float]:
+        """Display points per picture point, read off the shape's current size."""
+        rem_w, rem_h = self._remaining()
+        return (
+            float(self._shape.Width) / rem_w if rem_w > 0 else 1.0,
+            float(self._shape.Height) / rem_h if rem_h > 0 else 1.0,
+        )
+
+    def _set_crop(self, edge: str, value: float) -> None:
+        scale_x, scale_y = self._scales()  # capture BEFORE the crop moves the box
+        self._crop[edge] = float(value)
+        rem_w, rem_h = self._remaining()
+        self._shape.Width = max(0.0, rem_w) * scale_x
+        self._shape.Height = max(0.0, rem_h) * scale_y
+
+    @property
+    def CropLeft(self) -> float:
+        return self._crop["Left"]
+
+    @CropLeft.setter
+    def CropLeft(self, value: float) -> None:
+        self._set_crop("Left", value)
+
+    @property
+    def CropRight(self) -> float:
+        return self._crop["Right"]
+
+    @CropRight.setter
+    def CropRight(self, value: float) -> None:
+        self._set_crop("Right", value)
+
+    @property
+    def CropTop(self) -> float:
+        return self._crop["Top"]
+
+    @CropTop.setter
+    def CropTop(self, value: float) -> None:
+        self._set_crop("Top", value)
+
+    @property
+    def CropBottom(self) -> float:
+        return self._crop["Bottom"]
+
+    @CropBottom.setter
+    def CropBottom(self, value: float) -> None:
+        self._set_crop("Bottom", value)
+
+
 class _FakeShapeFill:
     """`Shape.Fill` — solid / gradient / pattern / picture.
 
@@ -798,6 +922,11 @@ class _FakeShape:
         )
         self.SoftEdge = SimpleNamespace(Type=0, Radius=0.0)
         self.Reflection = SimpleNamespace(Type=0)
+        # Crop (v-next) — only a picture has a PictureFormat; anything else must
+        # raise on access, which is the wrapper's `is_picture` gate in miniature.
+        self._picture_format = (
+            _FakePictureFormat(self) if shape_type in (_MSO_PICTURE, _MSO_LINKED_PICTURE) else None
+        )
         self._placeholder_type = placeholder_type
         self._table = table
         self._chart: _FakeChart | None = None
@@ -830,6 +959,12 @@ class _FakeShape:
         self._connector = False
         self._connector_format: _FakeConnectorFormat | None = None
         self._group_items: list[_FakeShape] = []
+
+    @property
+    def PictureFormat(self) -> _FakePictureFormat:
+        if self._picture_format is None:
+            raise AttributeError("shape is not a picture")
+        return self._picture_format
 
     @property
     def Connector(self) -> int:

@@ -32,7 +32,7 @@ from .. import attach
 from .._batch import run_batch
 from .._guide import bundled_skill, skill_body, skill_name
 from .._presentation import Presentation
-from .._shapes import Shape
+from .._shapes import FIT_MODES, Shape
 from ..constants import (
     ALIGN_CHOICES,
     ALIGNMENT_CHOICES,
@@ -2015,6 +2015,96 @@ def shape_set_picture(
         new = sh.set_picture(path, alt_text=alt_text)
     payload = {"ok": True, **new.to_dict()}
     emit(payload, as_text=not ctx.obj["as_json"], text=f"re-sourced picture -> {new.shapeid}")
+
+
+@shape.command(name="crop")
+@click.option(
+    "--anchor-id", "anchor_id", required=True, help="Picture to crop (shape:S:N / shapeid:S:ID)."
+)
+@click.option("--left", type=float, default=None, help="Points off the left edge.")
+@click.option("--right", type=float, default=None, help="Points off the right edge.")
+@click.option("--top", type=float, default=None, help="Points off the top edge.")
+@click.option("--bottom", type=float, default=None, help="Points off the bottom edge.")
+@_deck_command
+def shape_crop(
+    ctx: click.Context,
+    deck: Presentation,
+    anchor_id: str,
+    left: float | None,
+    right: float | None,
+    top: float | None,
+    bottom: float | None,
+) -> None:
+    """Trim points off a picture's edges (0 un-crops an edge).
+
+    The raw primitive. Cropping SHRINKS the shape box — a 300pt picture cropped
+    75pt becomes 225pt — so follow with `shape resize`, or use `shape crop-to-fit`,
+    which does the aspect arithmetic and forces the box for you.
+    """
+    sh = _resolve_shape(deck, anchor_id)
+    if left is None and right is None and top is None and bottom is None:
+        raise click.UsageError("crop needs at least one of --left/--right/--top/--bottom")
+    with deck.edit(f"CLI: crop {anchor_id}"):
+        result = sh.crop(left=left, right=right, top=top, bottom=bottom)
+    geo = result.get("geometry") or {}
+    emit(
+        {"ok": True, "anchor_id": sh.anchor_id, "shapeid": sh.shapeid, **result},
+        as_text=not ctx.obj["as_json"],
+        text=(
+            f"{sh.anchor_id}: cropped -> {geo.get('width', 0):.1f} x {geo.get('height', 0):.1f} pt"
+        ),
+    )
+
+
+@shape.command(name="crop-to-fit")
+@click.option(
+    "--anchor-id", "anchor_id", required=True, help="Picture to fit (shape:S:N / shapeid:S:ID)."
+)
+@click.option("--left", type=float, default=None, help="Box left in points (default: unchanged).")
+@click.option("--top", type=float, default=None, help="Box top in points (default: unchanged).")
+@click.option("--width", type=float, default=None, help="Box width in points (default: unchanged).")
+@click.option(
+    "--height", type=float, default=None, help="Box height in points (default: unchanged)."
+)
+@click.option(
+    "--fit",
+    type=click.Choice(FIT_MODES),
+    default="cover",
+    show_default=True,
+    help='"cover" fills the box and centre-crops the overflow; "contain" fits the whole picture.',
+)
+@_deck_command
+def shape_crop_to_fit(
+    ctx: click.Context,
+    deck: Presentation,
+    anchor_id: str,
+    left: float | None,
+    top: float | None,
+    width: float | None,
+    height: float | None,
+    fit: str,
+) -> None:
+    """Fit a picture to a box, reconciling the aspect mismatch for you.
+
+    The full-bleed verb: `--fit cover` fills the box exactly and centre-crops the
+    overflow, so a panorama lands in a 16:9 panel without hanging off the slide
+    (which would poison `slide geometry`'s off_slide flag forever). `--fit contain`
+    shows the whole picture, shrunk and centred inside the box instead. Existing
+    crops are cleared first, so re-fitting never compounds.
+    """
+    sh = _resolve_shape(deck, anchor_id)
+    with deck.edit(f"CLI: crop to fit {anchor_id}"):
+        result = sh.crop_to_fit(left=left, top=top, width=width, height=height, fit=fit)
+    geo = result.get("geometry") or {}
+    emit(
+        {"ok": True, "anchor_id": sh.anchor_id, "shapeid": sh.shapeid, **result},
+        as_text=not ctx.obj["as_json"],
+        text=(
+            f"{sh.anchor_id}: {result.get('fit')} -> "
+            f"{geo.get('width', 0):.1f} x {geo.get('height', 0):.1f} pt "
+            f"at ({geo.get('left', 0):.1f}, {geo.get('top', 0):.1f})"
+        ),
+    )
 
 
 @shape.command(name="pattern-fill")

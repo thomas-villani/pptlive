@@ -64,6 +64,20 @@ the delete-proof handle) alongside its z-order `anchor_id`.
 `shapeid` — it resolves by `Shape.Id` on every access, so it keeps pointing at
 the same shape across a delete/restack that would shift a `shape:S:N` index.
 
+A **picture** can be cropped. `Shape.crop(*, left=, right=, top=, bottom=)` is
+the raw primitive — points off each named edge, 1:1 with PowerPoint's
+`PictureFormat.Crop*` — but note that cropping *shrinks the shape box* rather
+than letterboxing inside it. `Shape.crop_to_fit(*, left=, top=, width=, height=,
+fit="cover")` is the verb that reconciles an aspect mismatch for you:
+`fit="cover"` fills the box exactly and centre-crops the overflow (the
+full-bleed move — and it keeps the picture *on* the slide, so
+`Slide.geometry_report()`'s `off_slide` flag stays trustworthy), while
+`fit="contain"` shrinks the whole picture to fit and centres it, letterboxed.
+Each box argument defaults to the picture's current geometry, and any existing
+crop is cleared first, so re-fitting never compounds. Both return
+`{crop, geometry}` (plus `fit`), and a cropped picture carries its `crop` in
+shape reads.
+
 A shape can also animate: `Shape.animate(effect="fade", *, trigger="on_click",
 duration=None, delay=None, exit=False)` appends a whole-shape entrance (or, with
 `exit=True`, exit) effect to the slide's main sequence, and

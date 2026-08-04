@@ -130,6 +130,8 @@ class EditOp(StrEnum):
     SHAPE_GRADIENT_FILL = "shape_gradient_fill"
     SHAPE_PICTURE_FILL = "shape_picture_fill"
     SHAPE_SET_PICTURE = "shape_set_picture"
+    SHAPE_CROP = "shape_crop"
+    SHAPE_CROP_TO_FIT = "shape_crop_to_fit"
     SHAPE_PATTERN_FILL = "shape_pattern_fill"
     SHAPE_SET_EFFECT = "shape_set_effect"
     SHAPE_LINE_STYLE = "shape_line_style"
@@ -862,6 +864,39 @@ def _edit_shape_set_picture(deck: Presentation, p: dict[str, Any]) -> dict[str, 
         "shapeid": new.shapeid,
         "geometry": new.geometry(),
     }
+
+
+@edit_op(EditOp.SHAPE_CROP)
+def _edit_shape_crop(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    sh = _resolve_shape(deck, p.get("anchor_id"))
+    # Deliberately NOT the shared `left`/`top` params: there they mean *position*,
+    # here they would mean points trimmed off an edge — the prefix keeps a
+    # "shape_crop with left=100" from silently meaning the opposite of what it reads.
+    edges = {
+        edge: p[f"crop_{edge}"]
+        for edge in ("left", "right", "top", "bottom")
+        if p.get(f"crop_{edge}") is not None
+    }
+    _require(
+        bool(edges),
+        "edit op='shape_crop' needs at least one of crop_left / crop_right / "
+        "crop_top / crop_bottom (points)",
+    )
+    result = sh.crop(**edges)
+    return {"ok": True, "anchor_id": sh.anchor_id, "shapeid": sh.shapeid, **result}
+
+
+@edit_op(EditOp.SHAPE_CROP_TO_FIT)
+def _edit_shape_crop_to_fit(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    sh = _resolve_shape(deck, p.get("anchor_id"))
+    result = sh.crop_to_fit(
+        left=p.get("left"),
+        top=p.get("top"),
+        width=p.get("width"),
+        height=p.get("height"),
+        fit=p.get("fit") or "cover",
+    )
+    return {"ok": True, "anchor_id": sh.anchor_id, "shapeid": sh.shapeid, **result}
 
 
 @edit_op(EditOp.SHAPE_PATTERN_FILL)

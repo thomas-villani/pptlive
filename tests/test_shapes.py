@@ -421,6 +421,229 @@ def test_set_picture_on_non_picture_raises(deck, tmp_path) -> None:  # type: ign
         deck.slides[3].shapes[1].set_picture(_png(tmp_path))  # a textbox
 
 
+# -- crop / crop_to_fit (v-next) ---------------------------------------------
+#
+# The fake picture ("Picture 3") displays 300x200 pt from a 600x400 picture-point
+# image — a 0.5 display scale, deliberately NOT 1:1 (see `_FakePictureFormat`), so
+# a wrapper that confused crop units with display units fails these outright.
+
+
+def _pic(deck):  # type: ignore[no-untyped-def]
+    return deck.slides[2].shapes[3]
+
+
+def _visible_aspect(shape) -> float:  # type: ignore[no-untyped-def]
+    """Aspect of the picture area still showing, from the fake's own ground truth.
+
+    Reads the fake's native picture size directly (crop units) rather than going
+    through any library helper, so this stays an independent check on the fit math.
+    """
+    pf = shape.com.PictureFormat
+    width = pf._pic_w - pf.CropLeft - pf.CropRight
+    height = pf._pic_h - pf.CropTop - pf.CropBottom
+    return width / height
+
+
+@pytest.mark.parametrize(
+    ("source", "box", "expected"),
+    [
+        ((200.0, 100.0), (100.0, 100.0), (0.5, 0.0)),  # wide source -> trim the sides
+        ((100.0, 200.0), (100.0, 100.0), (0.0, 0.5)),  # tall source -> trim top/bottom
+        ((160.0, 90.0), (320.0, 180.0), (0.0, 0.0)),  # same aspect -> no crop at all
+    ],
+)
+def test_cover_crop_fractions(source, box, expected) -> None:  # type: ignore[no-untyped-def]
+    from pptlive._shapes import cover_crop_fractions
+
+    got = cover_crop_fractions(source[0], source[1], box[0], box[1])
+    assert got == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    ("source", "box", "expected"),
+    [
+        ((200.0, 100.0), (100.0, 100.0), (100.0, 50.0)),  # width-limited
+        ((100.0, 200.0), (100.0, 100.0), (50.0, 100.0)),  # height-limited
+        ((160.0, 90.0), (320.0, 180.0), (320.0, 180.0)),  # exact fit, scaled up
+    ],
+)
+def test_contain_size(source, box, expected) -> None:  # type: ignore[no-untyped-def]
+    from pptlive._shapes import contain_size
+
+    got = contain_size(source[0], source[1], box[0], box[1])
+    assert got == pytest.approx(expected)
+
+
+def test_crop_trims_and_shrinks_the_box(deck) -> None:  # type: ignore[no-untyped-def]
+    pic = _pic(deck)
+    result = pic.crop(left=60.0)
+    assert result["crop"] == {"left": 60.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
+    # Crop spike A4: cropping SHRINKS the shape box rather than letterboxing.
+    # 60 picture-points off a 600-wide picture at 0.5 scale = 30 display points.
+    assert result["geometry"]["width"] == pytest.approx(270.0)
+    assert result["geometry"]["height"] == pytest.approx(200.0)
+
+
+def test_crop_only_touches_the_edges_passed(deck) -> None:  # type: ignore[no-untyped-def]
+    pic = _pic(deck)
+    pic.crop(top=40.0)
+    result = pic.crop(left=60.0)  # must not reset the top crop
+    assert result["crop"] == {"left": 60.0, "right": 0.0, "top": 40.0, "bottom": 0.0}
+
+
+def test_crop_zero_uncrops_an_edge(deck) -> None:  # type: ignore[no-untyped-def]
+    pic = _pic(deck)
+    pic.crop(left=60.0)
+    result = pic.crop(left=0.0)
+    assert result["crop"]["left"] == 0.0
+    assert result["geometry"]["width"] == pytest.approx(300.0)
+
+
+def test_crop_requires_an_edge(deck) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError, match="at least one of"):
+        _pic(deck).crop()
+
+
+def test_crop_rejects_negative(deck) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError, match="must be >= 0"):
+        _pic(deck).crop(left=-5.0)
+
+
+def test_crop_rejects_consuming_the_whole_picture(deck) -> None:  # type: ignore[no-untyped-def]
+    # 400 + 300 >= the picture's 600 picture-point width.
+    with pytest.raises(ValueError, match="consumes the picture"):
+        _pic(deck).crop(left=400.0, right=300.0)
+
+
+def test_crop_guard_uses_crop_units_not_display_points(deck) -> None:  # type: ignore[no-untyped-def]
+    # The bug `scripts/crop_fit_spike.py` caught: `Crop.PictureWidth` is the
+    # picture in DISPLAY points (300 here) while `Crop*` takes points of the
+    # ORIGINAL picture (600 here). A guard that compared the two directly would
+    # reject this perfectly valid 350pt crop.
+    assert deck.slides[2].shapes[3].com.PictureFormat.Crop.PictureWidth == 300.0
+    result = _pic(deck).crop(left=350.0)
+    assert result["crop"]["left"] == 350.0
+    assert result["geometry"]["width"] == pytest.approx(125.0)  # (600-350) * 0.5
+
+
+def test_crop_extent_probe_preserves_an_existing_crop(deck) -> None:  # type: ignore[no-untyped-def]
+    # Measuring the crop scale may need a probe crop; it must put the caller's
+    # value back, not merely zero the edge it borrowed.
+    pic = _pic(deck)
+    pic.crop(left=90.0)
+    assert pic.crop(bottom=40.0)["crop"]["left"] == 90.0
+
+
+def test_crop_on_non_picture_raises(deck) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError, match="needs a picture shape"):
+        deck.slides[3].shapes[1].crop(left=10.0)  # a textbox
+
+
+def test_crop_to_fit_cover_fills_the_box_exactly(deck) -> None:  # type: ignore[no-untyped-def]
+    pic = _pic(deck)
+    result = pic.crop_to_fit(left=10.0, top=20.0, width=300.0, height=300.0)
+    assert result["fit"] == "cover"
+    geo = result["geometry"]
+    assert (geo["left"], geo["top"]) == pytest.approx((10.0, 20.0))
+    assert (geo["width"], geo["height"]) == pytest.approx((300.0, 300.0))
+    # The 1.5:1 source loses the sides, symmetrically, and nothing off the top.
+    assert result["crop"]["left"] == pytest.approx(result["crop"]["right"])
+    assert result["crop"]["top"] == 0.0 and result["crop"]["bottom"] == 0.0
+    # The real assertion: what still shows matches the box's aspect. This is what
+    # a units bug breaks — a naive 1:1 crop would leave 1.25:1 showing in a 1:1 box.
+    assert _visible_aspect(pic) == pytest.approx(300.0 / 300.0)
+
+
+def test_crop_to_fit_cover_trims_top_and_bottom_for_a_tall_box(deck) -> None:  # type: ignore[no-untyped-def]
+    pic = _pic(deck)
+    result = pic.crop_to_fit(width=600.0, height=100.0)  # 6:1, wider than the 1.5:1 source
+    assert result["crop"]["left"] == 0.0 and result["crop"]["right"] == 0.0
+    assert result["crop"]["top"] == pytest.approx(result["crop"]["bottom"])
+    assert result["crop"]["top"] > 0.0
+    assert _visible_aspect(pic) == pytest.approx(6.0)
+
+
+def test_crop_to_fit_cover_leaves_a_matching_aspect_uncropped(deck) -> None:  # type: ignore[no-untyped-def]
+    pic = _pic(deck)
+    result = pic.crop_to_fit(width=450.0, height=300.0)  # 1.5:1, the source's own aspect
+    assert result["crop"] == {"left": 0.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
+    assert (result["geometry"]["width"], result["geometry"]["height"]) == pytest.approx(
+        (450.0, 300.0)
+    )
+
+
+def test_crop_to_fit_contain_letterboxes_and_centres(deck) -> None:  # type: ignore[no-untyped-def]
+    pic = _pic(deck)
+    result = pic.crop_to_fit(left=0.0, top=0.0, width=300.0, height=300.0, fit="contain")
+    assert result["fit"] == "contain"
+    # Nothing is cropped — the whole picture shows.
+    assert result["crop"] == {"left": 0.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
+    geo = result["geometry"]
+    # Width-limited: 300 wide, 200 tall, centred vertically in the 300pt box.
+    assert (geo["width"], geo["height"]) == pytest.approx((300.0, 200.0))
+    assert (geo["left"], geo["top"]) == pytest.approx((0.0, 50.0))
+
+
+def test_crop_to_fit_defaults_to_the_current_box(deck) -> None:  # type: ignore[no-untyped-def]
+    pic = _pic(deck)
+    before = pic.geometry()
+    result = pic.crop_to_fit(width=100.0)  # left/top/height all default
+    assert (result["geometry"]["left"], result["geometry"]["top"]) == pytest.approx(
+        (before["left"], before["top"])
+    )
+    assert result["geometry"]["height"] == pytest.approx(before["height"])
+    assert result["geometry"]["width"] == pytest.approx(100.0)
+
+
+def test_crop_to_fit_is_idempotent(deck) -> None:  # type: ignore[no-untyped-def]
+    pic = _pic(deck)
+    once = pic.crop_to_fit(width=300.0, height=300.0)
+    twice = pic.crop_to_fit(width=300.0, height=300.0)
+    assert once["crop"] == pytest.approx(twice["crop"])
+    assert once["geometry"] == pytest.approx(twice["geometry"])
+
+
+def test_crop_to_fit_clears_a_previous_crop(deck) -> None:  # type: ignore[no-untyped-def]
+    pic = _pic(deck)
+    pic.crop(left=120.0, top=80.0)
+    result = pic.crop_to_fit(width=450.0, height=300.0)  # the source's own aspect
+    # Starts from the whole picture, so a matching aspect needs no crop at all.
+    assert result["crop"] == {"left": 0.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
+
+
+def test_crop_to_fit_rejects_unknown_fit(deck) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError, match="unknown fit"):
+        _pic(deck).crop_to_fit(width=100.0, fit="stretch")
+
+
+def test_crop_to_fit_rejects_non_positive_box(deck) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError, match="width must be > 0"):
+        _pic(deck).crop_to_fit(width=0.0)
+
+
+def test_crop_to_fit_on_non_picture_raises(deck) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError, match="needs a picture shape"):
+        deck.slides[3].shapes[1].crop_to_fit(width=100.0)
+
+
+def test_every_advertised_fit_mode_is_accepted(deck) -> None:  # type: ignore[no-untyped-def]
+    # The `set_text_frame` lesson: a CHOICES tuple must have every member actually
+    # round-trip, or the CLI advertises a name the library refuses.
+    from pptlive._shapes import FIT_MODES
+
+    for mode in FIT_MODES:
+        assert _pic(deck).crop_to_fit(width=200.0, height=150.0, fit=mode)["fit"] == mode
+
+
+def test_read_reports_crop_only_when_cropped(deck) -> None:  # type: ignore[no-untyped-def]
+    pic = _pic(deck)
+    assert "crop" not in pic.to_dict()
+    pic.crop(left=60.0)
+    assert pic.to_dict()["crop"]["left"] == 60.0
+    # Non-pictures never carry the key.
+    assert "crop" not in deck.slides[3].shapes[1].to_dict()
+
+
 def test_shapeid_index_follows_collection_not_zorderposition() -> None:
     # On a flat slide ZOrderPosition == Shapes-collection index, but with
     # grouped/placeholder orderings they diverge. ShapeById must report the

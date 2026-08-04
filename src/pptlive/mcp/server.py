@@ -384,6 +384,11 @@ def ppt_edit(
     margin_right: float | None = None,
     margin_top: float | None = None,
     margin_bottom: float | None = None,
+    crop_left: float | None = None,
+    crop_right: float | None = None,
+    crop_top: float | None = None,
+    crop_bottom: float | None = None,
+    fit: Literal["cover", "contain"] | None = None,
     link: bool = False,
     autoplay: bool = True,
     hide_icon: bool = True,
@@ -601,6 +606,19 @@ def ppt_edit(
       (embedded), keeping position/size/rotation/name/alt text/z-order. Optional
       `alt_text` overrides the carried-over value. Returns a fresh `shapeid` (the
       picture gets a new Shape.Id; animations/hyperlinks/crop are NOT carried over).
+    - "shape_crop": trim a *picture's* edges — `crop_left`/`crop_right`/`crop_top`/
+      `crop_bottom`, points off that edge (0 un-crops it); only the edges you pass
+      change. Deliberately NOT the `left`/`top` params, which mean position. NOTE
+      cropping SHRINKS the shape box (300pt cropped 75pt -> 225pt), so use
+      "shape_crop_to_fit" when the box has to hold a layout slot.
+    - "shape_crop_to_fit": fit a *picture* to a box, resolving the aspect mismatch.
+      `left`/`top`/`width`/`height` (each defaults to the picture's current
+      geometry) and `fit`: "cover" (default) fills the box exactly and
+      centre-crops the overflow; "contain" shrinks the whole picture to fit and
+      centres it. This is the full-bleed verb — it lands the picture INSIDE the
+      slide instead of oversizing it and letting it hang off the edge, which would
+      poison `ppt_read op="geometry"`'s off_slide flag permanently. Existing crops
+      are cleared first, so re-fitting never compounds.
     - "shape_pattern_fill": two-color pattern — `pattern` (e.g. "percent_50",
       "trellis", "dark_horizontal"), `fore` color, optional `back` color.
     - "shape_set_effect": shadow / glow / soft-edge / reflection. `shadow` and `glow`
@@ -777,6 +795,11 @@ def ppt_edit(
         "margin_right": margin_right,
         "margin_top": margin_top,
         "margin_bottom": margin_bottom,
+        "crop_left": crop_left,
+        "crop_right": crop_right,
+        "crop_top": crop_top,
+        "crop_bottom": crop_bottom,
+        "fit": fit,
         "link": link,
         "autoplay": autoplay,
         "hide_icon": hide_icon,
