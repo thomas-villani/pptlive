@@ -50,6 +50,19 @@ def test_add_audio_inserts_media_with_autoplay_and_pacing(deck: Any, tmp_path: A
     assert tr["advance_time"] == pytest.approx(1.2)
 
 
+def test_zero_length_clip_reads_back_as_zero_not_none(deck: Any, tmp_path: Any) -> None:
+    """`length_s` guards on `is not None`, not truthiness.
+
+    A 0-length clip is a real reading; `None` means the property didn't read at
+    all. A falsy test conflated the two (and disagreed with how `start_s`/`end_s`
+    right beside it already guarded).
+    """
+    with deck.edit("add audio"):
+        shape = deck.slides[1].add_audio(_audio(tmp_path), pace_slide=False)
+    shape.com._media["length_ms"] = 0.0
+    assert shape.media["length_s"] == 0.0
+
+
 def test_add_video_reads_back_as_movie(deck: Any, tmp_path: Any) -> None:
     with deck.edit("add video"):
         shape = deck.slides[1].add_video(_video(tmp_path))
@@ -228,6 +241,67 @@ def test_cli_media_add_video(fake_powerpoint: Any, tmp_path: Any) -> None:
     assert payload["media"]["type"] == "movie"
 
 
+def test_cli_media_add_video_rejects_hide_icon(fake_powerpoint: Any, tmp_path: Any) -> None:
+    """A video has no icon to hide, so the flag has nothing to act on.
+
+    It used to be accepted and silently ignored — the flag reported success while
+    doing nothing. The tri-state default is what lets "passed" be told from
+    "left alone".
+    """
+    res = CliRunner().invoke(
+        main,
+        # fmt: off
+        [
+            "--json",
+            "media",
+            "add",
+            "--slide",
+            "1",
+            "--kind",
+            "video",
+            "--path",
+            _video(tmp_path),
+            "--no-hide-icon",
+        ],
+        # fmt: on
+    )
+    assert res.exit_code != 0
+    assert "audio only" in res.output
+
+
+def test_cli_media_add_audio_still_takes_hide_icon(fake_powerpoint: Any, tmp_path: Any) -> None:
+    res = CliRunner().invoke(
+        main,
+        # fmt: off
+        [
+            "--json",
+            "media",
+            "add",
+            "--slide",
+            "1",
+            "--kind",
+            "audio",
+            "--path",
+            _audio(tmp_path),
+            "--no-hide-icon",
+        ],
+        # fmt: on
+    )
+    assert res.exit_code == 0
+    assert json.loads(res.output)["ok"] is True
+
+
+def test_batch_media_add_video_rejects_hide_icon(deck: Any, tmp_path: Any) -> None:
+    from pptlive._batch import BatchOpError, EditOp, _edit_core
+
+    with deck.edit("t"), pytest.raises(BatchOpError, match="audio"):
+        _edit_core(
+            deck,
+            EditOp.MEDIA_ADD,
+            {"slide": 1, "kind": "video", "path": _video(tmp_path), "hide_icon": False},
+        )
+
+
 def test_cli_media_set(fake_powerpoint: Any, tmp_path: Any) -> None:
     runner = CliRunner()
     add = runner.invoke(
@@ -317,3 +391,9 @@ def test_export_video_rejects_out_of_range_params(deck: Any, tmp_path: Any) -> N
         deck.export_video(out, resolution=0)
     with pytest.raises(ValueError, match="fps"):
         deck.export_video(out, fps=0)
+    # CreateVideo's parameter is an integer, so a fractional duration used to be
+    # silently truncated (2.5 -> 2). Reject it instead of quietly rounding.
+    with pytest.raises(ValueError, match="whole seconds"):
+        deck.export_video(out, default_slide_duration=2.5)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="default_slide_duration must be positive"):
+        deck.export_video(out, default_slide_duration=0)

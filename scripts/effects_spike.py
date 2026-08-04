@@ -43,8 +43,10 @@ def _read(obj: Any, props: tuple[str, ...]) -> dict[str, Any]:
         try:
             val = getattr(obj, name)
             # ColorFormat sub-objects -> read .RGB
-            out[name] = val if isinstance(val, (int, float, str)) else _err(
-                TypeError(f"non-scalar {type(val).__name__}")
+            out[name] = (
+                val
+                if isinstance(val, (int, float, str))
+                else _err(TypeError(f"non-scalar {type(val).__name__}"))
             )
         except Exception as exc:
             out[name] = _err(exc)
@@ -56,7 +58,9 @@ def probe_shadow(shapes: Any) -> dict[str, Any]:
     try:
         sh = shapes.add_shape("rectangle", left=20.0, top=20.0, width=120.0, height=90.0)
         sd = sh.com.Shadow
-        out["default"] = _read(sd, ("Type", "Visible", "Transparency", "Blur", "Size", "OffsetX", "OffsetY", "Style"))
+        out["default"] = _read(
+            sd, ("Type", "Visible", "Transparency", "Blur", "Size", "OffsetX", "OffsetY", "Style")
+        )
         # Preset path
         try:
             sd.Type = 25  # an outer-shadow preset (msoShadow25)
@@ -75,7 +79,9 @@ def probe_shadow(shapes: Any) -> dict[str, Any]:
             out["props_set_ok"] = True
         except Exception as exc:
             out["props_set_error"] = _err(exc)
-        out["after"] = _read(sd, ("Type", "Visible", "Transparency", "Blur", "Size", "OffsetX", "OffsetY", "Style"))
+        out["after"] = _read(
+            sd, ("Type", "Visible", "Transparency", "Blur", "Size", "OffsetX", "OffsetY", "Style")
+        )
         try:
             out["after"]["ForeColor.RGB"] = int(sd.ForeColor.RGB)
         except Exception as exc:
@@ -147,7 +153,19 @@ def probe_threed(shapes: Any) -> dict[str, Any]:
     try:
         sh = shapes.add_shape("rectangle", left=160.0, top=130.0, width=120.0, height=90.0)
         td = sh.com.ThreeD
-        out["default"] = _read(td, ("Visible", "Depth", "RotationX", "RotationY", "PresetMaterial", "BevelTopType", "BevelTopInset", "BevelTopDepth"))
+        out["default"] = _read(
+            td,
+            (
+                "Visible",
+                "Depth",
+                "RotationX",
+                "RotationY",
+                "PresetMaterial",
+                "BevelTopType",
+                "BevelTopInset",
+                "BevelTopDepth",
+            ),
+        )
         try:
             td.SetThreeDFormat(1)  # a preset 3-D format
             out["preset_set_ok"] = True
@@ -161,7 +179,19 @@ def probe_threed(shapes: Any) -> dict[str, Any]:
             out["props_set_ok"] = True
         except Exception as exc:
             out["props_set_error"] = _err(exc)
-        out["after"] = _read(td, ("Visible", "Depth", "RotationX", "RotationY", "PresetMaterial", "BevelTopType", "BevelTopInset", "BevelTopDepth"))
+        out["after"] = _read(
+            td,
+            (
+                "Visible",
+                "Depth",
+                "RotationX",
+                "RotationY",
+                "PresetMaterial",
+                "BevelTopType",
+                "BevelTopInset",
+                "BevelTopDepth",
+            ),
+        )
     except Exception as exc:
         out["error"] = _err(exc)
     return out

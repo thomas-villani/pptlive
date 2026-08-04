@@ -257,9 +257,7 @@ def main() -> int:
                 t2 = deck.slides.add(layout="blank")
                 temp_ids += [t1.id, t2.id]
                 findings["sections"] = probe_sections(deck)
-                findings["headers_footers"] = probe_headers_footers(
-                    deck.slides[t1.index], deck
-                )
+                findings["headers_footers"] = probe_headers_footers(deck.slides[t1.index], deck)
                 findings["direct_vs_inherited"] = probe_direct_vs_inherited(deck.slides[t1.index])
         finally:
             findings["sections_cleanup"] = cleanup_sections(deck, sec_count_before)

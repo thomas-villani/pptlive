@@ -75,6 +75,12 @@ markdown_extensions:
   - pymdownx.tabbed:
       alternate_style: true
 
+# Internal review artifacts (audit findings, session feedback) live beside the
+# docs for convenience but are not product documentation — keep them out of the
+# published site rather than leaving them as permanent "not in nav" warnings.
+exclude_docs: |
+  reviews/
+
 nav:
   - Home: index.md
   - Getting started: getting-started.md

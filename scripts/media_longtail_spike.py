@@ -85,8 +85,11 @@ def probe(slide_com: Any, wav_path: str, png_path: str) -> dict[str, Any]:
         muted_on = int(mf.Muted)
         mf.Muted = _MSO_FALSE
         muted_off = int(mf.Muted)
-        out["mute"] = {"set_true_read": muted_on, "set_false_read": muted_off,
-                       "round_trips": muted_on == _MSO_TRUE and muted_off == _MSO_FALSE}
+        out["mute"] = {
+            "set_true_read": muted_on,
+            "set_false_read": muted_off,
+            "round_trips": muted_on == _MSO_TRUE and muted_off == _MSO_FALSE,
+        }
     except Exception as exc:
         out["mute"] = {"error": _err(exc)}
 
@@ -128,8 +131,10 @@ def probe(slide_com: Any, wav_path: str, png_path: str) -> dict[str, Any]:
         try:
             mf.StartPoint = 1000.0
             mf.EndPoint = 200.0
-            out["trim"]["end_lt_start_read"] = {"start": float(mf.StartPoint),
-                                                "end": float(mf.EndPoint)}
+            out["trim"]["end_lt_start_read"] = {
+                "start": float(mf.StartPoint),
+                "end": float(mf.EndPoint),
+            }
         except Exception as exc:
             out["trim"]["end_lt_start_error"] = _err(exc)
         # Reset.

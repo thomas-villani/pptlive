@@ -391,7 +391,7 @@ def ppt_edit(
     fit: Literal["cover", "contain"] | None = None,
     link: bool = False,
     autoplay: bool = True,
-    hide_icon: bool = True,
+    hide_icon: bool | None = None,
     pace_slide: bool = True,
     muted: bool | None = None,
     volume: float | None = None,
@@ -533,7 +533,9 @@ def ppt_edit(
       first move for precise layout. Returns the resulting frame status.
     - "media_add": insert audio/video narration on `slide` from `path` (embedded;
       `link=true` keeps it on disk). `kind`="audio"|"video". Defaults: `autoplay`
-      plays on entry, `hide_icon` hides the audio icon while idle, `pace_slide`
+      plays on entry, `hide_icon` hides the audio icon while idle (**audio only** —
+      passing it with `kind="video"` is an `invalid_args` error, not a silent
+      no-op), `pace_slide`
       auto-advances the slide to the clip length (so "export_video" paces itself to
       the narration). Optional `left`/`top`/`width`/`height`/`alt_text`. The "build
       a deck, narrate it, export a video" path pairs this with render "export_video".
@@ -856,7 +858,7 @@ def ppt_render(
     resolution: int = 720,
     fps: int = 30,
     quality: int = 85,
-    default_slide_duration: float = 5.0,
+    default_slide_duration: int = 5,
     use_timings: bool = True,
     wait: bool = True,
     timeout: float = 600.0,
@@ -899,7 +901,8 @@ def ppt_render(
     - "export_video": export the deck to an MP4 at `out` (required) — the narrated-
       video deliverable. A read (doesn't rebind the working file). `use_timings`
       honors per-slide timings + narration; `default_slide_duration` paces untimed
-      slides; `resolution` (vertical px), `fps`, `quality` (0-100) tune the encode.
+      slides (**whole seconds** — a fractional value is rejected, not rounded);
+      `resolution` (vertical px), `fps`, `quality` (0-100) tune the encode.
       Async: blocks until done by default (`wait`, up to `timeout` s); with
       `wait=False` returns the in-flight status — poll "video_status" until `done`.
       Returns `{ok, path, status, status_code}`.

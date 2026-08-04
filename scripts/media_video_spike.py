@@ -130,7 +130,7 @@ def probe_video_export(deck_com: Any, mp4_path: str, *, timeout_s: float = 120.0
                 break
             label = _STATUS.get(st, f"?{st}")
             if label != last:
-                statuses.append(f"{round(time.time()-t0,1)}s:{label}")
+                statuses.append(f"{round(time.time() - t0, 1)}s:{label}")
                 last = label
             if st in (3, 4):  # Done / Failed
                 break
@@ -188,7 +188,11 @@ def main() -> int:
                     tr = slide_com.SlideShowTransition
                     tr.AdvanceOnTime = -1
                     tr.AdvanceTime = secs
-                    findings["advance_timing"] = {"clip_ms": clip_ms, "advance_time_s": secs, "ok": True}
+                    findings["advance_timing"] = {
+                        "clip_ms": clip_ms,
+                        "advance_time_s": secs,
+                        "ok": True,
+                    }
                 except Exception as exc:
                     findings["advance_timing"] = {"error": _err(exc)}
 

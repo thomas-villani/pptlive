@@ -707,9 +707,12 @@ def media() -> None:
 @click.option(
     "--hide-icon/--no-hide-icon",
     "hide_icon",
-    default=True,
-    show_default=True,
-    help="Hide the speaker icon while not playing (audio only).",
+    default=None,
+    help=(
+        "Hide the speaker icon while not playing. Audio only (a video must stay "
+        "visible) — passing it with --kind video is an error, not a silent no-op. "
+        "[default: hide-icon]"
+    ),
 )
 @click.option(
     "--pace-slide/--no-pace-slide",
@@ -737,11 +740,16 @@ def media_add(
     height: float | None,
     link: bool,
     autoplay: bool,
-    hide_icon: bool,
+    hide_icon: bool | None,
     pace_slide: bool,
     alt_text: str | None,
 ) -> None:
     """Insert audio/video on a slide; print its anchor_id, name, type, and media info."""
+    # A video has no icon to hide, so the flag has nothing to act on. Reject it
+    # rather than accepting a flag that does nothing (the tri-state default lets us
+    # tell "passed" from "left alone").
+    if kind != "audio" and hide_icon is not None:
+        raise click.UsageError("--hide-icon/--no-hide-icon applies to --kind audio only")
     slide = deck.slides[slide_index]  # exit 2 if slide out of range
     with deck.edit(f"CLI: add {kind} on slide {slide_index}"):
         if kind == "audio":
@@ -753,7 +761,7 @@ def media_add(
                 height=height,
                 link=link,
                 autoplay=autoplay,
-                hide_icon=hide_icon,
+                hide_icon=True if hide_icon is None else hide_icon,
                 pace_slide=pace_slide,
                 alt_text=alt_text,
             )
@@ -830,10 +838,10 @@ def media_set(
 @click.option(
     "--default-slide-duration",
     "default_slide_duration",
-    type=float,
-    default=5.0,
+    type=int,
+    default=5,
     show_default=True,
-    help="Seconds per slide that has no timing.",
+    help="Whole seconds per slide that has no timing.",
 )
 @click.option(
     "--use-timings/--no-use-timings",
@@ -860,7 +868,7 @@ def export_video_cmd(
     resolution: int,
     fps: int,
     quality: int,
-    default_slide_duration: float,
+    default_slide_duration: int,
     use_timings: bool,
     wait: bool,
     timeout: float,

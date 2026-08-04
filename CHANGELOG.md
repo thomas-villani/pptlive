@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-08-03
+
 ### Added
 
 **Picture crop — `Shape.crop` + `Shape.crop_to_fit`.** The Claude Code authoring
@@ -101,17 +103,6 @@ the very first helper. Now:
   (`ppt_edit` op `shape_set_text_frame`, and the same fields on `shape_add`) +
   `docs/cli.md` / `docs/python-api.md` / `docs/mcp.md` / README + both SKILL guides
   + tests.
-
-### Fixed
-
-- **Every canonical autosize / vertical-anchor name was rejected** on first
-  implementation: the lookup keys were spelled with underscores, but
-  `_normalize_name` strips non-alphanumerics, so `autosize="shape_to_fit_text"`
-  raised *"unknown autosize; expected one of: none, shape_to_fit_text, …"* —
-  listing the very name it had just refused. Only the single-word aliases
-  (`"off"`/`"grow"`/`"shrink"`) worked. Caught by the live spike, not the unit
-  suite, which had only exercised aliases; `test_every_advertised_choice_coerces`
-  now asserts every advertised name round-trips through its coercer.
 
 **`set_paragraphs` item keys are documented exhaustively — and validated.** A
 Claude Code authoring review reported the key list trailing off in `...` on both
@@ -255,6 +246,46 @@ want Claude to drive my PowerPoint" users, rebuilt after a five-reviewer audit:
 
 ### Fixed
 
+- **Every canonical autosize / vertical-anchor name was rejected** on first
+  implementation: the lookup keys were spelled with underscores, but
+  `_normalize_name` strips non-alphanumerics, so `autosize="shape_to_fit_text"`
+  raised *"unknown autosize; expected one of: none, shape_to_fit_text, …"* —
+  listing the very name it had just refused. Only the single-word aliases
+  (`"off"`/`"grow"`/`"shrink"`) worked. Caught by the live spike, not the unit
+  suite, which had only exercised aliases; `test_every_advertised_choice_coerces`
+  now asserts every advertised name round-trips through its coercer.
+
+**Release-prep sweep — five small honesty bugs.** Each one had the same shape: a
+call reported success while doing something other than what it said.
+
+- **`export_video(default_slide_duration=2.5)` silently became `2`.**
+  `CreateVideo`'s parameter is an integer, so a fractional value was truncated
+  without a word. It is now typed `int` and a fractional value is **rejected**
+  rather than quietly rounded — `int()` coercion was also removed from the batch
+  layer so it can't re-introduce the truncation one level down. A non-positive
+  duration is now rejected too, matching the sibling `resolution`/`fps`/`quality`
+  guards.
+- **A 0-length media clip read back as `length_s: None`.** The guard was a
+  truthiness test (`if length_ms`) while `start_s`/`end_s` right beside it
+  correctly used `is not None`, so "the clip is zero seconds" was indistinguishable
+  from "the property didn't read".
+- **`remove_link` always returned `1` for a targeted span**, even when that span
+  carried no link — so a typo'd `text=` reported success. It now returns how many
+  links were actually there (`0` when none, and no `Delete` is issued), and clears
+  per-link rather than with one blanket `Delete` over the caller's span, which
+  makes the count provably equal to what was removed.
+- **`media add --hide-icon` was silently ignored for `--kind video`.** A video has
+  no icon to hide, so the flag had nothing to act on; it now errors (CLI
+  `UsageError` / MCP `invalid_args`) instead of accepting a flag that does nothing.
+  The flag's default became tri-state so "passed" can be told from "left alone".
+- **Chart data writes could fail on an already-dead Excel server.**
+  `Workbook.Close()` runs *after* the cells and `SetSourceData` have landed, but
+  PowerPoint's embedded-Excel server can vanish during teardown (`0x800706BA`
+  RPC_S_SERVER_UNAVAILABLE) — deliberately not a busy HRESULT, so it surfaced as a
+  hard `ComError` on an otherwise-successful write, intermittently reddening the
+  chart smoke test. The close is now best-effort; the existing `_reflects_data`
+  verification remains the authority on whether the write committed.
+
 **Four wrong COM constants, found by a new typelib-parity test.** `constants.py` is
 hand-transcribed, and neither the unit suite (the fake COM mirrors whatever the enum
 says) nor a round-trip spike (the wrong id round-trips *perfectly*) can catch a wrong
@@ -345,8 +376,22 @@ Office/PowerPoint/Excel **type libraries**, and found these on its first run:
   `shape group`/`ungroup`/`align`/`distribute`/`connect` subsections, a `link`
   section, and `media set`; the `media` field list in `cli.md` / `cookbook.md` /
   `python-api.md` now includes `start_s` / `end_s`.
+- **Docs prose caught up with the shipped verbs.** `docs/python-api.md`'s Shapes
+  intro now covers arrangement (`group`/`ungroup`/`align`/`distribute`/
+  `add_connector`) and points at text-frame control; its Anchors intro covers
+  run-level hyperlinks (`set_link`/`remove_link`/`links`) and how they differ from
+  the whole-shape `set_hyperlink`. Two broken in-page links in `docs/cli.md` were
+  repaired.
 
 ### Internal
+
+- **Repo tidy for the release.** The session artifacts `issues.md` and
+  `claude-desktop-feedback-18Jun2026.md` moved from the repo root into
+  `docs/reviews/`, and `docs/reviews/` is now excluded from the published MkDocs
+  site — internal audit notes, not product documentation, so they no longer sit in
+  the build as permanent "not in nav" warnings. Four spike scripts that
+  `ruff format --check` would have rewritten are formatted, so the `ruff format .`
+  that `CLAUDE.md` tells contributors to run no longer produces surprise diffs.
 
 - **Two parity tests that make this class of drift impossible to ship again.**
   `tests/test_typelib_parity.py` pins every `constants.py` enum to the live Office
@@ -1074,7 +1119,8 @@ error taxonomy, `EditScope` shape, CLI contract, `_com` seam, and test approach.
 - **Release automation** — `bump-my-version` syncs the root and MCPB bundle
   versions; a `v*` tag publishes to PyPI via trusted publishing.
 
-[Unreleased]: https://github.com/thomas-villani/pptlive/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/thomas-villani/pptlive/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/thomas-villani/pptlive/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/thomas-villani/pptlive/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/thomas-villani/pptlive/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/thomas-villani/pptlive/compare/v0.3.0...v0.5.0

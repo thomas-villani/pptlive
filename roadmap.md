@@ -346,20 +346,27 @@ visual controls, not blockers.
 
 ## Cross-cutting project work
 
-- [ ] **CI for tests, not just docs/release.**
-  - Add a cross-OS unit-test/lint/typecheck workflow.
-  - Longer-term: Windows + installed PowerPoint runner for smoke tests, if a reliable
-    runner is available.
+- [x] **CI for tests, not just docs/release.** SHIPPED 2026-07-08 — `test.yml` runs a
+  `lint` job (`ruff check` + `ruff format --check` + `mypy`) plus a cross-OS matrix
+  (ubuntu × py3.11–3.14, windows × py3.11–3.13), consumed by `ci.yml` and
+  `release.yml` so there is one gate and no drift. `smoke.yml` runs `pytest -m smoke`
+  but is `workflow_dispatch`-only against a `[self-hosted, windows, powerpoint]`
+  runner — dormant, not red, until such a runner is registered.
 
-- [ ] **Checked-in smoke fixture deck.**
-  - Add a stable `.pptx` fixture with known slides, placeholders, table, notes,
-    comment, hyperlink, styled shape, transition/background, etc.
-  - Current live smoke tests create fresh decks, but there is no checked-in fixture.
+- [x] **Checked-in smoke fixture deck.** SHIPPED 2026-07-08 —
+  `tests/fixtures/smoke_deck.pptx` (3 slides: title / body + notes / 2×2 table),
+  authored **by pptlive itself** over COM via the re-runnable
+  `tests/fixtures/build_smoke_fixture.py`. `test_fixture_reads_back` is the first
+  smoke case exercising the read path against content pptlive is *opening* rather
+  than one it just wrote. `.gitattributes` landed alongside it so a line-ending
+  filter can never corrupt the `.pptx` zip container.
 
 - [ ] **HRESULT coverage.**
   - Keep widening `_BUSY_HRESULTS` as genuine modal-dialog / busy COM errors appear.
   - Do not add slideshow-running as a busy case; live testing overturned that old
-    assumption.
+    assumption — a 2026-07-08 spike extended it to *structural* ops (add/duplicate/
+    delete/move slide, add shape, set layout, save, a second `Run`) mid-show and
+    **every one succeeded**, so there is no slide-show HRESULT to add.
 
 - [ ] **Release/version sync automation.**
   - Release CI now verifies root `pyproject.toml`, `mcpb/manifest.json`, and
