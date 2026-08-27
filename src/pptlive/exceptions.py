@@ -170,7 +170,8 @@ class AmbiguousMatchError(PptliveError):
         anchors = ", ".join(str(c["anchor_id"]) for c in candidates)
         message = (
             f"{anchor_id!r} matches {len(candidates)} placeholders ({anchors}); "
-            "target one by its shape anchor (shape:S:N) or .Name"
+            f"pick one by z-order ordinal ({anchor_id}:1 … {anchor_id}:{len(candidates)}), "
+            "or target it by its shape anchor (shape:S:N) or .Name"
         )
         return cls(anchor_id, candidates, message=message)
 

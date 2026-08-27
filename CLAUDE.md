@@ -539,6 +539,7 @@ them to `.agents/skills/`, and `install-mcp` / the `mcpb/` bundle wire up MCP.
    | `shape:S:N`      | Nth shape (1-based z-order) on slide S — canonical handle; an `Anchor` if it has a text frame |
    | `shapeid:S:ID`   | shape with stable `Shape.Id` ID on slide S — the **delete-proof** handle (the `id` in every shape listing); survives a delete/restack that shifts `shape:S:N` |
    | `ph:S:KIND`      | placeholder of semantic KIND (`title`/`ctrtitle`/`subtitle`/`body`/`footer`/`date`/`slidenum`) — the LLM-preferred form |
+   | `ph:S:KIND:N`    | the Nth (1-based, z-order) placeholder of that KIND — one column of a Two Content / Comparison slide, where plain `ph:S:body` is ambiguous |
    | `para:S:N:P`     | paragraph P in shape N on slide S |
    | `cell:S:N:R:C`   | cell (row R, col C) of the table in shape N on slide S |
    | `notes:S`        | speaker-notes body of slide S |
@@ -549,7 +550,8 @@ them to `.agents/skills/`, and `install-mcp` / the `mcpb/` bundle wire up MCP.
    placeholder on a slide (the two content bodies of a Two Content / Comparison
    layout), `_find_placeholder` raises `AmbiguousMatchError` (exit 5) listing the
    candidate `shape:S:N` anchors rather than silently picking the first — reach each
-   one by `shape:S:N`/`.Name`.
+   one by the ordinal form `ph:S:KIND:N` (left column `:1`, right `:2`), or by
+   `shape:S:N`/`.Name`.
 
    `shape:` is int-only (z-order) to avoid index-vs-name ambiguity; expose shape
    `.Name` separately (`slide.shapes["Title 1"]`). **z-order drifts** when shapes

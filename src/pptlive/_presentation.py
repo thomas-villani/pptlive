@@ -605,15 +605,20 @@ class Presentation:
             return self.slides[s].shapes[n].table.cell(r, c)
 
         if kind == "ph":
-            s_str, sep, ph_kind = rest.partition(":")
-            if not sep or not ph_kind:
+            # ph:S:KIND or ph:S:KIND:N (N = Nth matching placeholder in z-order)
+            parts = rest.split(":")
+            if len(parts) not in (2, 3) or not parts[1]:
                 raise AnchorNotFoundError("placeholder", anchor_id)
+            ph_kind = parts[1]
             try:
-                s = int(s_str)
+                s = int(parts[0])
+                ordinal = int(parts[2]) if len(parts) == 3 else None
             except ValueError as e:
                 raise AnchorNotFoundError("placeholder", anchor_id) from e
+            if ordinal is not None and ordinal < 1:
+                raise AnchorNotFoundError("placeholder", anchor_id)
             try:
-                return self.slides[s].placeholder(ph_kind)
+                return self.slides[s].placeholder(ph_kind, ordinal)
             except ValueError as e:
                 # Unknown KIND — surface as a missing anchor (exit 2), not a crash.
                 raise AnchorNotFoundError("placeholder", anchor_id) from e

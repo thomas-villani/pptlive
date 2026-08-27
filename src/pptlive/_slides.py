@@ -177,7 +177,7 @@ class Slide:
         except Exception:
             return None
 
-    def _find_placeholder(self, kind: str) -> tuple[Any, int]:
+    def _find_placeholder(self, kind: str, ordinal: int | None = None) -> tuple[Any, int]:
         """Resolve a placeholder KIND to (COM shape, 1-based z-order index).
 
         Picks the accepted `PpPlaceholderType` of highest preference (see
@@ -187,7 +187,13 @@ class Slide:
         type — e.g. the two OBJECT bodies of a Two Content / Comparison layout —
         the kind is genuinely ambiguous: rather than silently pick the first,
         raise `AmbiguousMatchError` (exit 5) listing the candidate `shape:S:N`
-        anchors so the caller targets one explicitly. Raises `AnchorNotFoundError`
+        anchors so the caller targets one explicitly.
+
+        `ordinal` is the `N` of `ph:S:KIND:N`: the Nth (1-based, **z-order**)
+        placeholder among those matching KIND, ranked best-preference first — so
+        on a Two Content slide `ph:S:body:1` is the left column and `ph:S:body:2`
+        the right, with no ambiguity error and no `slide.read()` + name-filter
+        dance. Out of range → `AnchorNotFoundError`. Raises `AnchorNotFoundError`
         if no matching placeholder exists, `ValueError` for a bad KIND.
         """
         accepted = placeholder_types_for(kind)  # ValueError on unknown kind
@@ -213,6 +219,14 @@ class Slide:
                     matches.append((accepted_ints.index(ph_type), idx, sh))
         if not matches:
             raise AnchorNotFoundError("placeholder", f"ph:{self.index}:{kind.lower()}")
+        if ordinal is not None:
+            ordered = sorted(matches, key=lambda m: (m[0], m[1]))
+            if int(ordinal) < 1 or int(ordinal) > len(ordered):
+                raise AnchorNotFoundError(
+                    "placeholder", f"ph:{self.index}:{kind.lower()}:{ordinal}"
+                )
+            _rank, idx, sh = ordered[int(ordinal) - 1]
+            return sh, idx
         best_rank = min(rank for rank, _idx, _sh in matches)
         tied = [(idx, sh) for rank, idx, sh in matches if rank == best_rank]
         if len(tied) > 1:
@@ -229,17 +243,19 @@ class Slide:
         idx, sh = tied[0]
         return sh, idx
 
-    def placeholder(self, kind: str) -> PlaceholderShape:
+    def placeholder(self, kind: str, ordinal: int | None = None) -> PlaceholderShape:
         """Return the `ph:S:KIND` placeholder anchor (resolved live by kind).
 
-        KIND ∈ title, ctrtitle, subtitle, body, footer, date, slidenum. Raises
+        KIND ∈ title, ctrtitle, subtitle, body, footer, date, slidenum. `ordinal`
+        picks the Nth matching placeholder in z-order (`ph:S:KIND:N`) — the way to
+        address one column of a Two Content / Comparison slide. Raises
         `AnchorNotFoundError` if the slide has no such placeholder.
         """
         # Resolve once now so a missing placeholder fails fast with a clean error;
         # the returned anchor still re-resolves live on each use.
         with _com.translate_com_errors():
-            self._find_placeholder(kind)
-        return PlaceholderShape(self, kind)
+            self._find_placeholder(kind, ordinal=ordinal)
+        return PlaceholderShape(self, kind, ordinal)
 
     @property
     def title(self) -> str | None:

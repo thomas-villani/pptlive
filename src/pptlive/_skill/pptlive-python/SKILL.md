@@ -77,6 +77,7 @@ deck-wide `range:`.
 | `shape:S:N`    | Nth shape (1-based z-order) on slide S — the canonical handle |
 | `shapeid:S:ID` | shape with stable `Shape.Id` ID on slide S — the **delete-proof** handle (`slide.shapes.by_id(ID)`) |
 | `ph:S:KIND`    | placeholder of semantic KIND (`title`/`ctrtitle`/`subtitle`/`body`/`footer`/`date`/`slidenum`) — **prefer this** |
+| `ph:S:KIND:N`  | the Nth (z-order) placeholder of that KIND — `ph:S:body:1` / `ph:S:body:2` are the two columns of a Two Content slide |
 | `para:S:N:P`   | paragraph P (1-based) of shape N on slide S |
 | `cell:S:N:R:C` | cell (row R, col C) of the table in shape N on slide S — a `Cell` *is* an anchor |
 | `notes:S`      | speaker-notes body of slide S |
@@ -86,8 +87,9 @@ deck-wide `range:`.
 `body` also matches the generic **content** placeholder, which reads back with
 `placeholder: "object"` (e.g. "Content Placeholder N"). On a **Two Content** /
 **Comparison** layout there are *two* such placeholders, so `ph:S:body` is
-ambiguous and raises an error listing the candidate `shape:S:N` anchors — address
-each column by its `shape:S:N` (or `.Name`) instead.
+ambiguous and raises an error listing the candidates — address each column by
+ordinal instead: `ph:S:body:1` (left) / `ph:S:body:2` (right), or
+`slide.placeholder("body", 2)`. No `slide.read()` + name-filter needed.
 
 z-order **drifts** as shapes are added, removed, *or restacked* (`reorder`), so
 `shape:S:N` resolves live and is never cached. Every shape listing carries a
@@ -103,6 +105,10 @@ with deck.edit("Build the results slide"):
     new = deck.slides.add(layout="two_content", index=4)
     # one op: add + reposition placeholders (points; KIND as in ph:S:KIND) — body on the left half
     deck.slides.add(layout="title_and_content", placeholders={"body": {"left": 40, "width": 440}})
+    # title_only: the title placeholder's default box is TALL (bottom ≈ 133 pt on a
+    # 16:9 deck — top 28.75 + height 104) so content placed at top≈95 overlaps it.
+    # Either start content at top >= 144, or shrink the title in the same op:
+    deck.slides.add(layout="title_only", placeholders={"title": {"height": 60}})
     deck.slides[7].duplicate()                       # copy lands at slide 8
     deck.slides[9].move_to(2)
     deck.slides[4].set_layout("title_and_content")
@@ -200,9 +206,20 @@ key raises `ValueError` naming the valid ones (it is not silently ignored).
 | `font` | str | typeface name |
 | `color` | `"#RRGGBB"` / `(r, g, b)` / int | the **font** color |
 
+Exact signatures (the kwarg names differ from the CLI flags — `columns=` not
+`--cols`, though `cols=` is accepted as an alias; `chart_type=` not `--chart-type`;
+`set_border`'s knobs are keyword-only):
+
+```python
+shapes.add_table(rows, columns, *, cols=None, left=, top=, width=, height=)
+shapes.add_chart(chart_type="column", categories=None, series=None, *, left=, top=, width=, height=)
+table.set_fill(fill, *, rows=None, cols=None, transparency=None)
+table.set_border(*, color=None, weight=None, dash=None, edges="all", rows=None, cols=None, visible=None)
+```
+
 ```python
 with deck.edit("Add a metrics table"):
-    table = deck.slides[4].shapes.add_table(rows=3, columns=2).table
+    table = deck.slides[4].shapes.add_table(rows=3, columns=2).table   # cols=2 also works
     table.cell(1, 1).set_text("Metric")
     table.add_row(["Revenue", "$4.2M"])               # appends + fills a row
     table.add_column(["Q4", "$5M"], before=2)         # add/delete columns too (before= inserts; omit to append)
@@ -214,7 +231,8 @@ grid = table.read()                                   # {slide, shape, rows, col
 
 with deck.edit("Add a revenue chart"):
     chart = deck.slides[4].shapes.add_chart(
-        "column", ["Q1", "Q2", "Q3"], {"Revenue": [10, 20, 30], "Profit": [3, 6, 9]}
+        chart_type="column", categories=["Q1", "Q2", "Q3"],
+        series={"Revenue": [10, 20, 30], "Profit": [3, 6, 9]},   # or positional, same order
     ).chart
     chart.set_type("line")
 data = chart.read()                                   # {chart_type, categories, series:[...]}

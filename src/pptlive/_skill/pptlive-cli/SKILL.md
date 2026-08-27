@@ -35,6 +35,7 @@ is no deck-wide `range:`. Pass an anchor as `--anchor-id`:
 | `shape:S:N`    | Nth shape (1-based z-order) on slide S — the canonical handle |
 | `shapeid:S:ID` | shape with stable `Shape.Id` ID on slide S — the **delete-proof** handle (the `id` in any shape listing) |
 | `ph:S:KIND`    | placeholder of semantic KIND (`title`/`ctrtitle`/`subtitle`/`body`/`footer`/`date`/`slidenum`) — **prefer this** |
+| `ph:S:KIND:N`  | the Nth (z-order) placeholder of that KIND — `ph:S:body:1` / `ph:S:body:2` are the two columns of a Two Content slide |
 | `para:S:N:P`   | paragraph P (1-based) of shape N on slide S |
 | `cell:S:N:R:C` | cell (row R, col C) of the table in shape N on slide S — a cell takes every text/format verb |
 | `notes:S`      | speaker-notes body of slide S |
@@ -44,7 +45,8 @@ is no deck-wide `range:`. Pass an anchor as `--anchor-id`:
 `body` also matches the generic **content** placeholder (reads back as
 `placeholder: object`, e.g. "Content Placeholder N"). A **Two Content** /
 **Comparison** layout has *two*, so `ph:S:body` is ambiguous and exits 5 listing
-the candidate `shape:S:N` anchors — target each column by `shape:S:N` / `.Name`.
+the candidates — target a column by ordinal instead: `ph:S:body:1` (left) /
+`ph:S:body:2` (right), or by `shape:S:N` / `.Name`.
 
 z-order **drifts** as shapes are added, removed, *or restacked* (`shape order`),
 so `shape:S:N` is resolved live and never cached. Every shape read **and**
@@ -109,6 +111,7 @@ PowerPoint's text model has sharp edges that leak through. The big ones:
 ## Slides
 - `pptlive slide layouts` — the layout names `add`/`set-layout` accept.
 - `pptlive slide add --layout two_content [--index 4]` — optionally `--placeholders '{"body": {"left": 40, "width": 440}}'` repositions the layout's placeholders (points, any subset of left/top/width/height; KIND as in `ph:S:KIND`) in the same op, so a left-half content area beside a right-side panel needs no add-then-resize fix-up. Use `slide geometry` for the slide size to size from.
+- **`title_only` footgun:** the title placeholder's default box is tall (bottom ≈ 133 pt on a 16:9 deck — top 28.75 + height 104), so content placed at `--top 95` overlaps it. Start content at top ≥ 144, or shrink the title in the add: `pptlive slide add --layout title_only --placeholders '{"title": {"height": 60}}'`. `slide geometry N` reports the overlap either way.
 - `pptlive slide duplicate --slide 7` · `pptlive slide move --slide 9 --to 2` · `pptlive slide delete --slide 5`.
 - `pptlive slide set-layout --slide 4 --layout title_and_content`.
 - `pptlive slide set-transition --slide 4 --effect fade [--duration 0.5] [--advance-after 3] [--on-click/--no-on-click]` — entrance transition (`fade`/`cut`/`dissolve`/`cover_left`/… or `none`); `--advance-after N` auto-advances after N s. Slide reads carry a `transition` dict.
