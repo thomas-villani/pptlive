@@ -20,6 +20,17 @@ def test_resolve_placeholder(deck) -> None:  # type: ignore[no-untyped-def]
     assert anchor.text == "Intro\rDemo\rQ&A"
 
 
+def test_resolve_placeholder_with_ordinal(deck) -> None:  # type: ignore[no-untyped-def]
+    # ph:S:KIND:N — slide 2 has one body, so :1 is it and :2 is out of range.
+    anchor = deck.anchor_by_id("ph:2:body:1")
+    assert isinstance(anchor, PlaceholderShape)
+    assert anchor.ordinal == 1
+    assert anchor.anchor_id == "ph:2:body:1"
+    assert anchor.text == "Intro\rDemo\rQ&A"
+    with pytest.raises(AnchorNotFoundError):
+        deck.anchor_by_id("ph:2:body:2")
+
+
 def test_resolve_notes(deck) -> None:  # type: ignore[no-untyped-def]
     anchor = deck.anchor_by_id("notes:1")
     assert isinstance(anchor, Notes)
@@ -42,6 +53,9 @@ def test_resolve_paragraph(deck) -> None:  # type: ignore[no-untyped-def]
         "shape:two:1",
         "ph:2",
         "ph:2:banner",
+        "ph:2:body:0",
+        "ph:2:body:two",
+        "ph:2:body:1:1",
         "notes:x",
         "para:1:1",
         "para:2:2:99",

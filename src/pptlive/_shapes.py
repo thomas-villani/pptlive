@@ -1210,19 +1210,25 @@ def _line_to_dict(com_shape: Any) -> dict[str, Any] | None:
     Adds `begin_arrow`/`end_arrow` (friendly `MsoArrowheadStyle` names) only when an
     arrowhead is actually set (not `none`/unset) — keeps closed shapes' line dicts
     lean. Returns None when the shape exposes no `.Line`.
+
+    Every property read is best-effort (`None` when it won't read), like
+    `_fill_to_dict`: a **table** shape exposes a `.Line` whose `ForeColor.RGB`
+    raises "The specified value is out of range" (0x80020009), and an unguarded
+    read here took `slide.read()` / `shapes.list()` / `geometry_report()` down
+    with it for the whole slide.
     """
     try:
         line = com_shape.Line
     except Exception:
         return None
-    try:
-        weight: float | None = float(line.Weight)
-    except Exception:
-        weight = None
+    visible = _safe(lambda: is_true(line.Visible), None)
+    color = _safe(lambda: color_hex_or_none(line.ForeColor.RGB), None)
+    if visible is None and color is None:
+        return None  # a `.Line` that serves nothing (a table) — no border to report
     out: dict[str, Any] = {
-        "color": color_hex_or_none(line.ForeColor.RGB),
-        "weight": weight,
-        "visible": is_true(line.Visible),
+        "color": color,
+        "weight": _safe(lambda: float(line.Weight), None),
+        "visible": visible,
         "transparency": _safe(lambda: round(float(line.Transparency), 3), None),
         "dash": dash_style_name(_safe(lambda: int(line.DashStyle), None)),
     }
@@ -2462,34 +2468,46 @@ class PlaceholderShape(Shape):
 
     kind = "placeholder"
 
-    def __init__(self, slide: Slide, ph_kind: str) -> None:
-        # Validate the kind eagerly so a typo fails before any COM work.
+    def __init__(self, slide: Slide, ph_kind: str, ordinal: int | None = None) -> None:
+        # Validate the kind (and ordinal) eagerly so a typo fails before any COM work.
         placeholder_types_for(ph_kind)
+        if ordinal is not None and int(ordinal) < 1:
+            raise ValueError(f"placeholder ordinal must be >= 1, got {ordinal}")
         super().__init__(slide, index=0)
         self._ph_kind = ph_kind.lower()
+        self._ordinal = None if ordinal is None else int(ordinal)
 
     @property
     def placeholder_kind(self) -> str:
         return self._ph_kind
 
     @property
+    def ordinal(self) -> int | None:
+        """The `N` of a `ph:S:KIND:N` address (None for the plain `ph:S:KIND`)."""
+        return self._ordinal
+
+    @property
     def anchor_id(self) -> str:
-        return f"ph:{self._slide.index}:{self._ph_kind}"
+        base = f"ph:{self._slide.index}:{self._ph_kind}"
+        return base if self._ordinal is None else f"{base}:{self._ordinal}"
+
+    def _resolve(self) -> tuple[Any, int]:
+        return self._slide._find_placeholder(self._ph_kind, ordinal=self._ordinal)
 
     @property
     def index(self) -> int:
         """Current 1-based z-order index of the resolved placeholder."""
         with _com.translate_com_errors():
-            _shape, idx = self._slide._find_placeholder(self._ph_kind)
+            _shape, idx = self._resolve()
         return idx
 
     def _com_shape(self) -> Any:
-        shape, _idx = self._slide._find_placeholder(self._ph_kind)
+        shape, _idx = self._resolve()
         return shape
 
     def to_dict(self) -> dict[str, Any]:
         with _com.translate_com_errors():
-            shape, idx = self._slide._find_placeholder(self._ph_kind)
+            shape, idx = self._resolve()
             return shape_to_dict(shape, self._slide.index, idx)
 
 
@@ -3115,8 +3133,9 @@ class ShapeCollection:
     def add_table(
         self,
         rows: int,
-        columns: int,
+        columns: int | None = None,
         *,
+        cols: int | None = None,
         left: float | None = None,
         top: float | None = None,
         width: float | None = None,
@@ -3124,12 +3143,21 @@ class ShapeCollection:
     ) -> Shape:
         """Add a `rows`×`columns` table and return its `Shape` (`Shapes.AddTable`).
 
-        Geometry is in points; omitted values default to a wide grid near the
-        top-left (height is advisory — PowerPoint auto-fits rows to content).
-        Address cells through the returned shape's `.table` or the `cell:S:N:R:C`
-        anchor; the shape's `.has_table` is True. Raises `ValueError` for
-        non-positive `rows`/`columns` (before any COM).
+        `cols=` is an accepted alias for `columns=` (it is the CLI `--cols` / MCP
+        `cols` spelling, so an agent moving between front-ends never guesses
+        wrong); passing both is a `ValueError`. Geometry is in points; omitted
+        values default to a wide grid near the top-left (height is advisory —
+        PowerPoint auto-fits rows to content). Address cells through the returned
+        shape's `.table` or the `cell:S:N:R:C` anchor; the shape's `.has_table`
+        is True. Raises `ValueError` for non-positive `rows`/`columns` (before
+        any COM).
         """
+        if columns is not None and cols is not None:
+            raise ValueError("pass columns= or its alias cols=, not both")
+        if columns is None:
+            columns = cols
+        if columns is None:
+            raise ValueError("add_table needs a column count: columns= (alias cols=)")
         if int(rows) < 1 or int(columns) < 1:
             raise ValueError(f"table needs >=1 row and >=1 column, got {rows}x{columns}")
         left = _DEFAULT_LEFT if left is None else float(left)

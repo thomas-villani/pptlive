@@ -192,6 +192,7 @@ slide-index first:
 | `shape:S:N`    | Nth shape (1-based z-order) on slide S — the canonical handle |
 | `shapeid:S:ID` | shape with stable `Shape.Id` ID on slide S — the **delete-proof** handle (survives a delete/restack that shifts `shape:S:N`) |
 | `ph:S:KIND`    | placeholder of semantic KIND (`title`/`ctrtitle`/`subtitle`/`body`/`footer`/`date`/`slidenum`) — the LLM-preferred form |
+| `ph:S:KIND:N`  | the Nth (1-based, z-order) placeholder of that KIND — one column of a Two Content / Comparison slide, where plain `ph:S:body` is ambiguous |
 | `para:S:N:P`   | paragraph P (1-based) of shape N on slide S |
 | `cell:S:N:R:C` | cell (row R, col C) of the table in shape N on slide S — a `Cell` *is* an anchor, so it takes every text/format verb |
 | `notes:S`      | speaker-notes body of slide S |

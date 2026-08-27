@@ -112,6 +112,45 @@ def test_find_placeholder_two_objects_is_ambiguous() -> None:
     assert "shape:5:2" in str(exc.value) and "shape:5:3" in str(exc.value)
 
 
+def test_find_placeholder_ordinal_picks_nth_in_z_order() -> None:
+    # ph:S:body:1 / ph:S:body:2 — the two columns of a Two Content slide, no
+    # ambiguity error, no slide.read() + name-filter dance.
+    slide = _slide_with(
+        _ph_shape("Title 1", 2, _PH_TITLE),
+        _ph_shape("Content Placeholder 2", 3, _PH_OBJECT),
+        _ph_shape("Content Placeholder 3", 4, _PH_OBJECT),
+    )
+    assert slide._find_placeholder("body", ordinal=1)[0].Name == "Content Placeholder 2"
+    sh, idx = slide._find_placeholder("body", ordinal=2)
+    assert (sh.Name, idx) == ("Content Placeholder 3", 3)
+    with pytest.raises(AnchorNotFoundError):
+        slide._find_placeholder("body", ordinal=3)
+    with pytest.raises(AnchorNotFoundError):
+        slide._find_placeholder("body", ordinal=0)
+
+
+def test_find_placeholder_ordinal_ranks_preferred_type_first() -> None:
+    # Comparison layout: BODY (rank 0) placeholders come before OBJECT (rank 1)
+    # ones regardless of z-order, then z-order within a rank.
+    slide = _slide_with(
+        _ph_shape("Title 1", 2, _PH_TITLE),
+        _ph_shape("Content Placeholder 2", 3, _PH_OBJECT),
+        _ph_shape("Text Placeholder 3", 4, _PH_BODY),
+    )
+    assert slide._find_placeholder("body", ordinal=1)[0].Name == "Text Placeholder 3"
+    assert slide._find_placeholder("body", ordinal=2)[0].Name == "Content Placeholder 2"
+
+
+def test_ambiguous_placeholder_error_names_the_ordinal_form() -> None:
+    slide = _slide_with(
+        _ph_shape("Content Placeholder 2", 3, _PH_OBJECT),
+        _ph_shape("Content Placeholder 3", 4, _PH_OBJECT),
+    )
+    with pytest.raises(AmbiguousMatchError) as exc:
+        slide._find_placeholder("body")
+    assert "ph:5:body:1" in str(exc.value) and "ph:5:body:2" in str(exc.value)
+
+
 def test_find_placeholder_missing_raises_not_found() -> None:
     slide = _slide_with(_ph_shape("Title 1", 2, _PH_TITLE))
     with pytest.raises(AnchorNotFoundError):

@@ -111,8 +111,10 @@ caring about z-order. It's the form to prefer in tool-use payloads. `body`
 also matches the generic **content** placeholder (which reads back as
 `placeholder: "object"`, e.g. `"Content Placeholder 2"`). A **Two Content** /
 **Comparison** layout has *two* such placeholders, so `ph:S:body` is ambiguous
-and raises an error listing the candidate `shape:S:N` anchors — reach each
-column by its `shape:S:N` or `.Name` instead.
+and raises an error listing the candidate `shape:S:N` anchors. Append a z-order
+ordinal to pick one — `ph:S:body:1` is the left column, `ph:S:body:2` the right
+(`ph:S:KIND:N` = the Nth matching placeholder, best-preference type first, then
+z-order) — or reach it by `shape:S:N` / `.Name`.
 
 The bare `slide:S` form is deliberately **not** an anchor — a whole slide has
 no single text range, just like a whole table doesn't. Slide-level verbs

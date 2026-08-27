@@ -19,6 +19,35 @@ def _add_table(deck, rows=2, cols=3):  # type: ignore[no-untyped-def]
         return deck.slides[3].shapes.add_table(rows, cols)
 
 
+def test_add_table_accepts_cols_alias(deck) -> None:  # type: ignore[no-untyped-def]
+    # `cols=` is the CLI/MCP spelling; accept it so cross-front-end guesses land.
+    with deck.edit("t"):
+        sh = deck.slides[3].shapes.add_table(2, cols=3)
+    assert sh.table.column_count == 3
+    with pytest.raises(ValueError):
+        deck.slides[3].shapes.add_table(2, 3, cols=3)
+    with pytest.raises(ValueError):
+        deck.slides[3].shapes.add_table(2)
+
+
+def test_table_shape_line_that_raises_reads_as_none(deck) -> None:  # type: ignore[no-untyped-def]
+    # Live PowerPoint: a table shape's Line.ForeColor.RGB raises 0x80020009
+    # ("The specified value is out of range"), which used to take slide.read() /
+    # shapes.list() / geometry_report() down for the whole slide.
+    from pptlive._shapes import _line_to_dict
+
+    class _Boom:
+        def __getattr__(self, _name: str) -> object:
+            raise RuntimeError("The specified value is out of range.")
+
+    sh = _add_table(deck, 2, 2)
+    sh.com.Line = _Boom()
+    assert _line_to_dict(sh.com) is None
+    listing = deck.slides[3].shapes.list()
+    assert listing[-1]["has_table"] is True and listing[-1]["line"] is None
+    assert deck.slides[3].geometry_report()["shapes"][-1]["name"] == sh.name
+
+
 def test_add_table_returns_table_shape(deck) -> None:  # type: ignore[no-untyped-def]
     sh = _add_table(deck, 2, 3)
     assert isinstance(sh, Shape)

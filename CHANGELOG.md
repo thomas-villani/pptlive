@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Feedback round from a Claude Code session using pptlive in another project
+(`notes.md`, 2026-08-27).
+
+### Fixed
+
+- **Any slide containing a table could not be read.** `slide.read()`,
+  `shapes.list()`, and `geometry_report()` all died with *"The specified value
+  is out of range" — HRESULT 0x80020009* on a table slide (reported via
+  `slide geometry`, but every read path shares it). A table shape's `.Line`
+  raises on `ForeColor.RGB`, and `_line_to_dict` read it unguarded while its
+  sibling `_fill_to_dict` was already best-effort. Line reads are now per-property
+  best-effort; a `.Line` that serves nothing reports `line: null`.
+
+### Added
+
+- **`ph:S:KIND:N` — ordinal placeholder addressing.** The Nth (1-based, z-order)
+  placeholder of a kind, ranked best-preference type first: on a Two Content /
+  Comparison slide `ph:S:body:1` is the left column and `ph:S:body:2` the right,
+  so the `slide.read()` + name-filter dance around the `ph:S:body` ambiguity error
+  is gone. Library (`slide.placeholder(kind, ordinal)`, `PlaceholderShape.ordinal`)
+  + `anchor_by_id` (so every CLI/MCP anchor field takes it). The ambiguity error
+  now names the ordinal form. Out-of-range → `AnchorNotFoundError` (exit 2).
+- **`add_table(cols=)`** accepted as an alias for `columns=` — the CLI `--cols` /
+  MCP `cols` spelling, so an agent moving between front-ends stops guessing.
+  Both → `ValueError`.
+
+### Docs
+
+- Python guide spells out the exact `add_table` / `add_chart` / `Table.set_fill` /
+  `Table.set_border` signatures (the kwarg names differ from the CLI flags;
+  `set_border` is keyword-only).
+- Both guides warn that a **`title_only`** title placeholder's default box runs
+  to ≈ 133 pt on a 16:9 deck, so content at top ≈ 95 overlaps it — start at
+  ≥ 144 or pass `placeholders={"title": {"height": 60}}` on `slides.add`.
+
 ## [0.8.0] — 2026-08-03
 
 ### Added
