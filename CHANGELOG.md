@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 Feedback round from a Claude Code session using pptlive in another project
-(`notes.md`, 2026-08-27).
+(`notes.md`, 2026-08-27), plus the first authoring macro — the one-op slide.
 
 ### Fixed
 

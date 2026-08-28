@@ -1367,6 +1367,38 @@ slide). All fake-COM unit tests green (`ruff`, `mypy`, `pytest` — 948).
 
 ---
 
+## v-next — the one-op slide (first authoring macro) — SHIPPED (2026-08-27)
+
+**Motivation.** Watching an agent build a deck: every slide was the same dance —
+`slide_add` → learn the index → `write ph:S:title` → `set_paragraphs ph:S:body` →
+`write notes:S` → `read` to confirm. `exec`/`ppt_batch` made it *atomic*, not
+*short*; the cost was verbosity plus the index bookkeeping between ops.
+`slide_add(placeholders=)` (2026-06-18) was the first crack at the same shape of
+fix (add + reposition in one op); this is the same move one level up.
+
+**Built.** `SlideCollection.add(layout=, index=, *, placeholders=, title=, body=,
+content=, notes=)`: a value is a string (`set_text`) or a `set_paragraphs` item
+list; `content` keys are placeholder addresses without the `ph:S:` prefix
+(`body:1`/`body:2` for a Two Content slide — plain `body` is ambiguous there and
+raises); `title=`/`body=` are shorthand (same key both ways → `ValueError`).
+Every key is resolved **before** any write, so a bad key leaves the new slide
+added but untouched; `placeholders=` geometry lands first so autofit sees the
+final box. Returns echo `content` (key → `ph:` anchor written) + `shapes` +
+`notes`. Wired: CLI `slide add --title/--body (repeatable)/--content JSON/--notes/
+--render PATH`; MCP + `exec` `slide_add` gains the same keys; MCP
+`ppt_edit(op="slide_add", render=true)` returns the new slide as an inline image
+via `_render_reply` (so `ppt_edit` is now `-> Any`, the same load-bearing
+passthrough as `ppt_render`). The fake COM's `AddSlide` seeds each layout's
+empty placeholders (`_layout_placeholders`) so the macro is unit-testable.
+Verified live: title + two_content (bold item honoured), notes, `placeholders`
+resize, zero overlaps, rendered PNG inspected, ambiguity leaves the slide untouched.
+
+**Deliberately not built.** (a) A Markdown/HTML deck DSL (`notes.md`'s
+"deck-authoring format") — a second API with a lossy mapping; one `slide_add`
+per slide in an `exec` script *is* the one-shot deck. (b) `background=` on the
+macro — a theme/master concern; revisit if asked. (c) Per-op image blocks in
+`ppt_batch` — a batch result stays a JSON array; follow it with one `deck_snapshot`.
+
 ## Linter / regularizer — PLANNED (`spec-linter.md`)
 
 The wordlive linter re-applied to PowerPoint: audit a deck for presentation-quality

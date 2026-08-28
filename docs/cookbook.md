@@ -25,24 +25,32 @@ with pl.attach() as ppt:
     deck = ppt.presentations.active
 
     with deck.edit("Build the Q3 results slide"):
-        slide = deck.slides.add(layout="title_and_content", index=4)
-        slide.placeholder("title").set_text("Q3 Results")
-        slide.placeholder("body").set_text(
-            "Revenue up 12%\nChurn down 3%\nNPS +9"
+        # The one-op slide: layout + placeholder text + notes in one call. `body`
+        # takes a set_paragraphs item list (one item = one bullet, with any of
+        # its formatting keys); `content={...}` reaches any other placeholder
+        # ("subtitle", or "body:1" / "body:2" on a two_content layout).
+        slide = deck.slides.add(
+            layout="title_and_content", index=4,
+            title="Q3 Results",
+            body=[{"text": "Revenue up 12%", "list_type": "bulleted"},
+                  {"text": "Churn down 3%", "list_type": "bulleted"},
+                  {"text": "NPS +9", "list_type": "bulleted"}],
+            notes="Lead with the revenue number.",
         )
-        slide.placeholder("body").apply_list("bulleted")
-        slide.notes.set_text("Lead with the revenue number.")
 ```
+
+The long-hand form — `slide.placeholder("title").set_text(...)`, `.set_paragraphs(...)`,
+`slide.notes.set_text(...)` after a bare `slides.add()` — still works and is what
+you reach for when editing an *existing* slide.
 
 CLI:
 
 ```bash
 pptlive slide layouts                                   # see the names first
-pptlive slide add --layout title_and_content --index 4  # -> {"index": 4, ...}
-pptlive write --anchor-id ph:4:title --text "Q3 Results"
-pptlive write --anchor-id ph:4:body  --text "Revenue up 12%\nChurn down 3%\nNPS +9"
-pptlive list apply --anchor-id ph:4:body --type bulleted
-pptlive write --anchor-id notes:4 --text "Lead with the revenue number."
+pptlive slide add --layout title_and_content --index 4 \
+    --title "Q3 Results" \
+    --body "Revenue up 12%" --body "Churn down 3%" --body "NPS +9" \
+    --notes "Lead with the revenue number." --render q3.png   # -> {"index": 4, "content": {...}, ...}
 ```
 
 ## 2. Read the deck structure
