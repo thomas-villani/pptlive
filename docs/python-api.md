@@ -161,6 +161,20 @@ anchor, returning how many actually existed; `links()` lists them.
 
 ::: pptlive.TextFrameStatus
 
+## Linter / regularizer
+
+`deck.lint()` (a pure read) audits the deck for presentation-quality defects —
+mode-across-peers consistency (titles, body bullets, the title box) and geometry
+(off-slide shapes, near-aligned edges) — and `deck.regularize()` applies the
+fixable findings as one atomic-undo step; both are documented on
+[`Presentation`](#pptlive.Presentation). `anchor.format_info()` (on
+[`Anchor`](#pptlive.Anchor)) is the probe they read. The finding shape and the
+profile loader:
+
+::: pptlive.Finding
+
+::: pptlive.LintProfile
+
 ## Tables
 
 A table is a **shape on a slide** (`Shape.has_table` / `Shape.table`), not a

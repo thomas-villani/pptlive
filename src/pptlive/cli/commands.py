@@ -908,8 +908,139 @@ def video_status_cmd(ctx: click.Context, deck: Presentation) -> None:
     )
 
 
+def _rules_selector(rule: tuple[str, ...], exclude: tuple[str, ...]) -> Any:
+    """Build the `rules=` selector from the repeatable --rule / --exclude flags."""
+    if rule and exclude:
+        raise click.UsageError("pass either --rule or --exclude, not both")
+    if rule:
+        return list(rule)
+    if exclude:
+        return {"exclude": list(exclude)}
+    return None
+
+
+def _fmt_lint(findings: list[dict[str, Any]]) -> str:
+    if not findings:
+        return "(no findings)"
+    lines = []
+    for f in findings:
+        fix = " [fixable]" if f.get("fixable") else ""
+        lines.append(f"[{f['severity']}] {f['rule']} ({f['anchor_id']}): {f['message']}{fix}")
+    return "\n".join(lines)
+
+
+def _fmt_regularize(report: dict[str, Any]) -> str:
+    applied, skipped = report.get("applied", []), report.get("skipped", [])
+    deferred = report.get("deferred", [])
+    verb = "would fix" if report.get("dry_run") else "fixed"
+    summary = f"{verb} {len(applied)}; skipped {len(skipped)} (report-only / not fixable)"
+    if deferred:
+        summary += f"; deferred {len(deferred)} content fix(es) (pass --allow-content)"
+    lines = [summary]
+    for f in applied:
+        lines.append(f"  {verb}: {f['rule']} ({f['anchor_id']})")
+    for f in deferred:
+        lines.append(f"  deferred: {f['rule']} ({f['anchor_id']})")
+    return "\n".join(lines)
+
+
+_LINT_RULE_HELP = "Only run these rule ids/tags (repeatable; e.g. titles, alignment)."
+_LINT_PROFILE_HELP = (
+    "Path to a JSON house-style profile (pptlive.lint.json) that enables rules, "
+    "sets tolerances, and overrides severities."
+)
+
+
+@click.command(name="lint")
+@click.option("--rule", "rule", multiple=True, help=_LINT_RULE_HELP)
+@click.option("--exclude", "exclude", multiple=True, help="Skip these rule ids/tags (repeatable).")
+@click.option(
+    "--within",
+    "within",
+    default=None,
+    help="Scope the findings to a container: slide:S, or a shape anchor (shapeid:S:ID, ph:S:KIND).",
+)
+@click.option("--profile", "profile", default=None, help=_LINT_PROFILE_HELP)
+@_deck_command
+def lint_cmd(
+    ctx: click.Context,
+    deck: Presentation,
+    rule: tuple[str, ...],
+    exclude: tuple[str, ...],
+    within: str | None,
+    profile: str | None,
+) -> None:
+    """Audit the deck for presentation-quality defects (pure read).
+
+    Emits `{count, findings}` — severity-ranked; each finding names its rule,
+    slide, drift-proof anchor, message, and (if `fixable`) the exact op
+    `regularize` would run. Default rules: title font/size/bold/color vs the
+    deck's dominant title (per layout), body bullets vs the dominant font at their
+    indent level, the "jumpy title" box, shapes off the slide, mixed-run titles.
+    `--rule alignment` lights up the opt-in edge-alignment / placeholder-off-layout /
+    overlap rules.
+    """
+    findings = deck.lint(rules=_rules_selector(rule, exclude), within=within, profile=profile)
+    emit(
+        {"count": len(findings), "findings": findings},
+        as_text=not ctx.obj["as_json"],
+        text=_fmt_lint(findings),
+    )
+
+
+@click.command(name="regularize")
+@click.option("--rule", "rule", multiple=True, help=_LINT_RULE_HELP)
+@click.option("--exclude", "exclude", multiple=True, help="Skip these rule ids/tags (repeatable).")
+@click.option("--within", "within", default=None, help="Scope to slide:S or a shape anchor.")
+@click.option("--profile", "profile", default=None, help=_LINT_PROFILE_HELP)
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Plan the fixes (in the findings) without writing anything.",
+)
+@click.option(
+    "--allow-content",
+    "allow_content",
+    is_flag=True,
+    default=False,
+    help="Also apply content-changing fixes (add/delete content), not just formatting.",
+)
+@_deck_command
+def regularize_cmd(
+    ctx: click.Context,
+    deck: Presentation,
+    rule: tuple[str, ...],
+    exclude: tuple[str, ...],
+    within: str | None,
+    profile: str | None,
+    dry_run: bool,
+    allow_content: bool,
+) -> None:
+    """Apply the fixable `lint` findings in one atomic-undo step.
+
+    Runs `lint`, then applies every fixable finding's fix inside a single edit —
+    one Ctrl-Z reverts the whole pass; the viewed slide and Selection are kept.
+    The fixes are targeted and idempotent (a second `regularize` is a no-op).
+    Emits `{applied, skipped, deferred, findings, dry_run, ops_run}`. Formatting /
+    geometry fixes apply by default; content-changing fixes are withheld into
+    `deferred` unless you pass `--allow-content`.
+    """
+    report = deck.regularize(
+        rules=_rules_selector(rule, exclude),
+        within=within,
+        profile=profile,
+        dry_run=dry_run,
+        allow_content=allow_content,
+    )
+    emit(report, as_text=not ctx.obj["as_json"], text=_fmt_regularize(report))
+
+
 def register(group: click.Group) -> None:
     group.add_command(status)
+    group.add_command(lint_cmd)
+    group.add_command(regularize_cmd)
     group.add_command(slides_cmd)
     group.add_command(outline)
     group.add_command(slide)
@@ -4133,6 +4264,31 @@ def read_anchor(ctx: click.Context, deck: Presentation, anchor_id: str) -> None:
         as_text=not ctx.obj["as_json"],
         text=text,
     )
+
+
+@read.command(name="format")
+@click.option(
+    "--anchor-id",
+    "anchor_id",
+    required=True,
+    help="Text anchor to probe (e.g. ph:3:title, shapeid:3:5, para:3:2:1).",
+)
+@_deck_command
+def read_format(ctx: click.Context, deck: Presentation, anchor_id: str) -> None:
+    """The format probe — effective font + paragraph formatting as `{value,
+    baseline, override}` cells; for a placeholder, `baseline` is what its layout /
+    master text style would render (the read mirror of `format-text`)."""
+    info = deck.anchor_by_id(anchor_id).format_info()
+    lines = [f"{info['anchor_id']}  placeholder={info['placeholder']}  cascade={info['cascade']}"]
+    for group in ("font", "paragraph"):
+        for key, cell in info[group].items():
+            flag = " *override*" if cell.get("override") else ""
+            lines.append(
+                f"  {group}.{key}: {cell['value']!r} (baseline {cell['baseline']!r}){flag}"
+            )
+    if info["mixed"]:
+        lines.append(f"  mixed across runs: {', '.join(info['mixed'])}")
+    emit(info, as_text=not ctx.obj["as_json"], text="\n".join(lines))
 
 
 @read.command(name="text-frame-status")

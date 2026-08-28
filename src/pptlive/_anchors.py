@@ -665,6 +665,25 @@ class Anchor(ABC):
         with _com.translate_com_errors():
             return links_in_range(self._text_range())
 
+    def format_info(self) -> dict[str, Any]:
+        """The format-probe read — this anchor's *effective* formatting, each field
+        a `{value, baseline, override}` cell (the read mirror of `format_text` /
+        `format_paragraph`, and the linter's substrate).
+
+        `font` carries `name`/`size`/`bold`/`italic`/`underline`/`color` (`color`
+        also has `source`/`theme_color`, as in `font_to_dict`); `paragraph` carries
+        `alignment`/`indent_level`/`space_before`/`space_after`. For a **placeholder**
+        the `baseline` is what the slide's `CustomLayout` placeholder (falling back
+        to the master text style at that indent level) would render, `cascade` names
+        which rung supplied it, and `override` is `value ≠ baseline`. A free textbox,
+        table cell, or notes body has no cascade: `baseline`/`override` are `None`.
+        `mixed` lists the fields that vary across the anchor's runs (their
+        `override` is `None` too). A read — no view move.
+        """
+        from ._format_info import format_info  # noqa: PLC0415 — avoids an import cycle
+
+        return format_info(self)
+
     def __repr__(self) -> str:
         return f"<{type(self).__name__} {self.anchor_id!r}>"
 

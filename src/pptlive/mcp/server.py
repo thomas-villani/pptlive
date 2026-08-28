@@ -208,6 +208,9 @@ def ppt_read(
     slide: int | None = None,
     text: str | None = None,
     scope: str | None = None,
+    rules: list[str] | dict[str, Any] | None = None,
+    within: str | None = None,
+    profile: str | dict[str, Any] | None = None,
     doc: str | None = None,
 ) -> dict[str, Any]:
     """Read the live PowerPoint deck — inspect slides, shapes, anchors, tables,
@@ -270,13 +273,40 @@ def ppt_read(
     - "theme": the deck-wide palette (12 slots, e.g. accent1) + heading/body fonts.
     - "master": the master text styles (title/body/default, 5 levels each) + background.
     - "layouts": the layout names that `ppt_edit` slide_add/set_layout accept.
+    - "format_info": the format probe for the text anchor at `anchor_id` — its
+      effective `font` (name/size/bold/italic/underline/color) and `paragraph`
+      (alignment/indent_level/space_before/space_after), each a `{value, baseline,
+      override}` cell. For a placeholder, `baseline` is what its layout (or the
+      master text style) would render and `override` says whether it was changed
+      directly; a free textbox has no cascade (`baseline`/`override` null). `mixed`
+      lists fields that vary across runs. The read mirror of `format`.
+    - "lint": audit the deck for presentation-quality defects — a severity-ranked
+      `findings` list (`{rule, kind, severity, slide, anchor_id, shapeid, message,
+      fixable, fix, adds_content, observed, expected}`). Default rules: titles whose
+      font/size/bold/color differ from the deck's dominant title on that layout,
+      body bullets off the dominant font at their indent level, a title box that
+      jumps between slides, shapes off the slide, mixed-run titles. `rules` selects
+      by id/tag (`["titles"]`, `["alignment"]` lights up the off-by-default
+      edge-alignment / placeholder-off-layout / overlap rules) or `{"exclude": [..]}`;
+      `within` scopes findings to `slide:S` or one shape anchor; `profile` (a path or
+      inline object) enables rules, sets tolerances, overrides severities. Each
+      fixable finding's `fix` is the exact op `ppt_edit` op="regularize" would run.
 
     `doc` targets a presentation by name (default: the active one)."""
     with _mcp_errors(), attach() as ppt:
         return _read_core(
             ppt,
             op,
-            {"anchor_id": anchor_id, "slide": slide, "text": text, "scope": scope, "doc": doc},
+            {
+                "anchor_id": anchor_id,
+                "slide": slide,
+                "text": text,
+                "scope": scope,
+                "rules": rules,
+                "within": within,
+                "profile": profile,
+                "doc": doc,
+            },
         )
 
 
@@ -360,6 +390,11 @@ def ppt_edit(
     content: dict[str, Any] | None = None,
     notes: str | None = None,
     render: bool = False,
+    rules: list[str] | dict[str, Any] | None = None,
+    within: str | None = None,
+    profile: str | dict[str, Any] | None = None,
+    dry_run: bool = False,
+    allow_content: bool = False,
     kind: Literal["textbox", "shape", "picture", "table", "chart", "smartart", "audio", "video"]
     | None = None,
     shape_type: str
@@ -700,6 +735,15 @@ def ppt_edit(
     - "comment_delete": delete comment `index` on `slide` (takes its replies too).
     There is no resolve/reopen op — comment resolution state is not COM-readable.
 
+    Consistency cleanup (the last-hour-before-it-ships pass; no `anchor_id`):
+    - "regularize": apply the fixable `ppt_read` op="lint" findings in one atomic
+      step (one Ctrl-Z; view preserved). Fixes are targeted and idempotent — the
+      dominant title font / body font / title box is written back as direct
+      formatting, so a second run applies nothing. Same `rules` / `within` /
+      `profile` as lint; `dry_run=true` plans without writing; a fix that adds or
+      destroys content is withheld into `deferred` unless `allow_content=true`.
+      Returns `{applied, skipped, deferred, findings, dry_run, ops_run}`.
+
     Deck-wide styling (global — restyles every inheriting slide; no `anchor_id`):
     - "theme_set_color": set palette `slot` (e.g. "accent1"/"dark1"/"hyperlink") to `color`.
     - "theme_set_font": set the `which`="major" (headings) or "minor" (body) typeface
@@ -786,6 +830,11 @@ def ppt_edit(
         "layout": layout,
         "index": index,
         "placeholders": placeholders,
+        "rules": rules,
+        "within": within,
+        "profile": profile,
+        "dry_run": dry_run,
+        "allow_content": allow_content,
         "title": title,
         "body": body,
         "content": content,

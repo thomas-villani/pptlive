@@ -102,6 +102,8 @@ class ReadOp(StrEnum):
     THEME = "theme"
     MASTER = "master"
     LAYOUTS = "layouts"
+    FORMAT_INFO = "format_info"
+    LINT = "lint"
 
 
 class EditOp(StrEnum):
@@ -172,6 +174,7 @@ class EditOp(StrEnum):
     MASTER_FORMAT_TEXT_STYLE = "master_format_text_style"
     MASTER_FORMAT_PARAGRAPH_STYLE = "master_format_paragraph_style"
     MASTER_SET_BACKGROUND = "master_set_background"
+    REGULARIZE = "regularize"
 
 
 class RenderOp(StrEnum):
@@ -339,6 +342,20 @@ def _read_anchor(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
     if paragraphs is not None:
         payload["paragraphs"] = paragraphs.list()
     return payload
+
+
+@read_op(ReadOp.FORMAT_INFO)
+def _read_format_info(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
+    _require(p.get("anchor_id") is not None, "read op='format_info' requires `anchor_id`")
+    return _pick_deck(ppt, p.get("doc")).anchor_by_id(p["anchor_id"]).format_info()
+
+
+@read_op(ReadOp.LINT)
+def _read_lint(ppt: Any, p: dict[str, Any]) -> dict[str, Any]:
+    findings = _pick_deck(ppt, p.get("doc")).lint(
+        rules=p.get("rules"), within=p.get("within"), profile=p.get("profile")
+    )
+    return {"count": len(findings), "findings": findings}
 
 
 @read_op(ReadOp.LINKS)
@@ -1391,6 +1408,24 @@ def _edit_master_set_background(deck: Presentation, p: dict[str, Any]) -> dict[s
     _require(p.get("color") is not None, "edit op='master_set_background' requires `color`")
     deck.master.set_background(p["color"])
     return {"ok": True, "background": deck.master.read().get("background", {})}
+
+
+@edit_op(EditOp.REGULARIZE)
+def _edit_regularize(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
+    # A write op so it joins an atomic batch and rides its one undo entry:
+    # `own_undo=False` because the caller's deck.edit already fences us, so the
+    # fixes apply through _edit_core directly rather than a nested run_batch.
+    from . import _linting  # noqa: PLC0415 — _linting imports this module lazily
+
+    return _linting.regularize(
+        deck,
+        rules=p.get("rules"),
+        within=p.get("within"),
+        profile=p.get("profile"),
+        dry_run=bool(p.get("dry_run", False)),
+        allow_content=bool(p.get("allow_content", False)),
+        own_undo=False,
+    )
 
 
 def _edit_core(deck: Presentation, op: str, p: dict[str, Any]) -> dict[str, Any]:

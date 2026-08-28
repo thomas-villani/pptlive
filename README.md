@@ -188,6 +188,22 @@ with pl.attach() as ppt:
     deck.show.end()
 ```
 
+### Lint + regularize — the last hour before it ships
+
+```python
+findings = deck.lint()                       # pure read: severity-ranked, each with a `fix` op
+# e.g. "Slide 7 title 'Calibri 36 pt' differs from the deck's dominant title 'Calibri 44 pt'"
+report = deck.regularize()                   # applies the fixable ones in ONE Ctrl-Z; idempotent
+deck.lint(rules=["alignment"])               # opt-in cluster: edge-alignment, placeholder-off-layout, overlaps
+deck.anchor_by_id("ph:7:title").format_info()   # the probe: {value, baseline, override} per field
+```
+
+The deck is judged against **itself** (mode across peers: every title alike, every
+level-1 bullet alike, every title box in the same place), so it needs no
+configuration; a `pptlive.lint.json` profile enables rules, sets tolerances, and
+overrides severities. Fixes write the dominant value back as direct formatting, so
+a second `regularize` applies nothing.
+
 ## Anchors
 
 Addressing is **hierarchical** (slide → shape → text), not a global character
@@ -292,6 +308,9 @@ pptlive write --anchor-id cell:4:5:1:1 --text "Metric"   # a cell takes write/fo
 
 pptlive selection                                # what the user has selected (-> here:)
 pptlive read anchor --anchor-id here:            # read the selected shape/paragraph
+pptlive read format --anchor-id ph:7:title       # the format probe (value / baseline / override)
+pptlive lint [--rule alignment] [--within slide:7] # consistency audit -> {count, findings}
+pptlive regularize [--dry-run] [--allow-content]  # apply the fixable findings as ONE Ctrl-Z
 pptlive go-to --anchor-id shape:3:1              # deliberate, opt-in view move
 
 pptlive show start [--from 2]                    # run the slide show (deliberately moves the screen)
@@ -375,8 +394,8 @@ one-Ctrl-Z `edit` fencing carry over and reads never move the view:
 
 | tool | `op`s |
 | ---- | ----- |
-| `ppt_read` | `status` · `slides` · `outline` · `slide` · `anchor` · `geometry` (slide size + shape boxes + overlaps + off-slide) · `text_frame_status` (autofit/wrap/margins/overflow-risk) · `links` · `selection` · `find` · `table` · `chart` · `smartart` · `comments` · `animations` · `sections` · `headers_footers` · `theme` · `master` · `layouts` — every read; never moves the view |
-| `ppt_edit` | `write`/`set_paragraphs` (the safe bullet path) · `find_replace` · `format` (font + paragraph + shape fill/line + bullets) · `text_reset_format`/`shape_reset_layout` (recover a wrecked placeholder) · `shape_set_text_frame` (autofit/wrap/vertical anchor/margins — the setter half of `text_frame_status`) · `slide_add` (+ `title`/`body`/`content`/`notes` — the one-op slide; `render=true` returns it as an image)/`slide_delete`/`slide_duplicate`/`slide_move`/`set_layout` · `shape_add`/`shape_move`/`shape_resize`/`shape_delete`/`shape_order`/`set_alt` · `media_add`/`media_set` (audio/video narration; mute/volume/trim) · `shape_group`/`shape_ungroup`/`shape_align`/`shape_distribute`/`shape_add_connector` (arrangement) · `shape_gradient_fill`/`shape_picture_fill`/`shape_pattern_fill`/`shape_set_picture`/`shape_set_effect`/`shape_line_style` · `shape_crop`/`shape_crop_to_fit` (crop a picture; `fit` is `cover` = full-bleed centre-crop or `contain` = whole picture, letterboxed) · `shape_set_hyperlink`/`shape_remove_hyperlink` (whole shape) · `link_set`/`link_remove` (text-**run** level) · `shape_animate`/`shape_clear_animations`/`slide_clear_animations` · `slide_set_transition`/`slide_set_background` · `table_add_row`/`table_delete_row`/`table_add_column`/`table_delete_column`/`table_set_fill`/`table_set_border` · `chart_set_type`/`chart_set_data`/`chart_recolor_text` · `smartart_set_nodes`/`smartart_recolor_text`/`smartart_format_node` · `comment_add`/`comment_reply`/`comment_delete` · `section_add`/`section_rename`/`section_delete`/`section_move` · `set_headers_footers` · `theme_set_color`/`theme_set_font` · `master_format_text_style`/`master_format_paragraph_style`/`master_set_background` — every mutation; one Ctrl-Z each |
+| `ppt_read` | `status` · `slides` · `outline` · `slide` · `anchor` · `format_info` (the format probe: effective font/paragraph as `{value, baseline, override}` against the layout/master cascade) · `lint` (the consistency audit — severity-ranked findings, each fixable one carrying the exact op `regularize` runs) · `geometry` (slide size + shape boxes + overlaps + off-slide) · `text_frame_status` (autofit/wrap/margins/overflow-risk) · `links` · `selection` · `find` · `table` · `chart` · `smartart` · `comments` · `animations` · `sections` · `headers_footers` · `theme` · `master` · `layouts` — every read; never moves the view |
+| `ppt_edit` | `write`/`set_paragraphs` (the safe bullet path) · `find_replace` · `format` (font + paragraph + shape fill/line + bullets) · `text_reset_format`/`shape_reset_layout` (recover a wrecked placeholder) · `shape_set_text_frame` (autofit/wrap/vertical anchor/margins — the setter half of `text_frame_status`) · `slide_add` (+ `title`/`body`/`content`/`notes` — the one-op slide; `render=true` returns it as an image)/`slide_delete`/`slide_duplicate`/`slide_move`/`set_layout` · `shape_add`/`shape_move`/`shape_resize`/`shape_delete`/`shape_order`/`set_alt` · `media_add`/`media_set` (audio/video narration; mute/volume/trim) · `shape_group`/`shape_ungroup`/`shape_align`/`shape_distribute`/`shape_add_connector` (arrangement) · `shape_gradient_fill`/`shape_picture_fill`/`shape_pattern_fill`/`shape_set_picture`/`shape_set_effect`/`shape_line_style` · `shape_crop`/`shape_crop_to_fit` (crop a picture; `fit` is `cover` = full-bleed centre-crop or `contain` = whole picture, letterboxed) · `shape_set_hyperlink`/`shape_remove_hyperlink` (whole shape) · `link_set`/`link_remove` (text-**run** level) · `shape_animate`/`shape_clear_animations`/`slide_clear_animations` · `slide_set_transition`/`slide_set_background` · `table_add_row`/`table_delete_row`/`table_add_column`/`table_delete_column`/`table_set_fill`/`table_set_border` · `chart_set_type`/`chart_set_data`/`chart_recolor_text` · `smartart_set_nodes`/`smartart_recolor_text`/`smartart_format_node` · `comment_add`/`comment_reply`/`comment_delete` · `section_add`/`section_rename`/`section_delete`/`section_move` · `set_headers_footers` · `theme_set_color`/`theme_set_font` · `master_format_text_style`/`master_format_paragraph_style`/`master_set_background` · `regularize` (apply the fixable `lint` findings — targeted, idempotent, one Ctrl-Z; `dry_run` / `allow_content`) — every mutation; one Ctrl-Z each |
 | `ppt_render` | `slide_image` · `shape_image` · `deck_snapshot` (one PNG per slide — the whole-deck vision read; `max_dim` or exact `width`/`height`) · `deck_pdf`/`save`/`save_as` (explicit output) · `export_video`/`video_status` (deck → MP4; async, blocks until done by default) · `navigate` (the one deliberate view move) |
 | `ppt_show` | live slide show: `state` · `start` · `end` · `next` · `previous` · `goto` · `black` · `white` · `resume` |
 | `ppt_batch` | run a **list** of the ops above against one connection — all `edit`s fenced into a **single** undo entry (`atomic`), with `stop_on_error` control |

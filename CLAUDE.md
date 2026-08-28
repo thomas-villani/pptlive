@@ -68,6 +68,13 @@ src/pptlive/
   _findreplace.py    fuzzy match core (find_matches/normalize); find()/find_replace() on Presentation [v1.0]
   _comments.py       Comment / CommentCollection (slide.comments; threaded, identity-bound add/reply) [v1.3]
   _snapshot.py       Snapshot + deck.snapshot() — whole-deck low-res PNGs, max_dim token cap [v1.1]
+  _format_info.py    anchor.format_info() — the format probe: {value, baseline, override} per field,
+                     baseline walked by hand through CustomLayout placeholder → master TextStyles [linter]
+  _lint_profile.py   Profile (pptlive.lint.json loader; enable/disable rules, tolerances, severities) [linter]
+  _linting.py        Finding/Rule/Scope + DeckWalk (per-pass read cache) + dominant() (peer-mode) +
+                     run_lint()/regularize(); rule modules register themselves on import [linter]
+  _linting_consistency.py  P2 peer-mode rules (title/body font, title position, mixed runs)
+  _linting_geometry.py     P3 geometry rules (off-slide, edge-alignment, placeholder-off-layout, overlaps)
   _batch.py          fastmcp-free dispatch seam: op StrEnums + handler registries + _<tool>_core
                      dispatchers + run_batch(); imported by BOTH cli `exec` and mcp/server [v1.0/v1.6]
   _selection.py      viewed-slide + Selection snapshot/restore
@@ -470,6 +477,24 @@ Markdown/HTML deck DSL (a second API with a lossy mapping — one `slide_add` pe
 slide in an `exec` script gives the one-shot deck already) and per-slide
 `background=` on the macro (a theme/master concern; revisit if asked). `ppt_batch`
 stays JSON-only (no per-op image blocks) — follow a batch with one `deck_snapshot`.
+
+**The linter / regularizer foundation (2026-08-27) — `spec-linter.md` §10 steps
+1–4 + 7.** `deck.lint()` (pure read) / `deck.regularize()` (one `deck.edit`, one
+Ctrl-Z), the wordlive linter re-applied to a model with no named styles: the
+headline primitive is **mode across peers** (`_linting.dominant`, ≥ 60 % of peers),
+with peers keyed by **(layout, placeholder kind)** so a section-header title is never
+judged against a content title — that key is why the rules need zero configuration
+and answers spec Open Q #1 without sections. Findings anchor by `shapeid:S:ID`
+(`para:S:N:P` for one bullet); `fix` is a literal exec op, so `regularize` is "lint,
+then run the fixes through `run_batch`" (`own_undo=False` + `_edit_core` inside an
+`exec` batch). The spike that earned its keep, `scripts/lint_cascade_spike.py`: the
+**layout** placeholder — not the master text style — is the cascade baseline (a
+title slide's `ctrtitle` reads 60 pt on its layout vs 44 on the master), so
+`format_info()` walks `CustomLayout.Shapes.Placeholders` first and falls back to
+`TextStyles(kind).Levels(n)` only when the layout lacks the placeholder; the layout
+body placeholder's prompt text carries one paragraph per indent level, which is the
+per-level baseline. Idempotency is a test invariant (unit + `scripts/lint_live_check.py`).
+Still open: P4 text cluster, P5 deck cluster + `house_style`, proofing, accessibility.
 
 ## Constants are pinned to the typelib — don't hand-transcribe (learned the hard way)
 

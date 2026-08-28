@@ -36,6 +36,8 @@ from ._charts import Chart
 from ._comments import Comment, CommentCollection
 from ._edit import EditScope
 from ._headersfooters import HeadersFooters
+from ._lint_profile import Profile as LintProfile
+from ._linting import Finding
 from ._presentation import Presentation, PresentationCollection, VideoExportResult
 from ._sections import SectionCollection
 from ._selection import SelectionInfo, SelectionSnapshot
@@ -73,8 +75,10 @@ __all__ = [
     "Comment",
     "CommentCollection",
     "EditScope",
+    "Finding",
     "HeadersFooters",
     "LayoutNotFoundError",
+    "LintProfile",
     "Master",
     "NoTextFrameError",
     "Notes",

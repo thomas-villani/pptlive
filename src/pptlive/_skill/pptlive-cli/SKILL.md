@@ -186,6 +186,13 @@ Global and anti-polite, but still one Ctrl-Z; your view doesn't move.
 - `pptlive go-to --anchor-id shape:3:1` — move the user's view to an anchor's slide.
 - `pptlive show start [--from 2]` · `pptlive show next` (also `prev`, `goto --slide N`) · `pptlive show black` (also `white`, `resume`) · `pptlive show state` (read-only) · `pptlive show end`.
 
+## Finalize — `lint` + `regularize` (the last-hour cleanup, as one command)
+- `pptlive lint` → `{count, findings}`: every title the same font/size/colour and in the same box as its peers on that layout, every bullet the dominant font at its indent level, nothing off the slide, no mixed-run titles. Each finding: `{rule, severity, slide, anchor_id (drift-proof shapeid:S:ID), message, fixable, fix (the exact exec op), observed, expected}`.
+- `pptlive regularize` applies the fixable findings as ONE Ctrl-Z; **idempotent** (a second run applies nothing). `--dry-run` plans; `--allow-content` opts content-changing fixes in (withheld into `deferred` otherwise).
+- `--rule alignment` lights up the opt-in cluster (`edge-alignment` within 3 pt → `shape_align`; `placeholder-off-layout` → `shape_reset_layout`; `overlap-unintended`, report-only). `--exclude TAG`, `--within slide:S | shapeid:S:ID`, `--profile pptlive.lint.json` (enable rules / tolerances / severities).
+- Report-only findings (`shape-off-slide`, overlaps, mixed runs) need your judgment: fix by hand (`shape move`, `shape crop-to-fit`, `format-text` on the outlier), then `lint` again. `read format --anchor-id ID` is the probe behind it all (`{value, baseline, override}` per field vs the layout/master cascade).
+- In an `exec` script, `{"op": "regularize"}` is a write op that rides the batch's one undo entry.
+
 ## Exit codes — branch on these
 | Code | Meaning | Retry? |
 | ---- | ------- | ------ |

@@ -8,7 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 Feedback round from a Claude Code session using pptlive in another project
-(`notes.md`, 2026-08-27), plus the first authoring macro — the one-op slide.
+(`notes.md`, 2026-08-27), the first authoring macro — the one-op slide — and the
+**linter / regularizer foundation** (`spec-linter.md` steps 1–4 + all four front-ends).
 
 ### Fixed
 
@@ -22,6 +23,42 @@ Feedback round from a Claude Code session using pptlive in another project
 
 ### Added
 
+- **The linter + formatting regularizer — `deck.lint()` / `deck.regularize()`.**
+  The consistency audit + one-pass autofix from `spec-linter.md`, re-applied to
+  PowerPoint's 2-D model: a deck has ~no named styles, so "consistency" is
+  **mode across peers** (every title alike, every level-1 bullet alike, every title
+  box in the same place — peers are the same placeholder on the same layout; a rule
+  fires only with a clear ≥ 60 % dominant) plus **spatial regularity** over the
+  shipped `geometry_report()`. `lint` is a pure read returning severity-ranked
+  findings `{rule, kind, severity, slide, anchor_id, shapeid, message, fixable, fix,
+  adds_content, observed, expected}` — `fix` is literally the `exec` op(s) that
+  repair it, anchored by the drift-proof `shapeid:S:ID` (`para:S:N:P` for one
+  bullet). `regularize` applies the fixable ones inside **one** `deck.edit` (one
+  Ctrl-Z, view/Selection preserved); fixes write the dominant value back as direct
+  formatting so a second pass applies nothing (idempotency is a test invariant, unit
+  + live). Default rules: `title-font-consistent`, `body-font-consistent`,
+  `title-position-consistent`, `mixed-runs-in-title` (report-only), `shape-off-slide`
+  (report-only). Opt-in `alignment` cluster: `edge-alignment` (3 pt tolerance →
+  `shape_align`), `placeholder-off-layout` (→ `shape_reset_layout`),
+  `overlap-unintended` (report-only). `rules` selects by id / tag / `{"exclude"}`
+  (an unknown name is a `ValueError`, never a silent no-op); `within` scopes
+  emission to `slide:S` or one shape; `profile` (`pptlive.lint.json`, inline dict, or
+  `LintProfile`) enables rules, sets tolerances / dominance, overrides severities;
+  the `adds_content` gate withholds content-changing fixes into `deferred` unless
+  `allow_content`. Library + CLI (`lint`, `regularize [--dry-run] [--allow-content]`,
+  `--rule/--exclude/--within/--profile`) + `exec` op `regularize` (a write op riding
+  the batch's one undo entry) + MCP (`ppt_read` `lint`, `ppt_edit` `regularize`) +
+  both SKILL guides + docs. Verified live end-to-end (`scripts/lint_live_check.py`).
+- **`anchor.format_info()` — the format probe.** The read mirror of `format_text` /
+  `format_paragraph`: every font / paragraph field as `{value, baseline, override}`,
+  where `baseline` is what the placeholder's **layout** placeholder (falling back to
+  the master text style at that indent level) would render, `cascade` names the rung,
+  and `mixed` lists the fields that vary across runs. A free textbox / cell / notes
+  body has no cascade (`baseline` / `override` null). The
+  `scripts/lint_cascade_spike.py` finding that shaped it: the layout — not the master
+  — is the right baseline (a title slide's `ctrtitle` is 60 pt on the layout vs the
+  master's 44), and an untouched slide placeholder reads exactly its layout's values.
+  CLI `read format --anchor-id`, MCP `ppt_read` `format_info`.
 - **The one-op slide — `slides.add(title=, body=, content=, notes=)`.** The
   authoring macro: layout + every placeholder's text + speaker notes in a single
   call (one Ctrl-Z), so "add, look up the index, write the title, write the

@@ -140,6 +140,7 @@ pptlive read anchor --anchor-id ph:2:title    # placeholder by semantic kind
 pptlive read anchor --anchor-id shape:2:2      # shape by z-order
 pptlive read anchor --anchor-id para:2:2:1     # one paragraph
 pptlive read anchor --anchor-id cell:4:5:1:1   # one table cell
+pptlive read format --anchor-id ph:2:title     # the format probe: {value, baseline, override} per field
 pptlive read anchor --anchor-id here:          # the user's current selection
 pptlive read notes --slide 2                   # == --anchor-id notes:2
 ```
@@ -1380,6 +1381,63 @@ pptlive show end
 ```
 
 An out-of-range `--from` / `--slide` is exit `2`.
+
+---
+
+## `lint` / `regularize` — the consistency audit + one-pass autofix
+
+The last hour before a deck ships is spent on objective, mechanical fixes — every
+title the same font and size, the title box in the same place on every slide,
+shapes lined up, nothing hanging off the slide. `lint` finds them; `regularize`
+applies the fixable ones as **one Ctrl-Z**.
+
+```bash
+pptlive lint                                   # the default rule set -> {count, findings}
+pptlive lint --rule alignment                  # opt-in cluster: edge-alignment / placeholder-off-layout / overlaps
+pptlive lint --exclude fonts --within slide:7  # default set minus a tag, findings on one slide
+pptlive lint --profile pptlive.lint.json       # a house-style profile (enable rules, tolerances, severities)
+pptlive regularize --dry-run                   # plan the fixes without writing
+pptlive regularize                             # apply them (targeted + idempotent: a 2nd run is a no-op)
+pptlive read format --anchor-id ph:7:title     # the probe a finding is built on
+```
+
+Each finding is `{rule, kind, severity, slide, anchor_id, shapeid, message, fixable,
+fix, adds_content, observed, expected}`; `fix` is literally the `exec` op(s)
+`regularize` runs, and `anchor_id` is the drift-proof `shapeid:S:ID` (or
+`para:S:N:P` for one bullet). The deck is judged against **itself** — peers are
+"the same placeholder on the same layout", and a rule fires only when a clear
+dominant value exists (≥ 60 % of peers) — so no configuration is needed on any
+template.
+
+| rule | default | detects | fix |
+| ---- | ------- | ------- | --- |
+| `title-font-consistent` | on | a title whose font / size / bold / colour differs from the dominant title on that layout | `format` |
+| `body-font-consistent` | on | a body bullet whose font / size differs from the dominant value at its indent level | `format` (on the `para:` anchor) |
+| `title-position-consistent` | on | a title box that deviates > 1 pt from the dominant title box — the "jumpy title" | `shape_move` + `shape_resize` |
+| `mixed-runs-in-title` | on | a title whose runs disagree on a font field | report-only |
+| `shape-off-slide` | on | a shape beyond the slide bounds | report-only (a bleeding picture wants `shape crop-to-fit`) |
+| `edge-alignment` | off (`alignment`) | 2+ shapes whose left / right / top / bottom edges are within 3 pt (profile `tolerance`) but unequal | `shape_align` |
+| `placeholder-off-layout` | off (`alignment`) | a placeholder moved / resized off its layout position | `shape_reset_layout` (also restores the layout font size) |
+| `overlap-unintended` | off (`alignment`) | two text-bearing shapes whose boxes intersect | report-only |
+
+`regularize` emits `{applied, skipped, deferred, findings, dry_run, ops_run}` —
+`skipped` are the report-only findings, `deferred` the content-changing fixes
+withheld unless `--allow-content` (none in the current catalogue). A failing fix
+exits with its error category; the earlier fixes in the pass stay applied (one
+Ctrl-Z reverts them). Inside an `exec` script, `{"op": "regularize", ...}` is a
+write op that joins the batch's single undo entry.
+
+The profile (`--profile PATH`, conventionally `pptlive.lint.json`):
+
+```json
+{
+  "rules": {
+    "edge-alignment": {"enabled": true, "tolerance": 2.0},
+    "title-font-consistent": {"enabled": false},
+    "shape-off-slide": {"severity": "error"}
+  }
+}
+```
 
 ---
 
