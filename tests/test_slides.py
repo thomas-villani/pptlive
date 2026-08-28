@@ -237,3 +237,64 @@ def test_page_setup_points(deck) -> None:  # type: ignore[no-untyped-def]
 
 def test_iteration_yields_slides_in_order(deck) -> None:  # type: ignore[no-untyped-def]
     assert [s.index for s in deck.slides] == [1, 2, 3]
+
+
+# ---------------------------------------------------------------------------
+# The one-op slide: slides.add(title=/body=/content=/notes=)
+# ---------------------------------------------------------------------------
+
+
+def test_add_with_content_fills_placeholders_and_notes(deck) -> None:  # type: ignore[no-untyped-def]
+    new = deck.slides.add(
+        layout="two_content",
+        title="Q3 results",
+        content={"body:1": ["Revenue up 12%", "Churn flat"], "body:2": "Right\ncolumn"},
+        notes="Speaker notes",
+    )
+    s = new.index
+    assert deck.anchor_by_id(f"ph:{s}:title").text == "Q3 results"
+    assert deck.anchor_by_id(f"ph:{s}:body:1").text == "Revenue up 12%\rChurn flat"
+    assert deck.anchor_by_id(f"ph:{s}:body:2").text == "Right\rcolumn"
+    assert new.notes.text == "Speaker notes"
+
+
+def test_add_body_shorthand_and_paragraph_items(deck) -> None:  # type: ignore[no-untyped-def]
+    new = deck.slides.add(
+        layout="title_and_content",
+        title="Agenda",
+        body=[{"text": "Intro", "bold": True}, "Demo"],
+    )
+    assert deck.anchor_by_id(f"ph:{new.index}:body").text == "Intro\rDemo"
+
+
+def test_add_content_validates_before_any_com(deck) -> None:  # type: ignore[no-untyped-def]
+    before = len(deck.slides)
+    bad = [
+        dict(body=[]),
+        dict(body=[{"bold": True}]),
+        dict(title=3),
+        dict(content={"bogus": "x"}),
+        dict(content={"body:0": "x"}),
+        dict(content={"body:1:1": "x"}),
+        dict(content={"body": "x"}, body="y"),
+        dict(notes=1),
+    ]
+    for kwargs in bad:
+        with pytest.raises(ValueError):
+            deck.slides.add(layout="title_and_content", **kwargs)
+    assert len(deck.slides) == before  # nothing was added
+
+
+def test_add_content_ambiguous_kind_leaves_new_slide_untouched(deck) -> None:  # type: ignore[no-untyped-def]
+    # `body` on a Two Content slide is ambiguous; the resolve-all-first rule means
+    # the title is NOT written either, even though it comes first.
+    with pytest.raises(AmbiguousMatchError):
+        deck.slides.add(layout="two_content", title="T", body="ambiguous")
+    new = deck.slides[len(deck.slides)]
+    assert new.layout_name == "Two Content"
+    assert deck.anchor_by_id(f"ph:{new.index}:title").text == ""
+
+
+def test_add_content_unknown_on_layout_raises_not_found(deck) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(AnchorNotFoundError):
+        deck.slides.add(layout="title_only", body="no body here")

@@ -66,7 +66,14 @@ with pl.attach() as ppt:
     # Slide lifecycle — also one Ctrl-Z per edit() block.
     names = deck.layouts()                   # [{index, name}] — what set_layout/add accept
     with deck.edit("Add a results slide"):
-        new = deck.slides.add(layout="two_content", index=4)
+        # The one-op slide: layout + placeholders' text + notes in a single call
+        # (no index lookup, no follow-up writes). Values are a string or a
+        # set_paragraphs item list; `content` addresses any placeholder (body:1/body:2
+        # are the two columns of a Two Content slide).
+        new = deck.slides.add(layout="two_content", index=4, title="Q3 results",
+                              content={"body:1": ["Revenue up 12%", "Churn flat"],
+                                       "body:2": "Right column"},
+                              notes="Lead with the number.")
         deck.slides[7].duplicate()           # copy lands at slide 8
         deck.slides[9].move_to(2)
         deck.slides[4].set_layout("title_and_content")
@@ -228,6 +235,8 @@ pptlive replace --find "Q3 Reuslts" --text "Q3 Results" --all  # fuzzy replace (
 
 pptlive slide layouts                            # the layout names add/set-layout accept
 pptlive slide add --layout two_content [--index 4]
+pptlive slide add --layout title_and_content --title "Q3" --body "Revenue up 12%" --body "Churn flat" \
+                  --notes "Lead with the number." [--render new.png]   # the one-op slide
 pptlive slide duplicate --slide 7
 pptlive slide move --slide 9 --to 2
 pptlive slide set-layout --slide 4 --layout title_and_content
@@ -367,7 +376,7 @@ one-Ctrl-Z `edit` fencing carry over and reads never move the view:
 | tool | `op`s |
 | ---- | ----- |
 | `ppt_read` | `status` · `slides` · `outline` · `slide` · `anchor` · `geometry` (slide size + shape boxes + overlaps + off-slide) · `text_frame_status` (autofit/wrap/margins/overflow-risk) · `links` · `selection` · `find` · `table` · `chart` · `smartart` · `comments` · `animations` · `sections` · `headers_footers` · `theme` · `master` · `layouts` — every read; never moves the view |
-| `ppt_edit` | `write`/`set_paragraphs` (the safe bullet path) · `find_replace` · `format` (font + paragraph + shape fill/line + bullets) · `text_reset_format`/`shape_reset_layout` (recover a wrecked placeholder) · `shape_set_text_frame` (autofit/wrap/vertical anchor/margins — the setter half of `text_frame_status`) · `slide_add`/`slide_delete`/`slide_duplicate`/`slide_move`/`set_layout` · `shape_add`/`shape_move`/`shape_resize`/`shape_delete`/`shape_order`/`set_alt` · `media_add`/`media_set` (audio/video narration; mute/volume/trim) · `shape_group`/`shape_ungroup`/`shape_align`/`shape_distribute`/`shape_add_connector` (arrangement) · `shape_gradient_fill`/`shape_picture_fill`/`shape_pattern_fill`/`shape_set_picture`/`shape_set_effect`/`shape_line_style` · `shape_crop`/`shape_crop_to_fit` (crop a picture; `fit` is `cover` = full-bleed centre-crop or `contain` = whole picture, letterboxed) · `shape_set_hyperlink`/`shape_remove_hyperlink` (whole shape) · `link_set`/`link_remove` (text-**run** level) · `shape_animate`/`shape_clear_animations`/`slide_clear_animations` · `slide_set_transition`/`slide_set_background` · `table_add_row`/`table_delete_row`/`table_add_column`/`table_delete_column`/`table_set_fill`/`table_set_border` · `chart_set_type`/`chart_set_data`/`chart_recolor_text` · `smartart_set_nodes`/`smartart_recolor_text`/`smartart_format_node` · `comment_add`/`comment_reply`/`comment_delete` · `section_add`/`section_rename`/`section_delete`/`section_move` · `set_headers_footers` · `theme_set_color`/`theme_set_font` · `master_format_text_style`/`master_format_paragraph_style`/`master_set_background` — every mutation; one Ctrl-Z each |
+| `ppt_edit` | `write`/`set_paragraphs` (the safe bullet path) · `find_replace` · `format` (font + paragraph + shape fill/line + bullets) · `text_reset_format`/`shape_reset_layout` (recover a wrecked placeholder) · `shape_set_text_frame` (autofit/wrap/vertical anchor/margins — the setter half of `text_frame_status`) · `slide_add` (+ `title`/`body`/`content`/`notes` — the one-op slide; `render=true` returns it as an image)/`slide_delete`/`slide_duplicate`/`slide_move`/`set_layout` · `shape_add`/`shape_move`/`shape_resize`/`shape_delete`/`shape_order`/`set_alt` · `media_add`/`media_set` (audio/video narration; mute/volume/trim) · `shape_group`/`shape_ungroup`/`shape_align`/`shape_distribute`/`shape_add_connector` (arrangement) · `shape_gradient_fill`/`shape_picture_fill`/`shape_pattern_fill`/`shape_set_picture`/`shape_set_effect`/`shape_line_style` · `shape_crop`/`shape_crop_to_fit` (crop a picture; `fit` is `cover` = full-bleed centre-crop or `contain` = whole picture, letterboxed) · `shape_set_hyperlink`/`shape_remove_hyperlink` (whole shape) · `link_set`/`link_remove` (text-**run** level) · `shape_animate`/`shape_clear_animations`/`slide_clear_animations` · `slide_set_transition`/`slide_set_background` · `table_add_row`/`table_delete_row`/`table_add_column`/`table_delete_column`/`table_set_fill`/`table_set_border` · `chart_set_type`/`chart_set_data`/`chart_recolor_text` · `smartart_set_nodes`/`smartart_recolor_text`/`smartart_format_node` · `comment_add`/`comment_reply`/`comment_delete` · `section_add`/`section_rename`/`section_delete`/`section_move` · `set_headers_footers` · `theme_set_color`/`theme_set_font` · `master_format_text_style`/`master_format_paragraph_style`/`master_set_background` — every mutation; one Ctrl-Z each |
 | `ppt_render` | `slide_image` · `shape_image` · `deck_snapshot` (one PNG per slide — the whole-deck vision read; `max_dim` or exact `width`/`height`) · `deck_pdf`/`save`/`save_as` (explicit output) · `export_video`/`video_status` (deck → MP4; async, blocks until done by default) · `navigate` (the one deliberate view move) |
 | `ppt_show` | live slide show: `state` · `start` · `end` · `next` · `previous` · `goto` · `black` · `white` · `resume` |
 | `ppt_batch` | run a **list** of the ops above against one connection — all `edit`s fenced into a **single** undo entry (`atomic`), with `stop_on_error` control |

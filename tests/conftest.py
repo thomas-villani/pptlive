@@ -2151,6 +2151,32 @@ def _seeded_comments() -> list[_FakeComment]:
 # ---------------------------------------------------------------------------
 
 
+def _layout_placeholders(layout_name: str) -> list[_FakeShape]:
+    """The empty placeholders a fresh slide of `layout_name` carries (as real
+    PowerPoint seeds them), so `slides.add(title=/body=/content=)` has targets.
+    Names/ids/kinds mirror a stock Office theme; z-order is title first."""
+
+    def ph(name: str, sid: int, kind: int) -> _FakeShape:
+        return _FakeShape(
+            name=name, shape_id=sid, shape_type=_MSO_PLACEHOLDER, text="", placeholder_type=kind
+        )
+
+    key = layout_name.lower()
+    if key == "title slide":
+        return [ph("Title 1", 2, _PH_CENTER_TITLE), ph("Subtitle 2", 3, _PH_SUBTITLE)]
+    if key == "two content":
+        return [
+            ph("Title 1", 2, _PH_TITLE),
+            ph("Content Placeholder 2", 3, _PH_OBJECT),
+            ph("Content Placeholder 3", 4, _PH_OBJECT),
+        ]
+    if key == "title only":
+        return [ph("Title 1", 2, _PH_TITLE)]
+    if key == "blank":
+        return []
+    return [ph("Title 1", 2, _PH_TITLE), ph("Content Placeholder 2", 3, _PH_OBJECT)]
+
+
 class _FakeCustomLayout:
     """A `CustomLayout` — a name plus (for reset_to_layout) its placeholders."""
 
@@ -2413,7 +2439,7 @@ class _FakeSlides:
         slide = _FakeSlide(
             slide_id=self._next_id(),
             layout_name=str(custom_layout.Name),
-            shapes=[],
+            shapes=_layout_placeholders(str(custom_layout.Name)),
             notes_text="",
         )
         self._slides.insert(int(index) - 1, slide)

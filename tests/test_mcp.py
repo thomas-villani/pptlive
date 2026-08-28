@@ -1880,3 +1880,75 @@ def test_not_running_maps_to_tool_error(no_powerpoint: Any) -> None:
     with pytest.raises(ToolError) as exc:
         ppt_read("status")
     assert "not_running" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# The one-op slide (ppt_edit slide_add + title/body/content/notes/render)
+# ---------------------------------------------------------------------------
+
+
+def test_slide_add_with_content_echoes_anchors_and_shapes(fake_powerpoint: Any) -> None:
+    added = ppt_edit(
+        "slide_add",
+        layout="two_content",
+        title="Q3",
+        content={"body:1": ["a", "b"], "body:2": "c"},
+        notes="n",
+    )
+    s = added["index"]
+    assert added["content"] == {
+        "title": f"ph:{s}:title",
+        "body:1": f"ph:{s}:body:1",
+        "body:2": f"ph:{s}:body:2",
+    }
+    assert added["notes"] is True
+    names = {sh["name"] for sh in added["shapes"]}
+    assert {"Title 1", "Content Placeholder 2", "Content Placeholder 3"} <= names
+    assert ppt_read("anchor", anchor_id=f"ph:{s}:body:1")["text"] == "a\rb"
+    assert ppt_read("anchor", anchor_id=f"notes:{s}")["text"] == "n"
+
+
+def test_slide_add_without_content_has_no_content_keys(fake_powerpoint: Any) -> None:
+    added = ppt_edit("slide_add", layout="blank")
+    assert "content" not in added and "shapes" not in added and "notes" not in added
+
+
+def test_slide_add_bad_content_is_invalid_args(fake_powerpoint: Any) -> None:
+    with pytest.raises(ToolError) as exc:
+        ppt_edit("slide_add", layout="title_and_content", content={"bogus": "x"})
+    assert "invalid_args" in str(exc.value)
+
+
+def test_slide_add_render_returns_inline_image(fake_powerpoint: Any) -> None:
+    res = ppt_edit("slide_add", layout="title_and_content", title="T", body="b", render=True)
+    assert isinstance(res, CallToolResult)
+    assert res.structuredContent is not None
+    assert res.structuredContent["content"]["title"].startswith("ph:")
+    images = [c for c in res.content if isinstance(c, ImageContent)]
+    assert len(images) == 1 and images[0].mimeType == "image/png"
+    width, _h = _png_dims(base64.b64decode(images[0].data))
+    assert width == 1024  # the same legible cap slide_image embeds at
+
+
+def test_slide_add_render_false_is_plain_dict(fake_powerpoint: Any) -> None:
+    res = ppt_edit("slide_add", layout="blank", render=False)
+    assert isinstance(res, dict) and "images" not in res
+
+
+def test_batch_slide_add_with_content(fake_powerpoint: Any) -> None:
+    out = ppt_batch(
+        commands=[
+            {
+                "tool": "edit",
+                "op": "slide_add",
+                "layout": "title_and_content",
+                "title": "One",
+                "body": ["x", "y"],
+            },
+            {"tool": "edit", "op": "slide_add", "layout": "title_only", "title": "Two"},
+        ],
+    )
+    assert out["ok"] is True
+    r0, r1 = out["results"][0]["result"], out["results"][1]["result"]
+    assert r0["content"]["body"] == f"ph:{r0['index']}:body"
+    assert ppt_read("anchor", anchor_id=f"ph:{r1['index']}:title")["text"] == "Two"
