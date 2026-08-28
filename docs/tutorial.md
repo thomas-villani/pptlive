@@ -49,22 +49,19 @@ with pl.attach() as ppt:
     starter = [s.id for s in deck.slides]          # remember the blank slide
 
     with deck.edit("Build the deck"):
-        # Title slide
-        s1 = deck.slides.add(layout="title_slide")
-        deck.slides[s1.index].placeholder("ctrtitle").set_text("Project Nimbus")
-        deck.slides[s1.index].placeholder("subtitle").set_text("A weather balloon, but ambitious")
+        # Title slide — `content` reaches any placeholder by kind (ph:S:KIND minus the prefix)
+        s1 = deck.slides.add(layout="title_slide",
+                             content={"ctrtitle": "Project Nimbus",
+                                      "subtitle": "A weather balloon, but ambitious"})
 
-        # Content slide — newlines become separate, addressable paragraphs
-        s2 = deck.slides.add(layout="title_and_content")
-        deck.slides[s2.index].placeholder("title").set_text("Why now?")
-        deck.slides[s2.index].placeholder("body").set_text(
-            "Helium is cheaper than ever\nThe sky is right there\nVibes"
-        )
+        # Content slide — a list is one bullet per item; a string with "\n" also
+        # becomes separate, addressable paragraphs
+        s2 = deck.slides.add(layout="title_and_content", title="Why now?",
+                             body=["Helium is cheaper than ever", "The sky is right there", "Vibes"])
 
         # Closing slide
-        s3 = deck.slides.add(layout="title_and_content")
-        deck.slides[s3.index].placeholder("title").set_text("Ad astra (ish)")
-        deck.slides[s3.index].placeholder("body").set_text("Questions → up there ↑")
+        s3 = deck.slides.add(layout="title_and_content", title="Ad astra (ish)",
+                             body="Questions → up there ↑")
 
     # Drop the original blank slide so the deck is exactly our three
     with deck.edit("Remove starter slide"):
