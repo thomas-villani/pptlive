@@ -1361,3 +1361,54 @@ def test_missing_file_is_a_clean_error_not_a_traceback(fake_powerpoint, tmp_path
     assert result.exit_code == 1
     assert not isinstance(result.exception, FileNotFoundError)  # handled, not escaped
     assert "picture not found" in result.stderr
+
+
+def test_slide_add_with_content_and_render(fake_powerpoint, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    png = tmp_path / "new.png"
+    result = CliRunner().invoke(
+        main,
+        [
+            "slide",
+            "add",
+            "--layout",
+            "two_content",
+            "--title",
+            "Q3",
+            "--content",
+            '{"body:1": ["a", "b"], "body:2": "c"}',
+            "--notes",
+            "n",
+            "--render",
+            str(png),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = _json(result)
+    s = payload["index"]
+    assert payload["content"]["body:1"] == f"ph:{s}:body:1"
+    assert payload["notes"] is True
+    assert payload["image"] == str(png) and png.exists()
+    read = CliRunner().invoke(main, ["read", "anchor", "--anchor-id", f"ph:{s}:body:1"])
+    assert read.exit_code == 0
+    assert _json(read)["text"] == "a\rb"
+
+
+def test_slide_add_repeated_body_is_one_bullet_each(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(
+        main, ["slide", "add", "--layout", "title_and_content", "--body", "one", "--body", "two"]
+    )
+    assert result.exit_code == 0, result.output
+    s = _json(result)["index"]
+    read = CliRunner().invoke(main, ["read", "anchor", "--anchor-id", f"ph:{s}:body"])
+    assert _json(read)["text"] == "one\rtwo"
+
+
+def test_slide_add_bad_content_json_exit_2(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["slide", "add", "--content", "{nope"])
+    assert result.exit_code == 2
+    assert fake_powerpoint.ActivePresentation.Slides.Count == 3
+
+
+def test_slide_add_ambiguous_content_exit_5(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    result = CliRunner().invoke(main, ["slide", "add", "--layout", "two_content", "--body", "x"])
+    assert result.exit_code == 5

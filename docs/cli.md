@@ -272,6 +272,27 @@ pptlive slide add --layout two_content \
     --placeholders '{"body": {"left": 40, "width": 440}}'
 ```
 
+**The one-op slide.** `--title`, `--body` (repeat for one bullet per flag),
+`--content` (a JSON map of placeholder `KIND[:N]` → text or `[paragraph items]`,
+the `set-paragraphs` item form) and `--notes` fill the new slide's placeholders in
+the same op — one Ctrl-Z, no index lookup, no follow-up `write`s. Every key is
+resolved before any text lands, so an unknown-on-this-layout (exit `2`) or
+ambiguous (exit `5` — `body` on a `two_content` slide; use `body:1` / `body:2`)
+key leaves the freshly added slide untouched. `--render PATH` also renders the
+result to a PNG (echoed as `image`) so the "look" step rides along:
+
+```bash
+pptlive slide add --layout two_content --title "Q3 results" \
+    --content '{"body:1": ["Revenue up 12%", {"text": "Churn flat", "bold": true}], "body:2": "Right column"}' \
+    --notes "Lead with the number." --render q3.png
+```
+
+```json
+{"ok": true, "index": 4, "id": 261, "layout": "Two Content",
+ "content": {"title": "ph:4:title", "body:1": "ph:4:body:1", "body:2": "ph:4:body:2"},
+ "shapes": [...], "notes": true, "image": "q3.png"}
+```
+
 Exits `2` ([`LayoutNotFoundError`](errors.md)) on an unknown layout name — the
 error lists the available ones.
 
@@ -1379,14 +1400,16 @@ the fields the matching [MCP](mcp.md) op takes — so `set_paragraphs` takes
 {
   "label": "Build Q3 slide",
   "ops": [
-    {"op": "slide_add", "layout": "title_and_content", "index": 4},
-    {"op": "write", "anchor_id": "ph:4:title", "text": "Q3 Results"},
-    {"op": "set_paragraphs", "anchor_id": "ph:4:body",
-     "paragraphs": [{"text": "Revenue up 12%", "list_type": "bulleted"},
-                    {"text": "Churn down 3%",  "list_type": "bulleted"}]}
+    {"op": "slide_add", "layout": "title_and_content", "index": 4, "title": "Q3 Results",
+     "body": [{"text": "Revenue up 12%", "list_type": "bulleted"},
+              {"text": "Churn down 3%",  "list_type": "bulleted"}]}
   ]
 }
 ```
+
+(`slide_add` takes `title` / `body` / `content` / `notes`, so one op per slide is
+the norm; the older three-op form — add, then `write` `ph:4:title`, then
+`set_paragraphs` `ph:4:body` — still works.)
 
 ```bash
 pptlive exec --script ops.json

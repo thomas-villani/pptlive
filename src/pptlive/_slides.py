@@ -82,6 +82,65 @@ def _validate_placeholders_arg(placeholders: dict[str, dict[str, float]] | None)
                 raise ValueError(f"placeholders[{kind!r}][{key!r}] must be a number (points)")
 
 
+def _validate_content_value(where: str, value: Any) -> None:
+    if isinstance(value, str):
+        return
+    if isinstance(value, list):
+        if not value:
+            raise ValueError(f"{where} must not be an empty list")
+        for item in value:
+            if not (isinstance(item, str) or (isinstance(item, dict) and "text" in item)):
+                raise ValueError(
+                    f"{where} items must be strings or dicts with a 'text' key "
+                    "(the set_paragraphs item form)"
+                )
+        return
+    raise ValueError(f"{where} must be a string or a list of paragraph items")
+
+
+def _merge_content_arg(
+    title: str | None,
+    body: Any,
+    content: dict[str, Any] | None,
+    notes: str | None,
+) -> dict[str, Any]:
+    """Fold `add(title=, body=, content=)` into one `{KIND[:N]: value}` map.
+
+    Validated before any COM work: a value is a string (→ `set_text`, `\n`
+    starts a paragraph) or a non-empty list of `set_paragraphs` items; keys are
+    placeholder addresses without the `ph:S:` prefix (`title`, `body`, `body:2`,
+    `subtitle`); `title`/`body` shorthand and the same key in `content` may not
+    both be given. Returns the merged map (insertion order = write order).
+    """
+    merged: dict[str, Any] = {}
+    if title is not None:
+        if not isinstance(title, str):
+            raise ValueError("title must be a string")
+        merged["title"] = title
+    if body is not None:
+        _validate_content_value("body", body)
+        merged["body"] = body
+    if content is not None:
+        if not isinstance(content, dict):
+            raise ValueError("content must be a dict of {placeholder KIND[:N]: text | [items]}")
+        for key, value in content.items():
+            if not isinstance(key, str) or not key:
+                raise ValueError("content keys must be placeholder KIND[:N] strings")
+            parts = key.split(":")
+            if len(parts) not in (1, 2):
+                raise ValueError(f"content key {key!r} must be KIND or KIND:N (e.g. 'body:2')")
+            placeholder_types_for(parts[0])  # ValueError on an unknown KIND
+            if len(parts) == 2 and (not parts[1].isdigit() or int(parts[1]) < 1):
+                raise ValueError(f"content key {key!r}: N must be a 1-based integer")
+            if key in merged:
+                raise ValueError(f"{key!r} given both as a keyword and in content=")
+            _validate_content_value(f"content[{key!r}]", value)
+            merged[key] = value
+    if notes is not None and not isinstance(notes, str):
+        raise ValueError("notes must be a string")
+    return merged
+
+
 def _paragraphs(text: str) -> list[str]:
     """Split a PowerPoint `TextRange.Text` into non-empty paragraph strings.
 
@@ -667,6 +726,10 @@ class SlideCollection:
         index: int | None = None,
         *,
         placeholders: dict[str, dict[str, float]] | None = None,
+        title: str | None = None,
+        body: str | list[Any] | None = None,
+        content: dict[str, str | list[Any]] | None = None,
+        notes: str | None = None,
     ) -> Slide:
         """Insert a new slide and return it (v0.1; wrap in `deck.edit(...)`).
 
@@ -685,8 +748,26 @@ class SlideCollection:
         `ph:S:KIND` uses (`title`/`body`/…); an unknown-on-this-layout or ambiguous
         KIND raises (`AnchorNotFoundError` / `AmbiguousMatchError`) the same way
         addressing it would. Pair with `Slide.geometry_report()` to size the boxes.
+
+        **The one-op slide (the authoring macro).** `title=` / `body=` / `content=`
+        / `notes=` fill the new slide's placeholders in the same call, so "add a
+        slide, then write its title, then its bullets, then its notes" collapses
+        from four round-trips (and an index lookup between them) to one. A value
+        is a string (written like `set_text` — embed `\n` to start a paragraph)
+        or a list of `set_paragraphs` items (strings, or dicts with `text` plus
+        any of its formatting keys — the safe bullet path). `content` takes any
+        placeholder address without the `ph:S:` prefix, so the two columns of a
+        Two Content slide are `{"body:1": [...], "body:2": [...]}`; `title=` and
+        `body=` are shorthand for `content={"title": …, "body": …}` (giving the
+        same key both ways is a `ValueError`). `notes=` sets the speaker notes.
+        Every key is resolved **before** anything is written, so an unknown-on-
+        this-layout or ambiguous KIND (`ph:S:body` on a Two Content slide — use
+        `body:1`/`body:2`) raises the way addressing it would, and the slide is
+        still added but untouched. Geometry from `placeholders=` is applied
+        first, then the text (so autofit sees the final box).
         """
         _validate_placeholders_arg(placeholders)
+        fills = _merge_content_arg(title, body, content, notes)
         count = len(self)
         if index is None:
             target = count + 1
@@ -705,7 +786,28 @@ class SlideCollection:
         new_slide = Slide(self._deck, new_com)
         if placeholders:
             self._apply_placeholder_geometry(new_slide.index, placeholders)
+        if fills or notes is not None:
+            self._apply_content(new_slide, fills, notes)
         return new_slide
+
+    def _apply_content(self, slide: Slide, fills: dict[str, Any], notes: str | None) -> None:
+        """Write `add(title=/body=/content=/notes=)` into the new slide's placeholders.
+
+        Resolves every `ph:S:KIND[:N]` **first** (unknown / ambiguous raises before
+        any text lands), then writes: a string → `set_text`, a list →
+        `set_paragraphs`. `notes` goes to the slide's notes anchor last.
+        """
+        resolved = [
+            (key, self._deck.anchor_by_id(f"ph:{slide.index}:{key}"), value)
+            for key, value in fills.items()
+        ]
+        for _key, ph, value in resolved:
+            if isinstance(value, str):
+                ph.set_text(value)  # type: ignore[attr-defined]
+            else:
+                ph.set_paragraphs(value)  # type: ignore[attr-defined]
+        if notes is not None:
+            slide.notes.set_text(notes)
 
     def _apply_placeholder_geometry(
         self, slide_index: int, placeholders: dict[str, dict[str, float]]

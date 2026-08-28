@@ -451,6 +451,26 @@ ids** across group/ungroup; the group gets a new one. (4) **Text-run hyperlinks*
 `AmbiguousMatchError`) or 0-based offset — distinct from the whole-shape
 `set_hyperlink`.
 
+**The one-op slide (2026-08-27) — the first authoring "macro".** Prompted by
+the observation that an agent building a deck always does the same dance per
+slide: `slide_add` → learn the index → write `ph:S:title` → write `ph:S:body` →
+set notes → read to confirm. `exec`/`ppt_batch` already made that atomic; the
+cost was verbosity and anchor bookkeeping. `SlideCollection.add(title=, body=,
+content=, notes=)` folds it into the verb we already had (`slide_add(placeholders=)`
+was the first crack at the same idea): values are a string (`set_text`) or a
+`set_paragraphs` item list; `content` keys are placeholder addresses without the
+`ph:S:` prefix (`body:1`/`body:2` for Two Content), all resolved *before* any
+write so a bad key leaves the new slide untouched; `placeholders=` geometry lands
+first so autofit sees the final box. The fake COM's `AddSlide` now seeds each
+layout's empty placeholders (`_layout_placeholders`) so this is unit-testable.
+MCP `slide_add(render=True)` folds the "look" step in (an image block via
+`_render_reply` — `ppt_edit` is now `-> Any` for the same passthrough reason as
+`ppt_render`); CLI `slide add --render PATH`. Deliberately **not** built: a
+Markdown/HTML deck DSL (a second API with a lossy mapping — one `slide_add` per
+slide in an `exec` script gives the one-shot deck already) and per-slide
+`background=` on the macro (a theme/master concern; revisit if asked). `ppt_batch`
+stays JSON-only (no per-op image blocks) — follow a batch with one `deck_snapshot`.
+
 ## Constants are pinned to the typelib — don't hand-transcribe (learned the hard way)
 
 `tests/test_typelib_parity.py` checks every `constants.py` `IntEnum` against the live

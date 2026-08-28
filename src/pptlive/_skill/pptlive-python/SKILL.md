@@ -102,7 +102,17 @@ gives it on any live wrapper — so after a `reorder` you re-address by the retu
 
 ```python
 with deck.edit("Build the results slide"):
-    new = deck.slides.add(layout="two_content", index=4)
+    # THE ONE-OP SLIDE — prefer this over add → write title → write body → notes.
+    # A value is a string ("\n" starts a paragraph) or a list of set_paragraphs items
+    # (strings / {"text": ..., "bold": True, "list_type": ...}); `content` addresses any
+    # placeholder without the ph:S: prefix ("subtitle", "body:1"/"body:2" = the two
+    # columns of two_content — plain "body" is ambiguous there and raises, slide untouched).
+    new = deck.slides.add(layout="two_content", index=4, title="Q3 results",
+                          content={"body:1": ["Revenue up 12%", {"text": "Churn flat", "bold": True}],
+                                   "body:2": "Right column"},
+                          notes="Lead with the number.")
+    deck.slides.add(layout="title_and_content", title="Agenda", body=["Intro", "Demo", "Q&A"])
+    new.export_image("check.png", width=1024)         # the "look" step, when you want it
     # one op: add + reposition placeholders (points; KIND as in ph:S:KIND) — body on the left half
     deck.slides.add(layout="title_and_content", placeholders={"body": {"left": 40, "width": 440}})
     # title_only: the title placeholder's default box is TALL (bottom ≈ 133 pt on a

@@ -22,6 +22,24 @@ Feedback round from a Claude Code session using pptlive in another project
 
 ### Added
 
+- **The one-op slide — `slides.add(title=, body=, content=, notes=)`.** The
+  authoring macro: layout + every placeholder's text + speaker notes in a single
+  call (one Ctrl-Z), so "add, look up the index, write the title, write the
+  bullets, set the notes" collapses to one round-trip. A value is a string
+  (`\n` starts a paragraph) or a `set_paragraphs` item list (the safe bullet
+  path, all formatting keys); `content` takes any placeholder address without
+  the `ph:S:` prefix (`{"body:1": …, "body:2": …}` for a Two Content slide,
+  `"subtitle"` on a title slide); `title=`/`body=` are shorthand. Every key is
+  resolved before anything is written, so an unknown / ambiguous placeholder
+  raises with the slide added but untouched. `placeholders=` geometry is applied
+  first so autofit sees the final box. Library + CLI (`slide add --title/--body
+  (repeatable)/--content JSON/--notes`) + MCP / `exec` (`slide_add` gains
+  `title`/`body`/`content`/`notes`; echoes `content` → anchor map + `shapes`).
+- **`render` on `slide_add`** — MCP `ppt_edit(op="slide_add", render=true)`
+  returns the new slide as an inline image alongside the JSON (the "look" step
+  folded into the add, at the same legible width `slide_image` embeds at); CLI
+  `slide add --render PATH` writes the PNG and echoes it as `image`. `ppt_batch`
+  deliberately stays JSON-only — follow a batch with one `deck_snapshot`.
 - **`ph:S:KIND:N` — ordinal placeholder addressing.** The Nth (1-based, z-order)
   placeholder of a kind, ranked best-preference type first: on a Two Content /
   Comparison slide `ph:S:body:1` is the left column and `ph:S:body:2` the right,

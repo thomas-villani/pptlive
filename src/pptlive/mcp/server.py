@@ -355,6 +355,11 @@ def ppt_edit(
     layout: str | None = None,
     index: int | None = None,
     placeholders: dict[str, dict[str, float]] | None = None,
+    title: str | None = None,
+    body: str | list[Any] | None = None,
+    content: dict[str, Any] | None = None,
+    notes: str | None = None,
+    render: bool = False,
     kind: Literal["textbox", "shape", "picture", "table", "chart", "smartart", "audio", "video"]
     | None = None,
     shape_type: str
@@ -421,7 +426,7 @@ def ppt_edit(
     start: int | None = None,
     length: int | None = None,
     doc: str | None = None,
-) -> dict[str, Any]:
+) -> Any:
     """Edit the live PowerPoint deck — write/format text, add or arrange slides
     and shapes, find-and-replace, and apply theme/master styling. Every call is
     ONE undo entry and preserves the user's view.
@@ -473,6 +478,17 @@ def ppt_edit(
 
     Slide lifecycle:
     - "slide_add": add a slide (`layout` name, optional 1-based `index`; default end).
+      **The one-op slide:** `title`, `body`, `content`, `notes` fill its placeholders
+      in the same call — no index lookup, no follow-up writes. `title`/`notes` are
+      strings; `body` (and each `content` value) is a string (`\n` starts a
+      paragraph) or a list of set_paragraphs items (the safe bullet path, with all its
+      formatting keys). `content` addresses any placeholder without the `ph:S:`
+      prefix — {"body:1": [...], "body:2": [...]} for the two columns of a two_content
+      slide, {"subtitle": "..."} on a title slide. Every key is resolved before any
+      text lands (unknown-on-this-layout / ambiguous → error, slide added but
+      untouched). Returns `content` (key → `ph:` anchor written) + the resulting
+      `shapes`. `render=true` also returns the new slide as an inline image so you
+      can check it in the same round-trip (the "look" step).
       Optional `placeholders` repositions the layout's placeholders in the same op —
       `{KIND: {left, top, width, height}}` (points, any subset), KIND as in `ph:S:KIND`
       (e.g. {"body": {"left": 40, "width": 440}} for a left-half content area beside a
@@ -770,6 +786,10 @@ def ppt_edit(
         "layout": layout,
         "index": index,
         "placeholders": placeholders,
+        "title": title,
+        "body": body,
+        "content": content,
+        "notes": notes,
         "kind": kind,
         "shape_type": shape_type,
         "path": path,
@@ -837,7 +857,14 @@ def ppt_edit(
     with _mcp_errors(), attach() as ppt:
         deck = _pick_deck(ppt, doc)
         with deck.edit(f"MCP: {op}"):
-            return _edit_core(deck, op, params)
+            result = _edit_core(deck, op, params)
+        if render and op == "slide_add" and isinstance(result, dict):
+            # Fold the "look" step into the add: render the new slide at the same
+            # legible cap slide_image uses and ride it back as an image block.
+            png = deck.slides[result["index"]].export_image(width=_EMBED_DEFAULT_WIDTH)
+            result["images"] = [{"slide": result["index"], "path": str(png), "format": "png"}]
+            return _render_reply([result], result)
+        return result
 
 
 def ppt_render(

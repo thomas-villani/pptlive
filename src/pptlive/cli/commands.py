@@ -1155,6 +1155,30 @@ def slide_export(
         "add + resize in one op (a left-half content area beside a right-side panel)."
     ),
 )
+@click.option("--title", default=None, help="Title placeholder text (the one-op slide).")
+@click.option(
+    "--body",
+    "body_items",
+    multiple=True,
+    help="Body placeholder text; repeat for one bullet per --body (each is one paragraph).",
+)
+@click.option(
+    "--content",
+    "content_json",
+    default=None,
+    help=(
+        "JSON map of placeholder KIND[:N] -> text or [paragraph items], e.g. "
+        '\'{"body:1": ["a", "b"], "body:2": "right column"}\' — any placeholder, '
+        "the two columns of a two_content slide included."
+    ),
+)
+@click.option("--notes", default=None, help="Speaker notes for the new slide.")
+@click.option(
+    "--render",
+    "render_path",
+    default=None,
+    help="Also render the new slide to this PNG path (echoed as `image`) to check it.",
+)
 @_deck_command
 def slide_add(
     ctx: click.Context,
@@ -1162,16 +1186,40 @@ def slide_add(
     layout: str | None,
     index: int | None,
     placeholders_json: str | None,
+    title: str | None,
+    body_items: tuple[str, ...],
+    content_json: str | None,
+    notes: str | None,
+    render_path: str | None,
 ) -> None:
-    """Add a slide; print its index, id, and layout."""
+    """Add a slide; print its index, id, and layout.
+
+    With --title/--body/--content/--notes the placeholders are filled in the same
+    op (one Ctrl-Z, no follow-up writes); --render also renders the result.
+    """
     placeholders = None
     if placeholders_json is not None:
         try:
             placeholders = json.loads(placeholders_json)
         except json.JSONDecodeError as exc:
             raise click.UsageError(f"invalid JSON in --placeholders: {exc}") from exc
+    content = None
+    if content_json is not None:
+        try:
+            content = json.loads(content_json)
+        except json.JSONDecodeError as exc:
+            raise click.UsageError(f"invalid JSON in --content: {exc}") from exc
+    body: list[str] | None = list(body_items) or None
     with deck.edit(f"CLI: add slide ({layout or 'default'})"):
-        new = deck.slides.add(layout=layout, index=index, placeholders=placeholders)
+        new = deck.slides.add(
+            layout=layout,
+            index=index,
+            placeholders=placeholders,
+            title=title,
+            body=body,
+            content=content,
+            notes=notes,
+        )
     payload: dict[str, Any] = {
         "ok": True,
         "index": new.index,
@@ -1182,6 +1230,16 @@ def slide_add(
         payload["placeholders"] = {
             kind: _resolve_shape(deck, f"ph:{new.index}:{kind}").geometry() for kind in placeholders
         }
+    filled = [k for k, v in (("title", title), ("body", body)) if v is not None] + list(
+        content or {}
+    )
+    if filled:
+        payload["content"] = {key: f"ph:{new.index}:{key}" for key in filled}
+        payload["shapes"] = new.shapes.list()
+    if notes is not None:
+        payload["notes"] = True
+    if render_path is not None:
+        payload["image"] = str(new.export_image(render_path))
     emit(
         payload,
         as_text=not ctx.obj["as_json"],

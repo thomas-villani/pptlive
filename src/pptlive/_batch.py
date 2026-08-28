@@ -557,9 +557,18 @@ def _format_warnings(anchor: Any, p: dict[str, Any]) -> list[str]:
 @edit_op(EditOp.SLIDE_ADD)
 def _edit_slide_add(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
     placeholders = p.get("placeholders")
-    # A bad layout/index/placeholders ValueError is mapped to invalid_args
+    content = p.get("content")
+    # A bad layout/index/placeholders/content ValueError is mapped to invalid_args
     # centrally (run_batch + the MCP _mcp_errors wrapper), so no per-handler wrap.
-    new = deck.slides.add(layout=p.get("layout"), index=p.get("index"), placeholders=placeholders)
+    new = deck.slides.add(
+        layout=p.get("layout"),
+        index=p.get("index"),
+        placeholders=placeholders,
+        title=p.get("title"),
+        body=p.get("body"),
+        content=content,
+        notes=p.get("notes"),
+    )
     result: dict[str, Any] = {
         "ok": True,
         "index": new.index,
@@ -571,6 +580,14 @@ def _edit_slide_add(deck: Presentation, p: dict[str, Any]) -> dict[str, Any]:
         result["placeholders"] = {
             kind: _resolve_shape(deck, f"ph:{new.index}:{kind}").geometry() for kind in placeholders
         }
+    filled = [k for k in ("title", "body") if p.get(k) is not None] + list(content or {})
+    if filled:
+        # The one-op slide: echo where each value landed + the resulting shapes,
+        # so the confirming `read` round-trip is folded in too.
+        result["content"] = {key: f"ph:{new.index}:{key}" for key in filled}
+        result["shapes"] = new.shapes.list()
+    if p.get("notes") is not None:
+        result["notes"] = True
     return result
 
 
