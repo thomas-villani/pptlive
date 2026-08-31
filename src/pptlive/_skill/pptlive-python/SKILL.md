@@ -127,6 +127,10 @@ with deck.edit("Build the results slide"):
     shapes.add_textbox("Revenue up 12%", left=pl.units.inches(1), top=72)
     star = shapes.add_shape("star", left=400, top=120, width=120, height=120, fill="#1E74B5")
     logo = shapes.add_picture("logo.png", left=600, top=40, alt_text="Acme logo")
+    #   An EMPTY content placeholder CAPTURES an added picture (returned shape reads
+    #   `placeholder`, picture inside). Geometry you pass is still honored and crop/
+    #   set_picture work on it — but for a free shape, fill the placeholders first;
+    #   to fill the layout slot deliberately, pass no geometry.
     deck.slides[4].shapes["Picture 3"].move(top=140)  # by name; absolute, points
     logo = logo.set_picture("logo-v2.png")            # re-source a PICTURE in place (keeps box/name/alt/z); returns a NEW handle
     #   (set_picture_fill on a real picture only fills BEHIND it; animations/hyperlinks/crop are dropped on re-source)
@@ -187,12 +191,16 @@ with deck.edit("Polish the body copy"):
     # Safest list authoring: one item = one bullet, no newline inference.
     # Set EVERYTHING per item in this one pass — font included. Don't follow up
     # with a paragraph(i).format_text(...) loop; that's 2-3x the COM round-trips.
+    # autosize="none" pins the frame BEFORE the text lands. A content placeholder
+    # defaults to shrink-on-overflow autofit, which REWRITES explicit sizes
+    # unevenly as text lands (and turning it off afterwards does NOT restore
+    # them) — so pass it whenever items carry a deliberate size hierarchy.
     body.set_paragraphs([
         {"text": "Revenue up 12%", "list_type": "bulleted",
          "bold": True, "size": 24, "color": "#2E74B5", "line_spacing_points": 24},
         {"text": "Churn down 3%", "list_type": "bulleted", "indent_level": 2},
         {"text": "NPS +9", "list_type": "bulleted"},
-    ])
+    ], autosize="none")
 ```
 
 **`set_paragraphs` item keys — the complete list.** Every key is settable in the
@@ -373,6 +381,7 @@ deck.export_pdf("C:/out/deck.pdf")                    # pixel-faithful PDF; work
 # Media + narrated-video export — build a deck, narrate it, export an MP4.
 with deck.edit("Add narration"):
     audio = deck.slides[4].add_audio("speech.mp3")    # embed; autoplay + pace the slide (defaults); returns the Shape
+    #   left=/top= are honored even NEGATIVE (park a hidden icon off-canvas) — the raw COM re-center is undone for you
     deck.slides[4].add_video("demo.mp4", left=72, top=120)   # stays visible; same autoplay/pace knobs
     audio.set_media_playback(volume=0.6, start=2, end=30)    # mute/volume/trim; start/end in SECONDS
 deck.slides[4].shapes["Media 7"].media                # {type: 'sound'|'movie', length_s, start_s, end_s, muted, volume, autoplay}

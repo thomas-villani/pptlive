@@ -4378,6 +4378,13 @@ def write(ctx: click.Context, anchor_id: str, text: str) -> None:
     default=None,
     help="Read the JSON paragraphs array from a file instead of --paragraphs.",
 )
+@click.option(
+    "--autosize",
+    type=click.Choice(AUTOSIZE_CHOICES),
+    default=None,
+    help='Set the frame\'s autofit mode BEFORE the text lands. "none" keeps '
+    "explicit size values from being rewritten by shrink-on-overflow autofit.",
+)
 @_deck_command
 def set_paragraphs(
     ctx: click.Context,
@@ -4385,6 +4392,7 @@ def set_paragraphs(
     anchor_id: str,
     paragraphs_json: str | None,
     json_file: str | None,
+    autosize: str | None,
 ) -> None:
     """Rewrite an anchor as a clean list of paragraphs (no newline inference).
 
@@ -4409,6 +4417,11 @@ def set_paragraphs(
       size                        font size in points
       font                        typeface name
       color                       FONT color — "#RRGGBB"
+
+    A content placeholder defaults to shrink-on-overflow autofit, which rewrites
+    explicit `size` values unevenly as the text lands (and turning it off
+    afterwards does not restore them) — pass `--autosize none` in the same call
+    to pin them.
     """
     if (paragraphs_json is None) == (json_file is None):
         raise click.UsageError("set-paragraphs needs exactly one of --json or --file")
@@ -4425,7 +4438,7 @@ def set_paragraphs(
         raise click.UsageError("paragraphs must be a JSON array")
     anchor = deck.anchor_by_id(anchor_id)
     with deck.edit(f"CLI: set paragraphs {anchor_id}"):
-        new_ids = anchor.set_paragraphs(items)
+        new_ids = anchor.set_paragraphs(items, autosize=autosize)
     emit(
         {"ok": True, "anchor_id": anchor.anchor_id, "paragraphs": new_ids},
         as_text=not ctx.obj["as_json"],

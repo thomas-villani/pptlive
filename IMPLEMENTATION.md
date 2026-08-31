@@ -1492,6 +1492,38 @@ so consistency isn't "direct override vs style" — it's (P2) **mode/dominant ac
 
 ---
 
+## GH-issue live-testing round (#48–#53) — SHIPPED (2026-08-31)
+
+Six issues from a live narrated-deck build. Triage first: **#48** (table slide
+unreadable), **#51** (`slides.add` two-content ambiguity — `body:1`/`body:2`
+keys work in `content=` *and* `placeholders=`), and **#52** (llm-help signature
+drift — `cols=` alias, keyword-friendly `add_chart`, `set_border` keyword-only
+note) were already fixed on main by the #44/#45 round. The remaining three were
+pinned by one net-zero spike (`scripts/gh_feedback_spike.py`) and fixed:
+
+- **#49 — placeholder capture of `add_picture`.** Spike A1 found it worse than
+  reported: on capture `Shapes.Count` doesn't grow, so `_added()` ("last shape
+  by Count") returned an arbitrary WRONG shape. `ShapeCollection._resolved`
+  resolves adds by stable `Shape.Id`; explicit geometry is re-applied
+  post-capture (writes stick, A5; missing width/height derived from the image
+  aspect); `is_picture` accepts `PlaceholderFormat.ContainedType == msoPicture`
+  (probed: 13 on a captured placeholder, 1 on text/empty — and `CropLeft`
+  round-trips on it, A3), unlocking `crop`/`crop_to_fit`/`set_picture`. The
+  fake COM reproduces capture (empty OBJECT placeholder) so it's unit-tested.
+- **#50 — media re-center on negative coords.** `AddMediaObject2` re-centers a
+  negative left/top at insert (B1) but a post-insert `Shape.Left/Top` write
+  sticks (B2) — `_add_media` re-applies the requested position after insert.
+- **#53 — autofit vs `set_paragraphs` sizes.** C1: shrink autofit **rewrites**
+  explicit sizes unevenly as text lands (20/16 → 24/19/22/17/16 — `Font.Size`
+  itself, not a display scale); C3: a late `autosize="none"` does NOT restore
+  them; C2: setting it **before** the text lands does. Hence
+  `set_paragraphs(..., autosize=)` (whole-frame anchors: shape/cell/notes via
+  `Anchor._autofit_com_shape`), applied pre-text; CLI `--autosize`; batch
+  passthrough + a non-fatal warning when explicit sizes land under shrink
+  autofit without it.
+
+---
+
 ## Open questions (from spec.md — resolve, don't guess)
 
 1. ~~**Name.**~~ **Resolved: `pptlive`.** The whole Bootstrap + v0 tree

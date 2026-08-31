@@ -23,6 +23,7 @@ from typing import Any
 from ._anchors import LINE_SPACING_MULTIPLE_MAX, SOFT_BREAK
 from ._presentation import Presentation
 from ._shapes import Shape
+from .constants import MsoAutoSize
 from .exceptions import (
     AnchorNotFoundError,
     BatchOpError,
@@ -444,9 +445,43 @@ def _edit_set_paragraphs(deck: Presentation, p: dict[str, Any]) -> dict[str, Any
         "edit op='set_paragraphs' requires a non-empty `paragraphs` list",
     )
     assert isinstance(paragraphs, list)  # narrowed by _require above
+    autosize = p.get("autosize")
     anchor = deck.anchor_by_id(p["anchor_id"])
-    new_ids = anchor.set_paragraphs(paragraphs)
-    return {"ok": True, "anchor_id": anchor.anchor_id, "paragraphs": new_ids}
+    warnings = _autofit_size_warning(anchor, paragraphs, autosize)
+    new_ids = anchor.set_paragraphs(paragraphs, autosize=autosize)
+    result: dict[str, Any] = {"ok": True, "anchor_id": anchor.anchor_id, "paragraphs": new_ids}
+    if warnings:
+        result["warnings"] = warnings
+    return result
+
+
+def _autofit_size_warning(anchor: Any, paragraphs: list[Any], autosize: Any) -> list[str]:
+    """Warn when explicit `size=` values are about to land under shrink autofit.
+
+    The issue-#53 footgun: a content placeholder defaults to shrink-on-overflow
+    autofit, which rewrites explicit sizes **unevenly** as the text lands, and
+    turning autofit off afterwards does not restore them. When the caller sets
+    sizes without saying what autofit should do, and the frame is currently in
+    shrink mode, say so (non-fatal, the v1.6 warnings channel) — the fix is one
+    argument: `autosize="none"`.
+    """
+    if autosize is not None:
+        return []
+    if not any(isinstance(item, dict) and item.get("size") is not None for item in paragraphs):
+        return []
+    try:
+        com_shape = anchor._autofit_com_shape()
+        if com_shape is None:
+            return []
+        shrink = int(com_shape.TextFrame2.AutoSize) == int(MsoAutoSize.TEXT_TO_FIT_SHAPE)
+    except Exception:
+        return []
+    if not shrink:
+        return []
+    return [
+        "explicit size= under autofit 'text_to_fit_shape' — PowerPoint may rewrite "
+        "the sizes as the text lands; pass autosize='none' to pin them"
+    ]
 
 
 @edit_op(EditOp.TEXT_RESET_FORMAT)

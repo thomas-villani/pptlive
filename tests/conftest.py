@@ -928,6 +928,10 @@ class _FakeShape:
             _FakePictureFormat(self) if shape_type in (_MSO_PICTURE, _MSO_LINKED_PICTURE) else None
         )
         self._placeholder_type = placeholder_type
+        # PlaceholderFormat.ContainedType: 1 (msoAutoShape) for a text/empty
+        # placeholder, 13 (msoPicture) once a picture is captured into it
+        # (verified live, scripts/gh_feedback_spike.py + the ContainedType probe).
+        self._contained_type = 1
         self._table = table
         self._chart: _FakeChart | None = None
         self._smartart: _FakeSmartArt | None = None
@@ -1103,7 +1107,7 @@ class _FakeShape:
     def PlaceholderFormat(self) -> Any:
         if self._placeholder_type is None:
             raise AttributeError("shape is not a placeholder")
-        return SimpleNamespace(Type=self._placeholder_type)
+        return SimpleNamespace(Type=self._placeholder_type, ContainedType=self._contained_type)
 
     def Select(self, *args: Any, **kwargs: Any) -> None:
         self.selected = True
@@ -1785,6 +1789,26 @@ class _FakeShapes:
         sh.AutoShapeType = int(shape_type)
         return self._adopt(sh)
 
+    def _capture_target(self) -> _FakeShape | None:
+        """The empty content placeholder that would capture an inserted picture.
+
+        Real PowerPoint routes `AddPicture` *into* the first empty content
+        placeholder (issue #49; verified live, scripts/gh_feedback_spike.py A1/A4):
+        `Shapes.Count` does not grow, the placeholder frame wins over the
+        requested geometry, and the returned shape is the placeholder. A
+        placeholder already holding text / a table / a chart / a picture does
+        not capture.
+        """
+        for sh in self._shapes:
+            if sh.Type != _MSO_PLACEHOLDER or sh._placeholder_type != _PH_OBJECT:
+                continue
+            if sh._contained_type != 1 or sh._table is not None or sh._chart is not None:
+                continue
+            if sh._text_frame is not None and sh._text_frame.TextRange.Text:
+                continue
+            return sh
+        return None
+
     def AddPicture(
         self,
         filename: str,
@@ -1795,10 +1819,19 @@ class _FakeShapes:
         width: float,
         height: float,
     ) -> _FakeShape:
-        sid = self._next_id()
         # -1 means "native size"; the fake just substitutes a nominal size.
         w = 120.0 if width == -1 else width
         h = 90.0 if height == -1 else height
+        captured = self._capture_target()
+        if captured is not None:
+            # The placeholder keeps its own Left/Top, takes the image at the
+            # fake-native aspect (3:4 of its width slot), and ignores the
+            # requested geometry — the live behavior the wrapper must undo.
+            captured._contained_type = _MSO_PICTURE
+            captured._picture_format = _FakePictureFormat(captured)
+            captured.Width, captured.Height = 120.0, 90.0
+            return captured
+        sid = self._next_id()
         return self._adopt(
             _FakeShape(
                 name=f"Picture {sid}",
@@ -1825,6 +1858,12 @@ class _FakeShapes:
         sid = self._next_id()
         ext = os.path.splitext(filename)[1].lower()
         is_video = ext in (".mp4", ".mov", ".avi", ".wmv", ".mkv", ".m4v")
+        # Real AddMediaObject2 silently re-centers the icon mid-slide when
+        # left/top is negative (issue #50; scripts/gh_feedback_spike.py B1) —
+        # a later Shape.Left/Top write sticks fine (B2). Reproduce it so the
+        # wrapper's post-insert re-position is what the tests prove.
+        if left < 0 or top < 0:
+            left, top = 460.0, 250.0
         sh = _FakeShape(
             name=f"Media {sid}",
             shape_id=sid,

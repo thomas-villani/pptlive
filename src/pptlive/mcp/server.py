@@ -484,7 +484,11 @@ def ppt_edit(
       `"space_after"` (POINTS) · `"space_before_lines"` / `"space_after_lines"`
       (MULTIPLES) · `"line_spacing"` (a MULTIPLE, 1.5) · `"line_spacing_points"`
       (EXACT POINTS, 24) · `"force"` · `"bold"` / `"italic"` / `"underline"` ·
-      `"size"` · `"font"` · `"color"` (the FONT color).
+      `"size"` · `"font"` · `"color"` (the FONT color). Optional `autosize` sets
+      the frame's autofit mode BEFORE the text lands — a content placeholder
+      defaults to shrink-on-overflow autofit, which rewrites explicit `"size"`
+      values unevenly (and turning it off afterwards does not restore them), so
+      pass `autosize="none"` whenever the items carry deliberate sizes.
     - "find_replace": fuzzy-locate `find` across the deck and rewrite the matched
       spans with `text` (only the span changes, so run formatting is preserved).
       Scope with `scope` (a `slide:S` / anchor id). One match auto-applies; for
@@ -571,7 +575,10 @@ def ppt_edit(
       plus the text-frame knobs listed under "shape_set_text_frame" below. **A new
       textbox autosizes to its text, so a `height` you pass is advisory until you
       also pass `autosize="none"`** — that plus `margins=0` is the precise-layout
-      opener.
+      opener. An **empty content placeholder captures** an added picture (the
+      returned shape reports `placeholder`, picture inside) — the geometry you
+      pass is still honored, and crop/set_picture work on it; add pictures after
+      filling placeholders (or pass no geometry) to fill the layout slot instead.
     - "shape_set_text_frame": set the text-frame container on an existing shape —
       `autosize` ("none" pins the frame so a set height is honored; "shape_to_fit_text"
       grows the shape; "text_to_fit_shape" shrinks the text), `word_wrap` (bool),
@@ -588,8 +595,10 @@ def ppt_edit(
       passing it with `kind="video"` is an `invalid_args` error, not a silent
       no-op), `pace_slide`
       auto-advances the slide to the clip length (so "export_video" paces itself to
-      the narration). Optional `left`/`top`/`width`/`height`/`alt_text`. The "build
-      a deck, narrate it, export a video" path pairs this with render "export_video".
+      the narration). Optional `left`/`top`/`width`/`height`/`alt_text` — negative
+      `left`/`top` are honored (parking a hidden icon just off-canvas works). The
+      "build a deck, narrate it, export a video" path pairs this with render
+      "export_video".
     - "media_set": set playback options on an existing media clip at `anchor_id`
       (audio or video) — any of `muted` (bool), `volume` (0.0-1.0),
       `trim_start`/`trim_end` (the trim window, in **seconds**; omit an edge to keep

@@ -10,9 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Feedback round from a Claude Code session using pptlive in another project
 (`notes.md`, 2026-08-27), the first authoring macro — the one-op slide — and the
 **linter / regularizer foundation** (`spec-linter.md` steps 1–4 + all four front-ends).
+Plus the **2026-08-31 live-testing round** (GitHub issues #48–#53; the three that
+weren't already fixed on main are pinned by `scripts/gh_feedback_spike.py` and
+fixed below).
 
 ### Fixed
 
+- **An empty content placeholder captured `add_picture` — and the wrapper then
+  returned the wrong shape** (#49). PowerPoint routes an inserted picture *into*
+  the first empty content placeholder: `Shapes.Count` does not grow, the
+  requested geometry is discarded for the placeholder frame, and — worse than
+  reported — the "last shape by Count" resolution handed back an arbitrary
+  unrelated shape. `add_picture` now resolves its return by stable `Shape.Id`
+  (right shape, captured or not), re-applies any explicitly-passed geometry
+  (deriving a missing `width`/`height` from the image aspect — post-capture
+  writes stick, spike A5), and `is_picture` recognises a picture-filled
+  placeholder (`PlaceholderFormat.ContainedType`), so `crop`/`crop_to_fit`/
+  `set_picture` accept it instead of raising *"needs a picture shape, got
+  placeholder"*. `_add_media` gets the same by-Id resolution. Filled
+  placeholders don't capture — documented as the way to a free picture.
+- **`media add` silently re-centered the icon when `--left`/`--top` was
+  negative** (#50). `AddMediaObject2` re-centers a negative position mid-slide
+  (spike B1) while a plain `Shape.Left/Top` write honors it (B2), so
+  `add_audio`/`add_video` now re-apply the requested position after the insert —
+  parking a hidden narration icon just off-canvas works, and a build script's
+  geometry means what it says.
 - **Any slide containing a table could not be read.** `slide.read()`,
   `shapes.list()`, and `geometry_report()` all died with *"The specified value
   is out of range" — HRESULT 0x80020009* on a table slide (reported via
@@ -23,6 +45,18 @@ Feedback round from a Claude Code session using pptlive in another project
 
 ### Added
 
+- **`set_paragraphs(..., autosize=)` — explicit sizes that survive autofit**
+  (#53). A content placeholder defaults to shrink-on-overflow autofit, which
+  **rewrites explicit `size=` values unevenly as the text lands** (spike C1: a
+  deliberate 20/16 pt hierarchy came back 24/19/22/17/16) — and disabling
+  autofit afterwards does *not* restore them (C3), which is why the workaround
+  took three calls. The new kwarg (`"none"`/`"shape_to_fit_text"`/
+  `"text_to_fit_shape"`, the `set_text_frame` choices) sets the frame's autofit
+  mode **before** the text lands (C2 proves that ordering fixes it), on any
+  whole-frame anchor (shape / cell / notes). Wired CLI (`set-paragraphs
+  --autosize`) + MCP/exec (`set_paragraphs` `autosize`); the batch op also
+  returns a non-fatal `warnings` entry when explicit sizes land under shrink
+  autofit with no `autosize=` — the discoverability half.
 - **The linter + formatting regularizer — `deck.lint()` / `deck.regularize()`.**
   The consistency audit + one-pass autofix from `spec-linter.md`, re-applied to
   PowerPoint's 2-D model: a deck has ~no named styles, so "consistency" is

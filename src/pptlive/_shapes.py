@@ -25,7 +25,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import _com
-from ._anchors import Anchor, Paragraph, ParagraphCollection, links_in_range, slide_jump_subaddress
+from ._anchors import (
+    Anchor,
+    Paragraph,
+    ParagraphCollection,
+    apply_autosize,
+    links_in_range,
+    slide_jump_subaddress,
+)
 from .constants import (
     MsoShadowStyle,
     MsoShapeType,
@@ -207,11 +214,9 @@ def _set_autosize(com_shape: Any, value: int) -> None:
     `TextFrame.AutoSize`; the write mirrors that pairing so a value we set is a
     value we can read back. (The classic property returns the mixed sentinel on
     current builds — see `scripts/text_model_spike.py` — so `TextFrame2` first.)
+    Shared with `set_paragraphs(autosize=)` via `_anchors.apply_autosize`.
     """
-    try:
-        com_shape.TextFrame2.AutoSize = value
-    except Exception:
-        com_shape.TextFrame.AutoSize = value
+    apply_autosize(com_shape, value)
 
 
 def apply_text_frame(
@@ -296,6 +301,35 @@ def is_placeholder(com_shape: Any) -> bool:
         return False
 
 
+def _apply_requested_box(com_shape: Any, requested: dict[str, float | None]) -> None:
+    """Re-apply the geometry an `add_picture` caller passed after placeholder capture.
+
+    Only the fields the caller gave explicitly are written — post-capture writes
+    stick (`scripts/gh_feedback_spike.py` A5). The captured frame does **not**
+    hold the picture's aspect when a single dimension is written (A5: width
+    200 left height at 75), so a missing member of an explicit `width`/`height`
+    is derived from the captured shape's current aspect, which PowerPoint set
+    from the image itself.
+    """
+    width, height = requested["width"], requested["height"]
+    if width is not None and height is None:
+        cur_w, cur_h = float(com_shape.Width), float(com_shape.Height)
+        if cur_w > 0:
+            height = float(width) * cur_h / cur_w
+    elif height is not None and width is None:
+        cur_w, cur_h = float(com_shape.Width), float(com_shape.Height)
+        if cur_h > 0:
+            width = float(height) * cur_w / cur_h
+    if requested["left"] is not None:
+        com_shape.Left = float(requested["left"])
+    if requested["top"] is not None:
+        com_shape.Top = float(requested["top"])
+    if width is not None:
+        com_shape.Width = float(width)
+    if height is not None:
+        com_shape.Height = float(height)
+
+
 def has_table(com_shape: Any) -> bool:
     """True iff the shape holds a table (`Shape.HasTable == msoTrue`).
 
@@ -335,13 +369,28 @@ def has_smartart(com_shape: Any) -> bool:
 
 
 def is_picture(com_shape: Any) -> bool:
-    """True iff the shape is an embedded or linked picture (`msoPicture`/`msoLinkedPicture`).
+    """True iff the shape is a picture — free-standing OR filling a placeholder.
 
-    The gate for `Shape.set_picture` — `Shape.Type`, unlike the table/chart case,
-    *is* reliable for a picture (a picture is never a placeholder masquerade).
+    The gate for `Shape.set_picture` / `crop` / `crop_to_fit`. A picture IS a
+    placeholder masquerade after all, same as tables/charts (`has_table`): an
+    empty content placeholder **captures** an inserted picture, and the captured
+    shape reports `Type == msoPlaceholder` with
+    `PlaceholderFormat.ContainedType == msoPicture` — while its `PictureFormat`
+    (crops included) works exactly like a free picture's (verified live,
+    `scripts/gh_feedback_spike.py` A1/A3, issue #49). A text or empty
+    placeholder reads `ContainedType == msoAutoShape` (1), so this never
+    admits a non-picture.
     """
     try:
-        return int(com_shape.Type) in (
+        shape_type = int(com_shape.Type)
+    except Exception:
+        return False
+    if shape_type in (int(MsoShapeType.PICTURE), int(MsoShapeType.LINKED_PICTURE)):
+        return True
+    if shape_type != int(MsoShapeType.PLACEHOLDER):
+        return False
+    try:
+        return int(com_shape.PlaceholderFormat.ContainedType) in (
             int(MsoShapeType.PICTURE),
             int(MsoShapeType.LINKED_PICTURE),
         )
@@ -1530,6 +1579,9 @@ class Shape(Anchor):
         """Raw COM `Shape` (overrides `Anchor.com`, which would give a text range)."""
         with _com.translate_com_errors():
             return self._com_shape()
+
+    def _autofit_com_shape(self) -> Any | None:
+        return self._com_shape()
 
     @property
     def name(self) -> str:
@@ -2822,6 +2874,24 @@ class ShapeCollection:
     def _added(self) -> Shape:
         return Shape(self._slide, int(self._com_collection.Count))
 
+    def _resolved(self, com_shape: Any) -> Shape:
+        """The wrapper for the COM shape an `Add*` call just returned.
+
+        Resolves by stable `.Id`, newest slot first — NOT by "last in z-order"
+        (`_added`): when an **empty content placeholder captures** the inserted
+        object (a picture — issue #49 — but tables/charts placeholder-fill the
+        same way), `Shapes.Count` does not grow and the new content lives in an
+        existing mid-z-order shape, so `_added()` would hand back an arbitrary
+        *wrong* shape (verified live, `scripts/gh_feedback_spike.py` A1).
+        """
+        target = int(com_shape.Id)
+        shapes = self._com_collection
+        count = int(shapes.Count)
+        for idx in range(count, 0, -1):
+            if int(shapes(idx).Id) == target:
+                return Shape(self._slide, idx)
+        return Shape(self._slide, count)  # unreachable: the shape we hold is on the slide
+
     def add_textbox(
         self,
         text: str = "",
@@ -2971,11 +3041,24 @@ class ShapeCollection:
         image's native size. `alt_text`, if given, sets the picture's
         alternative text — a drift-proof, LLM-readable re-identification handle
         (see `Shape.alt_text`). Raises `FileNotFoundError` if `path` doesn't exist.
+
+        **Placeholder capture** (issue #49): when the slide has an **empty
+        content placeholder**, PowerPoint routes the picture *into* it — the
+        returned shape is that placeholder (`Type == placeholder`, picture
+        inside), not a free picture, and PowerPoint sizes it to the placeholder
+        frame, discarding the requested geometry. This wrapper (a) returns the
+        **right** shape either way (resolved by stable `Shape.Id`), and (b)
+        re-applies any geometry you passed explicitly, deriving a missing
+        `width`/`height` from the image's aspect — so the call means what it
+        says even when captured. Pass no geometry to accept the placeholder
+        frame (the "fill the layout slot" reading). `crop`/`crop_to_fit`/
+        `set_picture` all accept a captured picture.
         """
         fs_path = os.fspath(path)
         if not os.path.isfile(fs_path):
             raise FileNotFoundError(f"picture not found: {fs_path}")
         abs_path = os.path.abspath(fs_path)
+        requested = {"left": left, "top": top, "width": width, "height": height}
         left = _DEFAULT_LEFT if left is None else float(left)
         top = _DEFAULT_TOP if top is None else float(top)
         with _com.translate_com_errors():
@@ -2990,7 +3073,9 @@ class ShapeCollection:
             )
             if alt_text is not None:
                 com_shape.AlternativeText = str(alt_text)
-            return self._added()
+            if is_placeholder(com_shape) and any(v is not None for v in requested.values()):
+                _apply_requested_box(com_shape, requested)
+            return self._resolved(com_shape)
 
     def _add_media(
         self,
@@ -3013,6 +3098,12 @@ class ShapeCollection:
         Validates the file before any COM, embeds (or links) the clip, optionally
         wires auto-play / hide-while-not-playing, and — when `pace_slide` — sets the
         slide to auto-advance to the clip length by reusing `Slide.set_transition`.
+
+        `AddMediaObject2` silently **re-centers the icon mid-slide when
+        `left`/`top` is negative** (parking a hidden audio icon just off-canvas
+        is a common ask — issue #50), while a plain `Shape.Left/Top` write
+        honors negatives fine; so the requested position is re-applied after
+        the insert (verified live, `scripts/gh_feedback_spike.py` B1/B2).
         """
         fs_path = os.fspath(path)
         if not os.path.isfile(fs_path):
@@ -3034,6 +3125,10 @@ class ShapeCollection:
             )
             if alt_text is not None:
                 com_shape.AlternativeText = str(alt_text)
+            # Undo AddMediaObject2's silent re-center of negative coordinates
+            # (a no-op when the insert already honored them — spike B2/B3).
+            com_shape.Left = left
+            com_shape.Top = top
             if autoplay or hide_icon:
                 # PlaySettings drives auto-play / hide-while-not-playing. A media
                 # object inserted via AddMediaObject2 always exposes it, so a
@@ -3047,7 +3142,7 @@ class ShapeCollection:
                 if hide_icon:
                     ps.HideWhileNotPlaying = int(MsoTriState.TRUE)
             length_ms = _safe(lambda: float(com_shape.MediaFormat.Length), 0.0)
-            shape = self._added()
+            shape = self._resolved(com_shape)
         if pace_slide and length_ms and length_ms > 0:
             # Reuse the shipped transition writer (sets AdvanceOnTime + AdvanceTime).
             self._slide.set_transition(advance_after=max(1.0, length_ms / 1000.0))

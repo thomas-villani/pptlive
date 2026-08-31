@@ -32,6 +32,7 @@ from .constants import (
     PpMouseActivation,
     PpPlaceholderType,
     alignment_for,
+    autosize_for,
     bullet_type_for,
     bullet_type_name,
     color_hex_or_none,
@@ -101,6 +102,17 @@ PARAGRAPH_ITEM_KEYS: tuple[str, ...] = (
     *_PARA_FORMAT_KEYS,
     *_PARA_FONT_KEYS,
 )
+
+
+def apply_autosize(com_shape: Any, value: int) -> None:
+    """Write the autofit mode, preferring `TextFrame2` (the classic property
+    returns the mixed sentinel on current builds — see `_shapes._autosize_of`,
+    whose read this write mirrors so a value we set is a value we can read back).
+    """
+    try:
+        com_shape.TextFrame2.AutoSize = value
+    except Exception:
+        com_shape.TextFrame.AutoSize = value
 
 
 def _as_single_paragraph(text: str) -> str:
@@ -269,6 +281,16 @@ class Anchor(ABC):
     def _text_range(self) -> Any:
         """Return the COM `TextRange` this anchor reads/writes. Must be overridden."""
 
+    def _autofit_com_shape(self) -> Any | None:
+        """The COM shape whose whole text frame this anchor fills, or None.
+
+        The target for `set_paragraphs(autosize=...)` — autofit is a *frame*
+        property, so only an anchor that owns a whole frame (a shape, a table
+        cell, the notes body) can set it. The base returns None ("not
+        supported here"); `Shape` / `Cell` / `Notes` override it.
+        """
+        return None
+
     @property
     @abstractmethod
     def anchor_id(self) -> str:
@@ -303,7 +325,9 @@ class Anchor(ABC):
         with _com.translate_com_errors():
             self._text_range().Text = normalize_paragraph_breaks(text)
 
-    def set_paragraphs(self, paragraphs: list[Any]) -> list[str]:
+    def set_paragraphs(
+        self, paragraphs: list[Any], *, autosize: str | int | None = None
+    ) -> list[str]:
         """Replace this anchor's text with a clean, per-paragraph list.
 
         The safe alternative to newline inference for list authoring (the gpt-5.4
@@ -312,6 +336,16 @@ class Anchor(ABC):
         `para:` — a newline inside an item is folded to a soft break, never a
         paragraph split. Returns the new paragraphs' `anchor_id`s (empty for a text
         anchor with no paragraph view, e.g. notes). Wrap in `deck.edit(...)`.
+
+        `autosize` sets the frame's autofit mode (`"none"` / `"shape_to_fit_text"`
+        / `"text_to_fit_shape"`, like `set_text_frame`) **before** the text lands
+        — the ordering matters: a content placeholder defaults to shrink-on-
+        overflow autofit, which **rewrites explicit `size=` values unevenly** as
+        the paragraphs land, and turning autofit off afterwards does *not*
+        restore them (`scripts/gh_feedback_spike.py`, issue #53). So
+        `autosize="none"` is how a deliberate 20 pt/16 pt hierarchy survives in
+        one call. Only a whole-frame anchor (shape / cell / notes) can take it —
+        on a `Paragraph` it is rejected with the rest of the call.
 
         The key list is **exhaustive** — anything here can be set in one pass, so
         there is never a reason to follow up with a per-paragraph `format_text`
@@ -337,8 +371,21 @@ class Anchor(ABC):
         items = [_coerce_paragraph_item(p) for p in paragraphs]
         if not items:
             raise ValueError("set_paragraphs needs at least one paragraph")
+        autofit_target = None
+        if autosize is not None:
+            autosize_int = autosize_for(autosize)  # ValueError before any COM
+            autofit_target = self._autofit_com_shape()
+            if autofit_target is None:
+                raise ValueError(
+                    f"autosize= needs an anchor that owns a whole text frame "
+                    f"(a shape, cell, or notes anchor), not {self.anchor_id!r}"
+                )
         joined = "\r".join(_as_single_paragraph(it["text"]) for it in items)
         with _com.translate_com_errors():
+            if autofit_target is not None:
+                # Before the text: autofit applies as text lands and is not
+                # undone retroactively (spike C1/C3).
+                apply_autosize(autofit_target, autosize_int)
             self._text_range().Text = joined
         para_coll = getattr(self, "paragraphs", None)
         if para_coll is None:
@@ -725,6 +772,9 @@ class Notes(Anchor):
     def _text_range(self) -> Any:
         return self._body_placeholder().TextFrame.TextRange
 
+    def _autofit_com_shape(self) -> Any | None:
+        return self._body_placeholder()
+
 
 # ---------------------------------------------------------------------------
 # Paragraphs — para:S:N:P
@@ -1047,7 +1097,9 @@ class Paragraph(Anchor):
         with _com.translate_com_errors():
             self._text_range().Delete()
 
-    def set_paragraphs(self, paragraphs: list[Any]) -> list[str]:
+    def set_paragraphs(
+        self, paragraphs: list[Any], *, autosize: str | int | None = None
+    ) -> list[str]:
         """Not supported on a single paragraph — call it on the shape/cell anchor.
 
         The base `set_paragraphs` replaces a whole text frame's paragraph list.
