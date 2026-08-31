@@ -27,7 +27,7 @@ record the finding, then harden library + CLI + MCP + tests together.
 
 | Tier | Theme | Status | Why it remains |
 | ---- | ----- | ------ | -------------- |
-| **Linter / regularizer** | Consistency audit + one-pass autofix (`deck.lint()`/`regularize()`) — the wordlive linter, re-applied | `[ ]` design ✅ · proofing spiked ✅ | **Highest-leverage next feature.** Pure composition over shipped verbs; new work is `format_info()` + the rule engine. Design in `spec-linter.md`. See its own section below. |
+| **Linter / regularizer** | Consistency audit + one-pass autofix (`deck.lint()`/`regularize()`) — the wordlive linter, re-applied | `[~]` **foundation SHIPPED 2026-08-27** (`format_info` + engine + P2/P3 clusters + `regularize`, all four front-ends) · proofing spiked ✅ | Remaining: the P4 text cluster (empty bullets, whitespace, table numerics), the P5 deck cluster (slide numbers, notices, slide size) + `house_style` profiles, proofing, accessibility. Design in `spec-linter.md`. See its own section below. |
 | **v1.4-rest** | Navigation & structure: sections, headers/footers, run-level hyperlinks | `[x]` | Sections + headers/footers shipped (v0.6); **text-run-level hyperlinks shipped 2026-06-25** — tier complete. |
 | **v1.5-rest** | Animations | `[x]` main cut · `[ ]` long tail | Whole-shape entrance/exit shipped (v0.10); per-paragraph levels / motion paths / reordering remain. |
 | **v1.7** | Media + narrated-video export | `[x]` | SHIPPED 2026-06-25 — insert audio/video narration, self-time slides, export MP4 (async `CreateVideo`). Mute/volume/**trimming** shipped since; only poster frames, bookmarks, and recorded narration remain. |
@@ -56,7 +56,7 @@ shipped `geometry_report()`), and weakly **P1 placeholder-vs-master cascade**. R
 `consistency` / `structural` / `policy` (profile-driven), and the `Finding`/`regularize`
 engine + `adds_content` gate port near-verbatim from `_linting.py`.
 
-- [ ] **Build the foundation + the two clusters the user named first** — `format_info()`
+- [~] **Build the foundation + the two clusters the user named first** — SHIPPED 2026-08-27 through the `regularize` loop + all four front-ends (IMPLEMENTATION.md §Linter); P4/P5 + profiles' `house_style` remain. Original scope: `format_info()`
   read, the peer-mode helper, then `title-font-consistent` (P2) and `edge-alignment` /
   `shape-off-slide` (P3), then the `regularize` loop + idempotency test. Then P4 text
   (empty bullets, table numerics), P5 deck (notices, slide numbers, slide size) +

@@ -393,6 +393,23 @@ deck.show.state()                                     # {running, state, current
 deck.show.end()
 ```
 
+## Finalize — `deck.lint()` + `deck.regularize()` (the last-hour cleanup)
+
+```python
+findings = deck.lint()                      # pure read; severity-ranked dicts, each fixable one carrying its exec-op `fix`
+report = deck.regularize()                  # ONE deck.edit(...) → one Ctrl-Z; idempotent (2nd run applies nothing)
+report["applied"], report["skipped"], report["deferred"]   # skipped = report-only; deferred = content fixes (allow_content=True)
+deck.lint(rules=["alignment"], within="slide:4")           # opt-in cluster: edge-alignment / placeholder-off-layout / overlaps
+deck.regularize(rules={"exclude": ["fonts"]}, dry_run=True, profile="pptlive.lint.json")
+deck.anchor_by_id("ph:7:title").format_info()              # the probe: {value, baseline, override} per font/paragraph field
+```
+
+Default rules judge the deck against **itself** (peers = the same placeholder on the same
+layout; a rule fires only with a clear ≥ 60 % dominant): `title-font-consistent`,
+`body-font-consistent` (per indent level), `title-position-consistent` (the jumpy title),
+`shape-off-slide` (report-only — a bleeding picture wants `crop_to_fit`), `mixed-runs-in-title`
+(report-only). Findings anchor by the drift-proof `shapeid:S:ID` (`para:S:N:P` for one bullet).
+
 ## Errors
 
 All failures raise a `pl.PptliveError` subclass (mirrors the CLI's exit codes):

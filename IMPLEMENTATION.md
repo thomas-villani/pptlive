@@ -1399,7 +1399,29 @@ per slide in an `exec` script *is* the one-shot deck. (b) `background=` on the
 macro — a theme/master concern; revisit if asked. (c) Per-op image blocks in
 `ppt_batch` — a batch result stays a JSON array; follow it with one `deck_snapshot`.
 
-## Linter / regularizer — PLANNED (`spec-linter.md`)
+## Linter / regularizer — foundation slice SHIPPED (2026-08-27; `spec-linter.md` §10 steps 1–4 + 7)
+
+**Shipped:** `_format_info.py` (the probe + cascade baseline), `_lint_profile.py`
+(the profile loader, ported), `_linting.py` (engine: `Finding`/`Rule`/`Scope`, the
+per-pass `DeckWalk` read cache, the `dominant()` peer-mode primitive, `run_lint`,
+`regularize`), `_linting_consistency.py` (P2: `title-font-consistent`,
+`mixed-runs-in-title`, `body-font-consistent`, `title-position-consistent`) and
+`_linting_geometry.py` (P3: `shape-off-slide`, `edge-alignment`,
+`placeholder-off-layout`, `overlap-unintended`), wired library + CLI + `exec` op +
+MCP + both SKILL guides + docs, 34 unit tests + `scripts/lint_live_check.py`.
+Two design calls worth recording: (1) **peers are keyed by (layout, placeholder
+kind)** — that answers Open Q #1 without a section model (a section-header title is
+legitimately unlike a content title) and is why the rules need zero config; (2)
+`title-position-consistent` **is fixable by default** (Open Q #3) — the move is
+mechanical, idempotent, and exactly the "jumpy title" the user named, and the
+layout-keyed peer set already excludes the intentional cases. The spike that
+mattered: `scripts/lint_cascade_spike.py` showed the **layout**, not the master, is
+the baseline rung (a title slide's `ctrtitle` is 60 pt on its layout vs 44 on the
+master), so a master-only `override` would have fired on every title slide.
+**Still open:** P4 text cluster (empty bullets, whitespace, table numerics), P5 deck
+cluster (slide numbers, notices, slide size) + the `house_style` half of profiles,
+proofing (P6, spiked), accessibility.
+
 
 The wordlive linter re-applied to PowerPoint: audit a deck for presentation-quality
 defects (`deck.lint()`), then autofix the mechanical ones in one atomic-undo pass
@@ -1414,19 +1436,19 @@ so consistency isn't "direct override vs style" — it's (P2) **mode/dominant ac
 `geometry_report()`), and only weakly (P1) placeholder-vs-master-cascade. See
 `spec-linter.md` §2. Build order (§10 there):
 
-- [ ] **Foundation** — `anchor.format_info()` (effective font/paragraph + master/layout
+- [x] **Foundation** (SHIPPED 2026-08-27) — `anchor.format_info()` (effective font/paragraph + master/layout
   cascade baseline + `override`/`mixed`, reusing the shipped `color_source`) + the
   peer-mode helper (P2) + a cascade-baseline resolver (composition over the shipped
   `reset_to_layout` + `deck.master.read()`). **Spike:** confirm `CustomLayout`
   placeholder → master `TextStyles` fallback resolves a concrete font per placeholder
   kind + level across a couple of templates.
-- [ ] **P2 headline cluster** (the user's "same font/size" ask) —
+- [x] **P2 headline cluster** (SHIPPED 2026-08-27) (the user's "same font/size" ask) —
   `title-font-consistent`, `body-font-consistent`, `title-position-consistent`. Findings
   anchor by the **drift-proof `shapeid:S:ID`** (a `regularize` pass reorders z-order).
-- [ ] **P3 geometry cluster** ("lined up properly") — `shape-off-slide`,
+- [x] **P3 geometry cluster** (SHIPPED 2026-08-27) ("lined up properly") — `shape-off-slide`,
   `edge-alignment` (→ `shape_align`), `placeholder-off-layout` (→ `shape_reset_layout`),
   built on `Slide.geometry_report()`.
-- [ ] **`regularize`** — the `run_batch`-over-findings loop (one `deck.edit(
+- [x] **`regularize`** (SHIPPED 2026-08-27) — the `run_batch`-over-findings loop (one `deck.edit(
   "Regularize formatting")`, one Ctrl-Z; `own_undo=False` inside an `exec` batch) + the
   `adds_content` gate (`{applied, skipped, deferred, findings}`) + the idempotency smoke
   test (regularize twice → 2nd pass `applied` empty).
@@ -1435,7 +1457,7 @@ so consistency isn't "direct override vs style" — it's (P2) **mode/dominant ac
 - [ ] **P5 deck cluster + profiles** ("copyright/confidential", slide numbers, slide
   size) — `slide-number-present`, `confidentiality-notice`/`copyright-notice`,
   `slide-size`; the `Profile` loader (`pptlive.lint.json`, house-style targets).
-- [ ] **Wire all four front-ends** — Python `deck.lint`/`regularize`; CLI `lint` /
+- [x] **Wire all four front-ends** (SHIPPED 2026-08-27) — Python `deck.lint`/`regularize`; CLI `lint` /
   `regularize [--dry-run] [--allow-content]`; **exec op** `regularize` (write, joins the
   atomic batch); MCP `ppt_read op=lint` / `ppt_edit op=regularize` — plus both SKILL
   guides + a "hand off a clean deck" cookbook entry.

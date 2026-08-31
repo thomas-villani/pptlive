@@ -1,6 +1,6 @@
 # Linter + formatting regularizer — design sketch
 
-> Status: **sketch (2026-07-08)** — nothing built yet. This is the PowerPoint
+> Status: **foundation shipped (2026-08-27)** — §10 steps 1–4 + 7 are built (`_linting.py`, `_format_info.py`, the P2 + P3 clusters, `regularize`, all four front-ends); P4 / P5 / profiles' `house_style` / proofing remain. Written 2026-07-08 as a sketch. This is the PowerPoint
 > sibling of wordlive's `spec-linter.md`, written (like `spec.md`) as **the diff
 > against wordlive**. Read wordlive's `spec-linter.md` first; this document keeps
 > the shared engine one paragraph long and spends its length on the parts

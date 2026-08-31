@@ -657,3 +657,36 @@ Each shape read carries a `media` field (`{type, length_s, start_s, end_s, muted
 volume, autoplay}`, where `start_s`/`end_s` are the trim window in seconds);
 `export_video` is a **read** — it renders the current state without rebinding your
 working `.pptx`.
+
+## 23. Hand off a clean deck — lint, then regularize
+
+The pre-send pass: are the titles all the same font and size, in the same place;
+is anything hanging off a slide; are the cards lined up? `lint` answers with a
+severity-ranked list, each finding carrying the exact op that fixes it;
+`regularize` applies the fixable ones as one Ctrl-Z.
+
+```python
+import pptlive as pl
+
+with pl.attach() as ppt:
+    deck = ppt.presentations.active
+
+    for f in deck.lint():                            # pure read
+        print(f["severity"], f["rule"], f["anchor_id"], "-", f["message"])
+    # warning title-font-consistent shapeid:7:2 - Slide 7 title 'Calibri 36 pt' differs
+    #   from the deck's dominant title 'Calibri 44 pt' (11 of 12 peers).
+    # warning shape-off-slide shapeid:9:5 - Slide 9 shape 'Picture 4' extends beyond ...
+
+    report = deck.regularize()                       # one deck.edit(...), one Ctrl-Z
+    print(len(report["applied"]), "fixed;", len(report["skipped"]), "report-only")
+    assert deck.regularize()["applied"] == []        # idempotent: nothing left to do
+
+    # The opinionated cluster is opt-in — turn it on when the layout is final:
+    deck.regularize(rules=["alignment"], within="slide:4")
+```
+
+CLI: `pptlive lint`, `pptlive regularize --dry-run`, then `pptlive regularize`.
+MCP: `ppt_read op="lint"` → `ppt_edit op="regularize"`. Report-only findings
+(`shape-off-slide`, `overlap-unintended`, `mixed-runs-in-title`) need a judgment
+call — fix those by hand with `shape move` / `shape crop-to-fit` / a `format` on
+the outlier run, then `lint` again.

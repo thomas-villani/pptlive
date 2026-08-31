@@ -840,6 +840,79 @@ class Presentation:
         applied.reverse()  # report in document order
         return applied
 
+    def lint(
+        self,
+        *,
+        rules: Any = None,
+        within: str | Slide | Anchor | None = None,
+        profile: Any = None,
+    ) -> list[dict[str, Any]]:
+        """Audit the deck for presentation-quality defects — a pure read.
+
+        Returns a severity-ranked list of findings, each `{rule, kind, severity,
+        slide, anchor_id, shapeid, message, fixable, fix, adds_content, observed,
+        expected}`. `kind` is `consistency` (a minority peer fighting the deck's
+        dominant value — one title at 36 pt when the rest are 44, a title box that
+        jumps between slides), `structural` (an objective defect — a shape hanging
+        off the slide), or `policy` (a house-style target — off unless a `profile`
+        enables it). A `fixable` finding carries an op-shaped `fix` — literally the
+        `exec` op(s) `regularize` would run. Findings anchor by the drift-proof
+        `shapeid:S:ID` (or `para:S:N:P` for one paragraph).
+
+        `rules` selects which rules run: `None` is the default set (the on-by-
+        default consistency + structural rules); a list of ids / tags
+        (`["titles", "alignment"]`) includes only those — and lights up off-by-
+        default rules like `edge-alignment`; `{"exclude": [...]}` runs the default
+        set minus the listed ids/tags. `within` scopes the *emitted* findings by
+        containment — `"slide:S"` / a `Slide` for one slide, a shape anchor for one
+        shape (peer rules still compare against the whole deck). `profile` is a
+        house-style config (a path to a `pptlive.lint.json`, an inline dict, or
+        `None`) that enables rules, supplies targets/tolerances, and can override
+        a severity — `spec-linter.md` §6.
+        """
+        from . import _linting  # noqa: PLC0415
+
+        return [
+            f.to_dict()
+            for f in _linting.run_lint(self, rules=rules, within=within, profile=profile)
+        ]
+
+    def regularize(
+        self,
+        *,
+        rules: Any = None,
+        within: str | Slide | Anchor | None = None,
+        profile: Any = None,
+        dry_run: bool = False,
+        allow_content: bool = False,
+    ) -> dict[str, Any]:
+        """Apply the fixable `lint` findings in one atomic-undo step. Returns
+        `{applied, skipped, deferred, findings, dry_run[, ops_run]}`.
+
+        Each fixable finding's `fix` op(s) run through the batch op loop inside a
+        single `deck.edit("Regularize formatting")`, so one Ctrl-Z reverts the whole
+        pass and the viewed slide / Selection are preserved. The fixes are
+        **targeted and idempotent** — they write the dominant peer value (or the
+        layout position) back as direct formatting, so running `regularize` twice
+        applies nothing the second time. `rules` / `within` / `profile` are as for
+        `lint`. `dry_run=True` plans the fixes (in `findings`) without writing.
+
+        Formatting/geometry fixes apply by default; a fix that adds or destroys
+        content is flagged `adds_content` and **withheld** into `deferred` unless
+        `allow_content=True`. A failing fix raises `BatchOpError` naming it (the
+        earlier fixes in the pass stay applied — one Ctrl-Z reverts them).
+        """
+        from . import _linting  # noqa: PLC0415
+
+        return _linting.regularize(
+            self,
+            rules=rules,
+            within=within,
+            profile=profile,
+            dry_run=dry_run,
+            allow_content=allow_content,
+        )
+
     @contextmanager
     def edit(self, label: str) -> Iterator[EditScope]:
         """Open an atomic-undo + view/Selection-preserving edit scope.
