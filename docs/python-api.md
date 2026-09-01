@@ -64,6 +64,15 @@ the delete-proof handle) alongside its z-order `anchor_id`.
 `shapeid` — it resolves by `Shape.Id` on every access, so it keeps pointing at
 the same shape across a delete/restack that would shift a `shape:S:N` index.
 
+One capture rule to know: an **empty content placeholder captures** an
+`add_picture` — the picture lands *inside* the placeholder (the returned shape
+reports `placeholder`, picture within) rather than as a free shape. `add_picture`
+still returns the right handle and re-applies any geometry you passed explicitly
+(deriving a missing `width`/`height` from the image aspect), and
+`crop`/`crop_to_fit`/`set_picture` all accept the captured picture — but if you
+want a *free* picture, fill (or reposition) the content placeholders first, and
+if you want to *fill the layout slot*, pass no geometry and take the frame.
+
 A **picture** can be cropped. `Shape.crop(*, left=, right=, top=, bottom=)` is
 the raw primitive — points off each named edge, 1:1 with PowerPoint's
 `PictureFormat.Crop*` — but note that cropping *shrinks the shape box* rather
@@ -129,7 +138,12 @@ Its item keys cover **both** paragraph and font formatting — the full table is
 the [`set_paragraphs`](#pptlive.Anchor.set_paragraphs) docstring below — so
 following it with a per-paragraph `format_text` loop is pure extra COM
 round-trips. An unknown key raises `ValueError` naming the valid ones rather than
-being silently ignored.
+being silently ignored. `set_paragraphs(..., autosize="none")` pins the frame's
+autofit mode **before** the text lands — a content placeholder defaults to
+shrink-on-overflow autofit, which rewrites explicit `size` values unevenly as the
+paragraphs land, and turning autofit off afterwards does *not* restore them — so
+the one kwarg replaces the disable-then-reapply dance whenever the items carry a
+deliberate size hierarchy.
 
 `Shape.text_frame_status()` returns a [`TextFrameStatus`](#pptlive.TextFrameStatus)
 — autosize mode / word-wrap / vertical anchor / margins / a coarse `overflow_risk`
@@ -312,7 +326,10 @@ insert an audio/video clip (embedded by default; `link=True` keeps the file on d
 exported video paces itself to the narration. Each shape read carries a `media` dict
 (`{type, length_s, start_s, end_s, muted, volume, autoplay}` — `start_s`/`end_s` are
 the trim window in seconds) and `has_media`. `Shape.set_media_playback(muted=,
-volume=, start=, end=)` sets those playback options on an existing clip.
+volume=, start=, end=)` sets those playback options on an existing clip. The
+`left`/`top` you pass are honored even when negative (PowerPoint's raw insert
+silently re-centers a negative position; the wrapper re-applies it), so parking
+a hidden audio icon just off-canvas works.
 
 [`deck.export_video(path)`](#pptlive.Presentation) exports the deck to an MP4 via
 PowerPoint's async `CreateVideo`. Like `export_pdf` it is a **read** (no rebind, dirty

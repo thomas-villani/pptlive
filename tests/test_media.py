@@ -397,3 +397,24 @@ def test_export_video_rejects_out_of_range_params(deck: Any, tmp_path: Any) -> N
         deck.export_video(out, default_slide_duration=2.5)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="default_slide_duration must be positive"):
         deck.export_video(out, default_slide_duration=0)
+
+
+# -- negative / off-slide placement (issue #50) ------------------------------
+#
+# AddMediaObject2 silently re-centers the icon mid-slide when left/top is
+# negative (the fake reproduces it) while a post-insert Shape.Left/Top write
+# sticks (scripts/gh_feedback_spike.py B1/B2) — so the wrapper re-applies the
+# requested position after the insert and "park the hidden icon off-canvas"
+# means what it says.
+
+
+def test_add_audio_honors_negative_left_top(deck: Any, tmp_path: Any) -> None:
+    with deck.edit("add audio off-canvas"):
+        shape = deck.slides[1].add_audio(_audio(tmp_path), left=-90.0, top=-90.0)
+    assert (shape.com.Left, shape.com.Top) == (-90.0, -90.0)
+
+
+def test_add_video_honors_requested_position(deck: Any, tmp_path: Any) -> None:
+    with deck.edit("add video"):
+        shape = deck.slides[1].add_video(_video(tmp_path), left=100.0, top=80.0)
+    assert (shape.com.Left, shape.com.Top) == (100.0, 80.0)

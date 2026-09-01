@@ -1952,3 +1952,32 @@ def test_batch_slide_add_with_content(fake_powerpoint: Any) -> None:
     r0, r1 = out["results"][0]["result"], out["results"][1]["result"]
     assert r0["content"]["body"] == f"ph:{r0['index']}:body"
     assert ppt_read("anchor", anchor_id=f"ph:{r1['index']}:title")["text"] == "Two"
+
+
+def test_set_paragraphs_autosize_threads_through(fake_powerpoint: Any) -> None:
+    out = ppt_edit(
+        "set_paragraphs",
+        anchor_id="ph:2:body",
+        paragraphs=[{"text": "Lead", "size": 20.0}],
+        autosize="none",
+    )
+    assert out["ok"] is True
+    assert "warnings" not in out  # the caller said what autofit should do
+    body = fake_powerpoint.ActivePresentation.Slides(2).Shapes(2)
+    assert int(body.TextFrame2.AutoSize) == 0
+
+
+def test_set_paragraphs_sizes_under_shrink_autofit_warns(fake_powerpoint: Any) -> None:
+    # The fake's TextFrame2.AutoSize defaults to 2 (shrink on overflow) — the
+    # issue-#53 footgun state: explicit sizes with no autosize= gets a warning.
+    out = ppt_edit(
+        "set_paragraphs",
+        anchor_id="ph:2:body",
+        paragraphs=[{"text": "Lead", "size": 20.0}],
+    )
+    assert any("autosize" in w for w in out["warnings"])
+
+
+def test_set_paragraphs_without_sizes_does_not_warn(fake_powerpoint: Any) -> None:
+    out = ppt_edit("set_paragraphs", anchor_id="ph:2:body", paragraphs=["a", "b"])
+    assert "warnings" not in out

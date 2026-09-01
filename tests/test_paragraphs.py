@@ -328,3 +328,69 @@ def test_reset_format_normalizes_spacing(deck) -> None:  # type: ignore[no-untyp
     assert float(pf.SpaceBefore) == 0.0
     assert float(pf.SpaceAfter) == 0.0
     assert int(_body_com(deck).IndentLevel) == 1
+
+
+# -- set_paragraphs(autosize=) — issue #53 ----------------------------------
+#
+# A content placeholder defaults to shrink-on-overflow autofit
+# (TextFrame2.AutoSize == 2, the fake's default too), which REWRITES explicit
+# per-item size= values unevenly as the text lands, and disabling autofit
+# afterwards does not restore them (scripts/gh_feedback_spike.py C1/C3). So the
+# kwarg must (a) exist, (b) apply BEFORE the text write, (c) validate pre-COM.
+
+
+def test_set_paragraphs_autosize_none_disables_autofit(deck) -> None:  # type: ignore[no-untyped-def]
+    body = _body(deck)
+    new_ids = body.set_paragraphs(
+        [{"text": "Lead", "size": 20.0}, {"text": "Detail", "size": 16.0}],
+        autosize="none",
+    )
+    assert new_ids == ["para:2:2:1", "para:2:2:2"]
+    assert int(body.com.TextFrame2.AutoSize) == 0
+
+
+def test_set_paragraphs_every_advertised_autosize_choice_coerces(deck) -> None:  # type: ignore[no-untyped-def]
+    # The text_frame_setter lesson: when a coercer has a CHOICES tuple, assert
+    # every member of it round-trips (the canonical names once all failed).
+    from pptlive.constants import AUTOSIZE_CHOICES, autosize_for
+
+    for choice in AUTOSIZE_CHOICES:
+        _body(deck).set_paragraphs(["x"], autosize=choice)
+        assert int(_body(deck).com.TextFrame2.AutoSize) == autosize_for(choice)
+
+
+def test_set_paragraphs_autosize_applies_before_the_text_lands(deck, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The ordering IS the fix: autofit mangles sizes as text lands and a late
+    disable does not un-mangle (spike C1/C3), so the mode must be written while
+    the OLD text is still in the frame."""
+    import pptlive._anchors as anchors_mod
+
+    seen: list[str] = []
+    real = anchors_mod.apply_autosize
+
+    def recorder(com_shape, value):  # type: ignore[no-untyped-def]
+        seen.append(str(com_shape.TextFrame.TextRange.Text))
+        real(com_shape, value)
+
+    monkeypatch.setattr(anchors_mod, "apply_autosize", recorder)
+    _body(deck).set_paragraphs(["replacement"], autosize="none")
+    assert seen == ["Intro\rDemo\rQ&A"]  # the pre-existing text: frame first
+
+
+def test_set_paragraphs_unknown_autosize_rejected_before_any_write(deck) -> None:  # type: ignore[no-untyped-def]
+    body = _body(deck)
+    with pytest.raises(ValueError, match="autosize"):
+        body.set_paragraphs(["x"], autosize="bogus")
+    assert body.text == "Intro\rDemo\rQ&A"  # nothing landed
+
+
+def test_set_paragraphs_autosize_on_paragraph_anchor_rejected(deck) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError):
+        _body(deck).paragraphs[1].set_paragraphs(["x"], autosize="none")
+
+
+def test_set_paragraphs_autosize_on_a_table_cell(deck) -> None:  # type: ignore[no-untyped-def]
+    shape = deck.slides[3].shapes.add_table(2, 2)
+    cell = deck.anchor_by_id(f"cell:3:{shape.index}:1:1")
+    assert cell.set_paragraphs(["only line"], autosize="none") == []
+    assert cell.text == "only line"

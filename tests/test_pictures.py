@@ -173,3 +173,85 @@ def test_cli_set_alt_non_shape_anchor_exit_2(fake_powerpoint) -> None:  # type: 
         main, ["shape", "set-alt", "--anchor-id", "notes:2", "--alt-text", "x"]
     )
     assert result.exit_code == 2
+
+
+# -- placeholder capture (issue #49) ----------------------------------------
+#
+# An EMPTY content placeholder captures an inserted picture: Shapes.Count does
+# not grow, the returned COM shape is the placeholder (picture inside), and the
+# placeholder frame wins over the requested geometry (verified live,
+# scripts/gh_feedback_spike.py A1-A5; the fake reproduces all three). The
+# wrapper must return the RIGHT shape (by stable Id, not "last by Count") and
+# re-apply the caller's explicit geometry.
+
+
+def _img(tmp_path):  # type: ignore[no-untyped-def]
+    img = tmp_path / "panel.png"
+    img.write_bytes(_PNG_SIG)
+    return img
+
+
+def test_captured_picture_returns_the_placeholder_not_last_by_count(deck, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    slide = deck.slides.add(layout="Two Content", title="T")
+    n = len(slide.shapes)
+    pic = slide.shapes.add_picture(_img(tmp_path), left=500.0, top=120.0, width=200.0)
+    assert len(slide.shapes) == n  # count did not grow — captured
+    d = pic.to_dict()
+    assert d["placeholder"] is not None  # it IS the placeholder
+    assert int(pic.com.PlaceholderFormat.ContainedType) == 13  # picture inside
+
+
+def test_captured_picture_honors_explicit_geometry(deck, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    slide = deck.slides.add(layout="Two Content", title="T")
+    pic = slide.shapes.add_picture(_img(tmp_path), left=500.0, top=120.0, width=200.0)
+    com = pic.com
+    assert (com.Left, com.Top, com.Width) == (500.0, 120.0, 200.0)
+    # width-only: the missing height is derived from the image aspect the
+    # placeholder frame took at capture (120x90 -> 3:4).
+    assert com.Height == 150.0
+
+
+def test_captured_picture_without_geometry_keeps_the_placeholder_frame(deck, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    slide = deck.slides.add(layout="Two Content", title="T")
+    pic = slide.shapes.add_picture(_img(tmp_path))
+    com = pic.com
+    # No explicit geometry: the "fill the layout slot" reading — the frame is
+    # whatever PowerPoint made of the placeholder, untouched by the wrapper.
+    assert (com.Left, com.Top) == (10.0, 20.0)  # the fake placeholder's own box
+
+
+def test_captured_picture_is_croppable(deck, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # crop/crop_to_fit used to refuse the captured shape ("needs a picture
+    # shape, got placeholder") — PictureFormat works fine on it (spike A3).
+    slide = deck.slides.add(layout="Two Content", title="T")
+    pic = slide.shapes.add_picture(_img(tmp_path), left=40.0, top=40.0, width=200.0)
+    out = pic.crop(left=10.0)
+    assert out["crop"]["left"] == 10.0
+
+
+def test_filled_placeholders_do_not_capture(deck, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    slide = deck.slides.add(
+        layout="Two Content", title="T", content={"body:1": "left", "body:2": "right"}
+    )
+    n = len(slide.shapes)
+    pic = slide.shapes.add_picture(_img(tmp_path), left=5.0, top=6.0)
+    assert len(slide.shapes) == n + 1
+    assert pic.shape_type == "picture"
+    assert (pic.com.Left, pic.com.Top) == (5.0, 6.0)
+
+
+def test_is_picture_accepts_only_picture_filled_placeholders() -> None:
+    from types import SimpleNamespace
+
+    from pptlive._shapes import is_picture
+
+    assert is_picture(SimpleNamespace(Type=13)) is True  # free picture
+    assert (
+        is_picture(SimpleNamespace(Type=14, PlaceholderFormat=SimpleNamespace(ContainedType=13)))
+        is True
+    )  # captured picture
+    assert (
+        is_picture(SimpleNamespace(Type=14, PlaceholderFormat=SimpleNamespace(ContainedType=1)))
+        is False
+    )  # text/empty placeholder
+    assert is_picture(SimpleNamespace(Type=17)) is False  # textbox

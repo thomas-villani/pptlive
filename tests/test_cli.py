@@ -868,6 +868,26 @@ def test_set_paragraphs_needs_one_source(fake_powerpoint) -> None:  # type: igno
     assert result.exit_code == 2  # click UsageError
 
 
+def test_set_paragraphs_autosize_flag(fake_powerpoint) -> None:  # type: ignore[no-untyped-def]
+    # --autosize none pins the frame BEFORE the text lands, so explicit sizes
+    # survive shrink-on-overflow autofit (issue #53).
+    result = CliRunner().invoke(
+        main,
+        [
+            "set-paragraphs",
+            "--anchor-id",
+            "ph:2:body",
+            "--paragraphs",
+            '[{"text": "Lead", "size": 20}]',
+            "--autosize",
+            "none",
+        ],
+    )
+    assert result.exit_code == 0
+    body = fake_powerpoint.ActivePresentation.Slides(2).Shapes(2)
+    assert int(body.TextFrame2.AutoSize) == 0
+
+
 def test_exec_runs_a_batch_script(fake_powerpoint, tmp_path) -> None:  # type: ignore[no-untyped-def]
     script = {
         "label": "Build slide 2",

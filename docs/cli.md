@@ -988,8 +988,15 @@ ones (exit 1) rather than being silently dropped.
 | `font` | string | typeface name |
 | `color` | `"#RRGGBB"` | the **font** color |
 
+`--autosize none|shape_to_fit_text|text_to_fit_shape` sets the frame's autofit
+mode **before** the text lands. A content placeholder defaults to
+shrink-on-overflow autofit, which **rewrites explicit `size` values unevenly**
+as the paragraphs land — and turning autofit off afterwards does *not* restore
+them — so pass `--autosize none` in the same call whenever the items carry a
+deliberate size hierarchy (the one-call fix for the disable-then-reapply dance).
+
 ```bash
-pptlive set-paragraphs --anchor-id ph:4:body --paragraphs \
+pptlive set-paragraphs --anchor-id ph:4:body --autosize none --paragraphs \
   '["Overview", {"text": "Revenue up 12%", "list_type": "bulleted", "indent_level": 1,
                   "bold": true, "color": "#2E74B5"},
                  {"text": "Churn down 3%",  "list_type": "bulleted", "indent_level": 1}]'

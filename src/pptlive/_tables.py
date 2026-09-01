@@ -147,6 +147,9 @@ class Cell(Anchor):
     def _text_range(self) -> Any:
         return self._cell_com().Shape.TextFrame.TextRange
 
+    def _autofit_com_shape(self) -> Any | None:
+        return self._cell_com().Shape
+
     def to_dict(self) -> dict[str, Any]:
         with _com.translate_com_errors():
             com_cell = self._cell_com()

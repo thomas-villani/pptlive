@@ -496,6 +496,33 @@ body placeholder's prompt text carries one paragraph per indent level, which is 
 per-level baseline. Idempotency is a test invariant (unit + `scripts/lint_live_check.py`).
 Still open: P4 text cluster, P5 deck cluster + `house_style`, proofing, accessibility.
 
+**The GH-issue live-testing round (2026-08-31) — issues #48–#53.** Three were
+already fixed on main (#48 table-read, #51 `body:1`/`body:2` keys, #52 doc
+drift); the other three were pinned by one net-zero spike
+(`scripts/gh_feedback_spike.py`) and fixed together. (1) **Placeholder capture
+(#49)** — an empty content placeholder *captures* `Shapes.AddPicture`:
+`Shapes.Count` doesn't grow, so the old `_added()` ("last shape by Count")
+returned an arbitrary **wrong** shape. Adds now resolve by stable `Shape.Id`
+(`ShapeCollection._resolved`); explicitly-passed geometry is re-applied after
+capture (post-capture writes stick; a missing width/height is derived from the
+image aspect); and `is_picture` recognises a picture-filled placeholder via
+`PlaceholderFormat.ContainedType` (13 = picture, 1 = text/empty — the same
+"placeholder masquerade" `has_table` already knew about), so `crop`/
+`crop_to_fit`/`set_picture` accept captured pictures. The fake COM reproduces
+capture, so it's all unit-tested. (2) **Media re-center (#50)** —
+`AddMediaObject2` silently re-centers a *negative* left/top at insert, but a
+post-insert `Shape.Left/Top` write sticks; `_add_media` re-applies the
+requested position, so parking a hidden narration icon off-canvas works.
+(3) **Autofit vs explicit sizes (#53)** — shrink-on-overflow autofit (a content
+placeholder's default) **rewrites** explicit `set_paragraphs` sizes unevenly as
+the text lands (real `Font.Size` changes: 20/16 wrote back 24/19/22/17/16), and
+a *late* `autosize="none"` does NOT restore them — but setting it **before**
+the text lands does. Hence `set_paragraphs(..., autosize=)` (any whole-frame
+anchor — shape/cell/notes — via the `Anchor._autofit_com_shape` hook; a
+`Paragraph` rejects it), applied pre-text; CLI `set-paragraphs --autosize`; MCP/
+exec passthrough + a non-fatal `warnings` entry when explicit sizes land under
+shrink autofit without it.
+
 ## Constants are pinned to the typelib — don't hand-transcribe (learned the hard way)
 
 `tests/test_typelib_parity.py` checks every `constants.py` `IntEnum` against the live
