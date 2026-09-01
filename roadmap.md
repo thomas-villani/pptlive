@@ -1,6 +1,8 @@
 # pptlive — roadmap (remaining work)
 
-Audit date: 2026-06-18. This is the single forward-looking roadmap — **only the
+Audit date: 2026-06-18 (freshness pass at the v0.9.0 cut, 2026-08-31: linter
+foundation + one-op slide + the GH-issue round shipped; suite at 1126 tests).
+This is the single forward-looking roadmap — **only the
 work still left to do**. The historical per-tier plan and spike findings for
 already-shipped work now live inline in `CHANGELOG.md` and `IMPLEMENTATION.md`
 (this file replaced the old post-v0.9 `roadmap.md`, which was removed when the two
@@ -38,7 +40,9 @@ record the finding, then harden library + CLI + MCP + tests together.
 
 ## Linter / regularizer — the consistency audit + one-pass autofix
 
-The highest-leverage feature still open, and (like the wordlive linter it ports)
+**Foundation shipped 2026-08-27 (v0.9.0)** — what remains here is the long tail
+(P4/P5 clusters, `house_style` profiles, proofing, accessibility). Like the
+wordlive linter it ports, it is
 **pure composition** — `deck.lint()` audits a deck for presentation-quality defects,
 `deck.regularize()` autofixes the mechanical ones in one atomic-undo pass, both over
 verbs pptlive already ships. Full design: **`spec-linter.md`**; staged checklist:
