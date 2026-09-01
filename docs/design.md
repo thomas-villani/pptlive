@@ -155,7 +155,7 @@ notes, threaded review [comments](python-api.md), the whole-deck
 (`deck.show`). It also ships an optional [MCP server](mcp.md) for Claude Desktop
 and other MCP clients.
 
-The consistency-audit [linter / regularizer](cli.md#lint--regularize--the-consistency-audit--one-pass-autofix)
+The consistency-audit [linter / regularizer](cli.md#lint-regularize-the-consistency-audit-one-pass-autofix)
 shipped its foundation (peer-mode + geometry rules, `regularize`, `format_info`);
 its text / deck clusters and house-style profiles remain. Deferred, per
 `roadmap.md`: the animation long tail (per-paragraph
